@@ -67,7 +67,7 @@ import { useWheelHandler } from "../helpers/wheel_hook";
 import { Highlight } from "../highlight/highlight/highlight";
 import { Menu, MenuState } from "../menu/menu";
 import { Popover } from "../popover/popover";
-import { HorizontalScrollBar, VerticalScrollBar } from "../scrollbar/";
+import { HorizontalScrollBar, VerticalScrollBar } from "../scrollbar/index";
 import { ComposerFocusType } from "../spreadsheet/spreadsheet";
 
 /**
