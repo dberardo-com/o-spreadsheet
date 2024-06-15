@@ -38,6 +38,7 @@ type SheetValidationResult = { [col: HeaderIndex]: Array<Lazy<ValidationResult>>
 export class EvaluationDataValidationPlugin extends UIPlugin {
   static getters = [
     "getDataValidationInvalidCriterionValueMessage",
+    "getDataValidationListCellsPositions",
     "getInvalidDataValidationMessage",
     "getValidationResultForCellValue",
     "isCellValidCheckbox",
@@ -65,6 +66,16 @@ export class EvaluationDataValidationPlugin extends UIPlugin {
 
   isDataValidationInvalid(cellPosition: CellPosition): boolean {
     return !this.getValidationResultForCell(cellPosition).isValid;
+  }
+  getDataValidationListCellsPositions(): CellPosition[] {
+    const rules = this.getters
+      .getDataValidationRules(this.getters.getActiveSheetId())
+      .filter(
+        (rule) =>
+          (rule.criterion.type === "isValueInList" || rule.criterion.type === "isValueInRange") &&
+          rule.criterion.displayStyle === "arrow"
+      );
+    return getCellPositionsInRanges(rules.map((rule) => rule.ranges).flat());
   }
 
   getInvalidDataValidationMessage(cellPosition: CellPosition): string | undefined {
