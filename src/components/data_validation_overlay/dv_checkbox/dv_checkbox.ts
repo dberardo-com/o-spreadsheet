@@ -8,10 +8,13 @@ const MARGIN = (GRID_ICON_EDGE_LENGTH - CHECKBOX_WIDTH) / 2;
 
 css/* scss */ `
   .o-dv-checkbox {
+    box-sizing: border-box !important;
     width: ${CHECKBOX_WIDTH}px;
     height: ${CHECKBOX_WIDTH}px;
     accent-color: #808080;
     margin: ${MARGIN}px;
+    /** required to prevent the checkbox position to be sensible to the font-size (affects Firefox) */
+    position: absolute;
   }
 `;
 
@@ -35,7 +38,7 @@ export class DataValidationCheckbox extends Component<Props, SpreadsheetChildEnv
 
   get isDisabled(): boolean {
     const cell = this.env.model.getters.getCell(this.props.cellPosition);
-    return !!cell?.isFormula;
+    return this.env.model.getters.isReadonly() || !!cell?.isFormula;
   }
 }
 

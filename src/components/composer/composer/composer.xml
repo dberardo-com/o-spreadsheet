@@ -15,16 +15,18 @@
         t-on-mousedown="onMousedown"
         t-on-click="onClick"
         t-on-keyup="onKeyup"
-        t-on-paste.stop=""
+        t-on-paste="onPaste"
         t-on-compositionstart="onCompositionStart"
         t-on-compositionend="onCompositionEnd"
         t-on-dblclick="onDblClick"
+        t-on-contextmenu="onContextMenu"
       />
 
       <div
         t-if="props.focus !== 'inactive' and (autoCompleteState.showProvider or functionDescriptionState.showDescription)"
-        class="o-composer-assistant"
+        class="o-composer-assistant shadow"
         t-att-style="assistantStyle"
+        t-on-wheel.stop=""
         t-on-mousedown.prevent.stop=""
         t-on-click.prevent.stop=""
         t-on-mouseup.prevent.stop="">

@@ -91,6 +91,8 @@ export class SheetViewPlugin extends UIPlugin {
     "getEdgeScrollRow",
     "getVisibleFigures",
     "getVisibleRect",
+    "getVisibleRectWithoutHeaders",
+    "getVisibleCellPositions",
     "getColRowOffsetInViewport",
     "getMainViewportCoordinates",
     "getActiveSheetScrollInfo",
@@ -136,13 +138,14 @@ export class SheetViewPlugin extends UIPlugin {
   }
 
   private handleEvent(event: SelectionEvent) {
+    const sheetId = this.getters.getActiveSheetId();
     if (event.options.scrollIntoView) {
       let { col, row } = findCellInNewZone(event.previousAnchor.zone, event.anchor.zone);
       if (event.mode === "updateAnchor") {
         const oldZone = event.previousAnchor.zone;
         const newZone = event.anchor.zone;
         // altering a zone should not move the viewport in a dimension that wasn't changed
-        const { top, bottom, left, right } = this.getters.getActiveMainViewport();
+        const { top, bottom, left, right } = this.getMainInternalViewport(sheetId);
         if (oldZone.left === newZone.left && oldZone.right === newZone.right) {
           col = left > col || col > right ? left : col;
         }
@@ -150,7 +153,6 @@ export class SheetViewPlugin extends UIPlugin {
           row = top > row || row > bottom ? top : row;
         }
       }
-      const sheetId = this.getters.getActiveSheetId();
       col = Math.min(col, this.getters.getNumberCols(sheetId) - 1);
       row = Math.min(row, this.getters.getNumberRows(sheetId) - 1);
       if (!this.sheetsWithDirtyViewports.has(sheetId)) {
@@ -189,20 +191,16 @@ export class SheetViewPlugin extends UIPlugin {
         this.setSheetViewOffset(cmd.offsetX, cmd.offsetY);
         break;
       case "SHIFT_VIEWPORT_DOWN":
-        const { top } = this.getActiveMainViewport();
         const sheetId = this.getters.getActiveSheetId();
-        const shiftedOffsetY = this.clipOffsetY(
-          this.getters.getRowDimensions(sheetId, top).start + this.sheetViewHeight
-        );
-        this.shiftVertically(shiftedOffsetY);
+        const { top, viewportHeight, offsetCorrectionY } = this.getMainInternalViewport(sheetId);
+        const topRowDims = this.getters.getRowDimensions(sheetId, top);
+        this.shiftVertically(topRowDims.start + viewportHeight - offsetCorrectionY);
         break;
       case "SHIFT_VIEWPORT_UP": {
-        const { top } = this.getActiveMainViewport();
         const sheetId = this.getters.getActiveSheetId();
-        const shiftedOffsetY = this.clipOffsetY(
-          this.getters.getRowDimensions(sheetId, top).end - this.sheetViewHeight
-        );
-        this.shiftVertically(shiftedOffsetY);
+        const { top, viewportHeight, offsetCorrectionY } = this.getMainInternalViewport(sheetId);
+        const topRowDims = this.getters.getRowDimensions(sheetId, top);
+        this.shiftVertically(topRowDims.end - offsetCorrectionY - viewportHeight);
         break;
       }
       case "REMOVE_FILTER_TABLE":
@@ -367,6 +365,28 @@ export class SheetViewPlugin extends UIPlugin {
   }
 
   /**
+   * Get the positions of all the cells that are visible in the viewport, taking merges into account.
+   */
+  getVisibleCellPositions(): CellPosition[] {
+    const visibleCols = this.getSheetViewVisibleCols();
+    const visibleRows = this.getSheetViewVisibleRows();
+    const sheetId = this.getters.getActiveSheetId();
+
+    const positions: CellPosition[] = [];
+    for (const col of visibleCols) {
+      for (const row of visibleRows) {
+        const position = { sheetId, col, row };
+        const mainPosition = this.getters.getMainCellPosition(position);
+        if (mainPosition.row !== row || mainPosition.col !== col) {
+          continue;
+        }
+        positions.push(position);
+      }
+    }
+    return positions;
+  }
+
+  /**
    * Return the main viewport maximum size relative to the client size.
    */
   getMainViewportRect(): Rect {
@@ -494,6 +514,14 @@ export class SheetViewPlugin extends UIPlugin {
    * Computes the coordinates and size to draw the zone on the canvas
    */
   getVisibleRect(zone: Zone): Rect {
+    const rect = this.getVisibleRectWithoutHeaders(zone);
+    return { ...rect, x: rect.x + this.gridOffsetX, y: rect.y + this.gridOffsetY };
+  }
+
+  /**
+   * Computes the coordinates and size to draw the zone without taking the grid offset into account
+   */
+  getVisibleRectWithoutHeaders(zone: Zone): Rect {
     const sheetId = this.getters.getActiveSheetId();
     const viewportRects = this.getSubViewports(sheetId)
       .map((viewport) => viewport.getRect(zone))
@@ -506,12 +534,7 @@ export class SheetViewPlugin extends UIPlugin {
     const y = Math.min(...viewportRects.map((rect) => rect.y));
     const width = Math.max(...viewportRects.map((rect) => rect.x + rect.width)) - x;
     const height = Math.max(...viewportRects.map((rect) => rect.y + rect.height)) - y;
-    return {
-      x: x + this.gridOffsetX,
-      y: y + this.gridOffsetY,
-      width,
-      height,
-    };
+    return { x, y, width, height };
   }
 
   /**
@@ -631,18 +654,6 @@ export class SheetViewPlugin extends UIPlugin {
     );
   }
 
-  /**
-   * Clip the vertical offset within the allowed range.
-   * Not above the sheet, nor below the sheet.
-   */
-  private clipOffsetY(offsetY: Pixel): Pixel {
-    const { height } = this.getMainViewportRect();
-    const maxOffset = height - this.sheetViewHeight;
-    offsetY = Math.min(offsetY, maxOffset);
-    offsetY = Math.max(offsetY, 0);
-    return offsetY;
-  }
-
   private getViewportOffset(sheetId: UID) {
     return {
       x: this.viewports[sheetId]?.bottomRight.offsetScrollbarX || 0,
@@ -733,12 +744,15 @@ export class SheetViewPlugin extends UIPlugin {
    * viewport top.
    */
   private shiftVertically(offset: Pixel) {
-    const { top } = this.getActiveMainViewport();
+    const sheetId = this.getters.getActiveSheetId();
+    const { top } = this.getMainInternalViewport(sheetId);
     const { scrollX } = this.getActiveSheetScrollInfo();
     this.setSheetViewOffset(scrollX, offset);
     const { anchor } = this.getters.getSelection();
-    const deltaRow = this.getActiveMainViewport().top - top;
-    this.selection.selectCell(anchor.cell.col, anchor.cell.row + deltaRow);
+    if (anchor.cell.row >= this.getters.getPaneDivisions(sheetId).ySplit) {
+      const deltaRow = this.getMainInternalViewport(sheetId).top - top;
+      this.selection.selectCell(anchor.cell.col, anchor.cell.row + deltaRow);
+    }
   }
 
   getVisibleFigures(): Figure[] {

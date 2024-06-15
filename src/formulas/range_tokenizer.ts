@@ -1,7 +1,7 @@
 import {
-  concat,
   isColHeader,
   isColReference,
+  isRowHeader,
   isRowReference,
   isSingleCellReference,
 } from "../helpers";
@@ -94,7 +94,7 @@ const machine: Machine = {
     SPACE: goTo(State.RightRef),
     NUMBER: goTo(State.Found),
     REFERENCE: goTo(State.Found, (token) => isSingleCellReference(token.value)),
-    SYMBOL: goTo(State.Found, (token) => isColHeader(token.value)),
+    SYMBOL: goTo(State.Found, (token) => isColHeader(token.value) || isRowHeader(token.value)),
   },
   [State.RightColumnRef]: {
     SPACE: goTo(State.RightColumnRef),
@@ -105,6 +105,7 @@ const machine: Machine = {
     SPACE: goTo(State.RightRowRef),
     NUMBER: goTo(State.Found),
     REFERENCE: goTo(State.Found, (token) => isSingleCellReference(token.value)),
+    SYMBOL: goTo(State.Found, (token) => isRowHeader(token.value)),
   },
   [State.Found]: {},
 };
@@ -118,7 +119,7 @@ const machine: Machine = {
 function matchReference(tokens: Token[]): Token | null {
   let head = 0;
   let transitions = machine[State.LeftRef];
-  const matchedTokens: Token[] = [];
+  let matchedTokens: string = "";
   while (transitions !== undefined) {
     const token = tokens[head++];
     if (!token) {
@@ -130,15 +131,15 @@ function matchReference(tokens: Token[]): Token | null {
       case undefined:
         return null;
       case State.Found:
-        matchedTokens.push(token);
+        matchedTokens += token.value;
         tokens.splice(0, head);
         return {
           type: "REFERENCE",
-          value: concat(matchedTokens.map((token) => token.value)),
+          value: matchedTokens,
         };
       default:
         transitions = machine[nextState];
-        matchedTokens.push(token);
+        matchedTokens += token.value;
         break;
     }
   }

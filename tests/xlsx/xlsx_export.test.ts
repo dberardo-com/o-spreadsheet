@@ -1,4 +1,4 @@
-import { functionRegistry } from "../../src/functions";
+import { arg, functionRegistry } from "../../src/functions";
 import { buildSheetLink, toXC } from "../../src/helpers";
 import { createEmptyExcelWorkbookData } from "../../src/migrations/data";
 import { Model } from "../../src/model";
@@ -384,7 +384,7 @@ const allNonExportableFormulasData = {
     {
       cells: {
         A1: { content: "=WAIT(100)" },
-        A2: { content: "=COUNTUNIQUE(1,2,3,2,4)" },
+        A2: { content: "=COUNTUNIQUE(1,A24,3,2,4)" },
         A3: { content: "=sum(A1,wait(100))" },
         A4: { content: "=ADD(42,24)" },
         A5: { content: "=DIVIDE(84,42)" },
@@ -404,6 +404,9 @@ const allNonExportableFormulasData = {
         A19: { content: "=JOIN(1,2,3)" },
         A20: { content: "=MULTIPLY(42,0)" },
         A21: { content: '=FORMAT.LARGE.NUMBER(1000, "k")' },
+        A22: { content: "=SUM(A3:3)" }, // should be adapted to SUM(A3:Z3)
+        A23: { content: "=SUM(A3:A)" }, // should be adapted to SUM(A3:A100)
+        A24: { content: "2" },
       },
     },
   ],
@@ -489,12 +492,12 @@ describe("Test XLSX export", () => {
               {
                 id: "14",
                 ranges: ["A1:A5"],
-                rule: { type: "CellIsRule", operator: "IsEmpty", style },
+                rule: { type: "CellIsRule", operator: "IsEmpty", values: [], style },
               },
               {
                 id: "15",
                 ranges: ["A1:A5"],
-                rule: { type: "CellIsRule", operator: "IsNotEmpty", style },
+                rule: { type: "CellIsRule", operator: "IsNotEmpty", values: [], style },
               },
               {
                 id: "16",
@@ -661,6 +664,58 @@ describe("Test XLSX export", () => {
     });
   });
 
+  describe("references with headers should be converted to references with fixed coordinates", () => {
+    test("Conditional formatting and formula", async () => {
+      const style = { fillColor: "#90EE90" };
+      const model = new Model({
+        sheets: [
+          {
+            colNumber: 2,
+            rowNumber: 5,
+            cells: {
+              A2: { content: "=sum(B3:B)" },
+            },
+            conditionalFormats: [
+              {
+                id: "1",
+                ranges: ["B2:5"],
+                rule: { type: "CellIsRule", operator: "ContainsText", values: ["1"], style },
+              },
+              {
+                id: "2",
+                ranges: ["B2:B"],
+                rule: { type: "CellIsRule", operator: "ContainsText", values: ["1"], style },
+              },
+            ],
+          },
+        ],
+      });
+      expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
+    });
+
+    test("Chart", async () => {
+      const model = new Model({});
+
+      createChart(
+        model,
+        { dataSets: ["Sheet1!B2:B", "Sheet1!C4:4"], labelRange: "Sheet1!A2:A", type: "line" },
+        "1"
+      );
+      createChart(
+        model,
+        { dataSets: ["Sheet1!B2:B", "Sheet1!C4:4"], labelRange: "Sheet1!A2:A", type: "bar" },
+        "2"
+      );
+      createChart(
+        model,
+        { dataSets: ["Sheet1!B2:B", "Sheet1!C4:4"], labelRange: "Sheet1!A2:A", type: "pie" },
+        "3"
+      );
+
+      expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
+    });
+  });
+
   describe("formulas", () => {
     test("All exportable formulas", async () => {
       const model = new Model(allExportableFormulasData);
@@ -684,7 +739,7 @@ describe("Test XLSX export", () => {
 
       functionRegistry.add("NON.EXPORTABLE", {
         description: "a non exportable formula",
-        args: [],
+        args: [arg('range (any, range<any>, ,default="a")', "")],
         returns: ["NUMBER"],
         compute: function (): number {
           return 42;
@@ -696,10 +751,12 @@ describe("Test XLSX export", () => {
       });
 
       setCellContent(model, "A1", "=1+NON.EXPORTABLE()");
+      setCellContent(model, "A2", "=1+NON.EXPORTABLE(A1)");
 
       const exported = getExportedExcelData(model);
 
       expect(exported.sheets[0].cells["A1"]?.content).toEqual("43");
+      expect(exported.sheets[0].cells["A2"]?.content).toEqual("43");
       const formatId = exported.sheets[0].cells["A1"]?.format;
       expect(formatId).toEqual(1);
       expect(exported.formats[formatId!]).toEqual("0.00%");
@@ -752,6 +809,13 @@ describe("Test XLSX export", () => {
       expect(exported.formats[formatId4!]).toEqual("0%");
 
       functionRegistry.remove("NON.EXPORTABLE.ARRAY.FORMULA");
+    });
+
+    test("Non exportable functions that is evaluated as nothing (aka empty string)", async () => {
+      const model = new Model({
+        sheets: [{ cells: { A1: { content: '=join("", A2:A3)' } }, rowNumber: 3, colNumber: 1 }],
+      });
+      expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
     });
 
     test("Multi-Sheets exportable functions", async () => {
@@ -1287,6 +1351,15 @@ describe("Test XLSX export", () => {
       setCellContent(model, "B2", "Hello");
       const exported = getExportedExcelData(model);
       expect(exported.sheets[0].filterTables[0].filters).toHaveLength(0);
+    });
+
+    test("Filters with only one row are not exported", () => {
+      const model = new Model();
+      setCellContent(model, "A1", "Hello");
+      setCellContent(model, "B1", "Hello");
+      createFilter(model, "A1:B1");
+      const exported = getExportedExcelData(model);
+      expect(exported.sheets[0].filterTables).toHaveLength(0);
     });
 
     test("Filtered values are not duplicated", () => {

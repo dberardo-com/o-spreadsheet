@@ -9,6 +9,7 @@ import {
 } from "@odoo/owl";
 import type { ChartConfiguration } from "chart.js";
 import format from "xml-formatter";
+import { functionCache } from "../../src";
 import { Action } from "../../src/actions/action";
 import { Composer, ComposerProps } from "../../src/components/composer/composer/composer";
 import {
@@ -19,6 +20,7 @@ import {
 import { matrixMap } from "../../src/functions/helpers";
 import { functionRegistry } from "../../src/functions/index";
 import { ImageProvider } from "../../src/helpers/figures/images/image_provider";
+import { FocusableElement } from "../../src/helpers/focus_manager";
 import { range, toCartesian, toUnboundedZone, toXC, toZone } from "../../src/helpers/index";
 import { Model } from "../../src/model";
 import { MergePlugin } from "../../src/plugins/core/merge";
@@ -52,7 +54,7 @@ import { Image } from "../../src/types/image";
 import { XLSXExport } from "../../src/types/xlsx";
 import { isXLSXExportXMLFile } from "../../src/xlsx/helpers/xlsx_helper";
 import { FileStore } from "../__mocks__/mock_file_store";
-import { OWL_TEMPLATES, registerCleanup } from "../setup/jest.setup";
+import { registerCleanup } from "../setup/jest.setup";
 import { MockClipboard } from "./clipboard";
 import { redo, setCellContent, setFormat, setStyle, undo } from "./commands_helpers";
 import { getCellContent, getEvaluatedCell } from "./getters_helpers";
@@ -144,6 +146,7 @@ export function makeTestEnv(mockEnv: Partial<SpreadsheetChildEnv> = {}): Spreads
         return [] as Currency[];
       }),
     loadLocales: mockEnv.loadLocales || (async () => DEFAULT_LOCALES),
+    focusableElement: new FocusableElement(),
   };
 }
 
@@ -178,7 +181,6 @@ export async function mountComponent<Props extends { [key: string]: any }>(
   const env = makeTestEnv({ ...optionalArgs.env, model: model });
   const props = optionalArgs.props || ({} as Props);
   const app = new App(component, { props, env, test: true, translateFn: _t });
-  app.addTemplates(OWL_TEMPLATES);
   const fixture = optionalArgs?.fixture || makeTestFixture();
   const parent = await app.mount(fixture);
 
@@ -447,6 +449,9 @@ export function clearFunctions() {
 }
 
 export function restoreDefaultFunctions() {
+  for (let f in functionCache) {
+    delete functionCache[f];
+  }
   clearFunctions();
   Object.keys(functionMapRestore).forEach((k) => {
     functionMap[k] = functionMapRestore[k];
@@ -538,7 +543,7 @@ export async function typeInComposerHelper(selector: string, text: string, fromS
 }
 
 export async function typeInComposerGrid(text: string, fromScratch: boolean = true) {
-  return await typeInComposerHelper(".o-grid .o-composer", text, fromScratch);
+  return await typeInComposerHelper(".o-grid div.o-composer", text, fromScratch);
 }
 
 export async function typeInComposerTopBar(text: string, fromScratch: boolean = true) {
@@ -548,14 +553,16 @@ export async function typeInComposerTopBar(text: string, fromScratch: boolean = 
 }
 
 export async function startGridComposition(key?: string) {
+  const gridComposerTarget = document.querySelector(".o-grid .o-composer")!;
   if (key) {
-    const gridInputEl = document.querySelector(".o-grid>input");
-    gridInputEl!.dispatchEvent(
+    gridComposerTarget!.dispatchEvent(
       new InputEvent("input", { data: key, bubbles: true, cancelable: true })
     );
   } else {
-    const gridInputEl = document.querySelector(".o-grid");
-    gridInputEl!.dispatchEvent(
+    gridComposerTarget!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })
+    );
+    gridComposerTarget!.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })
     );
   }
@@ -618,7 +625,7 @@ export const mockChart = () => {
     }
     toBase64Image = () => "";
     destroy = () => {};
-    update = () => {};
+    update() {}
     options = mockChartData.options;
     config = mockChartData;
   }
@@ -738,13 +745,12 @@ export class ComposerWrapper extends Component<ComposerWrapperProps, Spreadsheet
 
   get composerProps(): ComposerProps {
     return {
-      onComposerContentFocused: (selection) => {
+      ...this.props.composerProps,
+      onComposerContentFocused: () => {
         this.state.focusComposer = "contentFocus";
-        this.setEdition({ selection });
-        this.env.model.dispatch("CHANGE_COMPOSER_CURSOR_SELECTION", selection);
+        this.setEdition({});
       },
       focus: this.state.focusComposer,
-      ...this.props.composerProps,
     };
   }
 

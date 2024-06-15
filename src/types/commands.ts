@@ -289,6 +289,7 @@ export interface MoveColumnsRowsCommand extends HeadersDependentCommand {
   type: "MOVE_COLUMNS_ROWS";
   base: HeaderIndex;
   elements: HeaderIndex[];
+  position: "before" | "after";
 }
 
 export interface ResizeColumnsRowsCommand extends HeadersDependentCommand {
@@ -1183,7 +1184,7 @@ export class DispatchResult {
    * Static helper which returns a successful DispatchResult
    */
   static get Success() {
-    return new DispatchResult();
+    return SUCCESS;
   }
 
   get isSuccessful(): boolean {
@@ -1198,6 +1199,8 @@ export class DispatchResult {
     return this.reasons.includes(reason);
   }
 }
+
+const SUCCESS = new DispatchResult();
 
 export type CancelledReason = Exclude<CommandResult, CommandResult.Success>;
 
@@ -1312,6 +1315,8 @@ export const enum CommandResult {
   InvalidNumberOfCriterionValues = "InvalidNumberOfCriterionValues",
   BlockingValidationRule = "BlockingValidationRule",
   InvalidCopyPasteSelection = "InvalidCopyPasteSelection",
+  NoChanges = "NoChanges",
+  InvalidInputId = "InvalidInputId",
 }
 
 export interface CommandHandler<T> {

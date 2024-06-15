@@ -89,19 +89,10 @@ export class RangeImpl implements Range {
     if (isFullCol) {
       parts[0].rowFixed = parts[0].rowFixed || parts[1].rowFixed;
       parts[1].rowFixed = parts[0].rowFixed || parts[1].rowFixed;
-      if (zone.left === zone.right) {
-        parts[0].colFixed = parts[0].colFixed || parts[1].colFixed;
-        parts[1].colFixed = parts[0].colFixed || parts[1].colFixed;
-      }
     }
     if (isFullRow) {
       parts[0].colFixed = parts[0].colFixed || parts[1].colFixed;
       parts[1].colFixed = parts[0].colFixed || parts[1].colFixed;
-
-      if (zone.top === zone.bottom) {
-        parts[0].rowFixed = parts[0].rowFixed || parts[1].rowFixed;
-        parts[1].rowFixed = parts[0].rowFixed || parts[1].rowFixed;
-      }
     }
 
     return parts;
@@ -206,8 +197,14 @@ export function copyRangeWithNewSheetId(sheetIdFrom: UID, sheetIdTo: UID, range:
 /**
  * Create a range from a xc. If the xc is empty, this function returns undefined.
  */
-export function createRange(getters: CoreGetters, sheetId: UID, range?: string): Range | undefined {
-  return range ? getters.getRangeFromSheetXC(sheetId, range) : undefined;
+export function createValidRange(
+  getters: CoreGetters,
+  sheetId: UID,
+  xc?: string
+): Range | undefined {
+  if (!xc) return;
+  const range = getters.getRangeFromSheetXC(sheetId, xc);
+  return !(range.invalidSheetName || range.invalidXc) ? range : undefined;
 }
 
 /**

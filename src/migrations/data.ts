@@ -4,7 +4,7 @@ import {
   FORBIDDEN_IN_EXCEL_REGEX,
   FORMULA_REF_IDENTIFIER,
 } from "../constants";
-import { UuidGenerator, getItemId, toXC, toZone } from "../helpers/index";
+import { UuidGenerator, getItemId, overlap, toXC, toZone, zoneToXc } from "../helpers/index";
 import { isValidLocale } from "../helpers/locale";
 import { StateUpdateMessage } from "../types/collaborative/transport_service";
 import {
@@ -16,6 +16,7 @@ import {
   SheetData,
   UID,
   WorkbookData,
+  Zone,
 } from "../types/index";
 import { XlsxReader } from "../xlsx/xlsx_reader";
 import { normalizeV9 } from "./legacy_tools";
@@ -307,8 +308,16 @@ const MIGRATIONS: Migration[] = [
     },
   },
   {
-    description: "Change Border description structure",
+    description: "Fix datafilter duplication",
     from: 12,
+    to: 12.5,
+    applyMigration(data: any): any {
+      return fixOverlappingFilters(data);
+    },
+  },
+  {
+    description: "Change Border description structure",
+    from: 12.5,
     to: 13,
     applyMigration(data: any): any {
       for (const borderId in data.borders) {
@@ -337,6 +346,14 @@ const MIGRATIONS: Migration[] = [
         data.settings.locale = DEFAULT_LOCALE;
       }
       return data;
+    },
+  },
+  {
+    description: "Fix datafilter duplication (post saas-16.4)",
+    from: 14,
+    to: 14.5,
+    applyMigration(data: any): any {
+      return fixOverlappingFilters(data);
     },
   },
 ];
@@ -510,6 +527,29 @@ function fixChartDefinitions(data: Partial<WorkbookData>, initialMessages: State
     }
   }
   return messages;
+}
+
+function fixOverlappingFilters(data: any): any {
+  for (let sheet of data.sheets || []) {
+    let knownDataFilterZones: Zone[] = [];
+    for (let filterTable of sheet.filterTables || []) {
+      const zone = toZone(filterTable.range);
+      // See commit message of https://github.com/odoo/o-spreadsheet/pull/3632 of more details
+      const intersectZoneIndex = knownDataFilterZones.findIndex((knownZone) =>
+        overlap(knownZone, zone)
+      );
+      if (intersectZoneIndex !== -1) {
+        knownDataFilterZones[intersectZoneIndex] = zone;
+      } else {
+        knownDataFilterZones.push(zone);
+      }
+    }
+
+    sheet.filterTables = knownDataFilterZones.map((zone) => ({
+      range: zoneToXc(zone),
+    }));
+  }
+  return data;
 }
 
 // -----------------------------------------------------------------------------

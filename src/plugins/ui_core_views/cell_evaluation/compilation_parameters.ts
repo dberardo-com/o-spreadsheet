@@ -15,7 +15,7 @@ import {
   ReferenceDenormalizer,
   ValueAndFormat,
 } from "../../../types";
-import { InvalidReferenceError } from "../../../types/errors";
+import { EvaluationError, InvalidReferenceError } from "../../../types/errors";
 
 export type CompilationParameters = [ReferenceDenormalizer, EnsureRange, EvalContext];
 const functionMap = functionRegistry.mapping;
@@ -37,6 +37,8 @@ export function buildCompilationParameters(
 
 class CompilationParametersBuilder {
   evalContext: EvalContext;
+
+  private rangeCache: Record<string, Matrix<ValueAndFormat> | EvaluationError> = {};
 
   constructor(
     context: ModelConfig["custom"],
@@ -67,13 +69,10 @@ class CompilationParametersBuilder {
     functionName: string,
     paramNumber?: number
   ): Maybe<ValueAndFormat> {
+    this.assertRangeValid(range);
     if (isMeta) {
       // Use zoneToXc of zone instead of getRangeString to avoid sending unbounded ranges
       return { value: zoneToXc(range.zone) };
-    }
-
-    if (!isZoneValid(range.zone)) {
-      throw new InvalidReferenceError();
     }
 
     // if the formula definition could have accepted a range, we would pass through the _range function and not here
@@ -91,9 +90,6 @@ class CompilationParametersBuilder {
             )
       );
     }
-    if (range.invalidSheetName) {
-      throw new Error(_t("Invalid sheet name: %s", range.invalidSheetName));
-    }
     const position = { sheetId: range.sheetId, col: range.zone.left, row: range.zone.top };
     return this.readCell(position);
   }
@@ -106,24 +102,19 @@ class CompilationParametersBuilder {
     if (evaluatedCell === undefined) {
       return { value: null, format: this.getters.getCell(position)?.format };
     }
+    if (evaluatedCell.type === CellValueType.error) {
+      throw evaluatedCell.error;
+    }
     return evaluatedCell;
   }
 
   private getEvaluatedCellIfNotEmpty(position: CellPosition): EvaluatedCell | undefined {
-    const evaluatedCell = this.getEvaluatedCell(position);
+    const evaluatedCell = this.computeCell(position);
     if (evaluatedCell.type === CellValueType.empty) {
       const cell = this.getters.getCell(position);
       if (!cell || (!cell.isFormula && cell.content === "")) {
         return undefined;
       }
-    }
-    return evaluatedCell;
-  }
-
-  private getEvaluatedCell(position: CellPosition): EvaluatedCell {
-    const evaluatedCell = this.computeCell(position);
-    if (evaluatedCell.type === CellValueType.error) {
-      throw evaluatedCell.error;
     }
     return evaluatedCell;
   }
@@ -136,10 +127,10 @@ class CompilationParametersBuilder {
    * Note that each col is possibly sparse: it only contain the values of cells
    * that are actually present in the grid.
    */
-  private range({ sheetId, zone }: Range): Matrix<ValueAndFormat> {
-    if (!isZoneValid(zone)) {
-      throw new InvalidReferenceError();
-    }
+  private range(range: Range): Matrix<ValueAndFormat> {
+    this.assertRangeValid(range);
+    const sheetId = range.sheetId;
+    const zone = range.zone;
 
     // Performance issue: Avoid fetching data on positions that are out of the spreadsheet
     // e.g. A1:ZZZ9999 in a sheet with 10 cols and 10 rows should ignore everything past J10 and return a 10x10 array
@@ -148,20 +139,43 @@ class CompilationParametersBuilder {
     if (!_zone) {
       return [[]];
     }
+    const { top, left, bottom, right } = zone;
+    const cacheKey = `${sheetId}-${top}-${left}-${bottom}-${right}`;
+    if (cacheKey in this.rangeCache) {
+      const result = this.rangeCache[cacheKey];
+      if (result instanceof EvaluationError) {
+        throw result;
+      }
+      return result;
+    }
 
     const height = _zone.bottom - _zone.top + 1;
     const width = _zone.right - _zone.left + 1;
-    const matrix: Matrix<ValueAndFormat> = Array.from({ length: width }, () =>
-      Array.from({ length: height })
-    );
+    const matrix: Matrix<ValueAndFormat> = new Array(width);
     // Performance issue: nested loop is faster than a map here
     for (let col = _zone.left; col <= _zone.right; col++) {
+      const colIndex = col - _zone.left;
+      matrix[colIndex] = new Array(height);
       for (let row = _zone.top; row <= _zone.bottom; row++) {
-        const colIndex = col - _zone.left;
+        const evaluatedCell = this.getEvaluatedCellIfNotEmpty({ sheetId, col, row });
+        if (evaluatedCell?.type === CellValueType.error) {
+          this.rangeCache[cacheKey] = evaluatedCell.error;
+          throw evaluatedCell.error;
+        }
         const rowIndex = row - _zone.top;
         matrix[colIndex][rowIndex] = this.readCell({ sheetId, col, row });
       }
     }
+    this.rangeCache[cacheKey] = matrix;
     return matrix;
+  }
+
+  private assertRangeValid(range: Range): void {
+    if (!isZoneValid(range.zone)) {
+      throw new InvalidReferenceError();
+    }
+    if (range.invalidSheetName) {
+      throw new Error(_t("Invalid sheet name: %s", range.invalidSheetName));
+    }
   }
 }

@@ -253,6 +253,19 @@ describe("Functions autocomplete", () => {
         fixture.querySelector(".o-autocomplete-value-focus .o-autocomplete-value")!.textContent
       ).toBe("SUM");
     });
+
+    test("autocomplete should not appear when typing '=S', clicking outside, and edting back", async () => {
+      await typeInComposer("=S", true);
+      expect(fixture.querySelectorAll(".o-autocomplete-value")).toHaveLength(2);
+
+      model.dispatch("STOP_EDITION");
+      await nextTick();
+      await nextTick();
+      expect(fixture.querySelector(".o-autocomplete-dropdown")).toBeFalsy();
+
+      await keyDown({ key: "Enter" });
+      expect(fixture.querySelector(".o-autocomplete-dropdown")).toBeFalsy();
+    });
   });
 
   describe("autocomplete functions SUM IF", () => {
@@ -276,25 +289,6 @@ describe("Functions autocomplete", () => {
       expect(document.activeElement).toBe(composerEl);
       expect(fixture.querySelectorAll(".o-autocomplete-value")).toHaveLength(2);
     });
-    test("= and CTRL+Space show autocomplete", async () => {
-      await typeInComposer("=");
-      await keyDown({ key: " ", ctrlKey: true });
-      //TODO Need a second nextTick to wait the re-render of SelectionInput (onMounted => uuid assignation). But why not before ?
-      await nextTick();
-      expect(fixture.querySelectorAll(".o-autocomplete-value")).toHaveLength(3);
-      await keyDown({ key: "Tab" });
-      expect(composerEl.textContent).toBe("=IF(");
-      expect(cehMock.selectionState.isSelectingRange).toBeTruthy();
-      expect(cehMock.selectionState.position).toBe(4);
-    });
-    test("= and CTRL+Space & DOWN move to next autocomplete", async () => {
-      await typeInComposer("=");
-      await keyDown({ key: " ", ctrlKey: true });
-      await keyDown({ key: "ArrowDown" });
-      expect(
-        fixture.querySelector(".o-autocomplete-value-focus .o-autocomplete-value")!.textContent
-      ).toBe("SUM");
-    });
   });
 });
 
@@ -311,6 +305,20 @@ describe("Autocomplete parenthesis", () => {
     await typeInComposer("=sum(1,2");
     await keyDown({ key: "Enter" });
     expect(getCellText(model, "A1")).toBe("=sum(1,2)");
+  });
+
+  test("=sum( + enter + edit does not show the formula assistant", async () => {
+    await typeInComposer("=sum(");
+    expect(fixture.querySelector(".o-formula-assistant-container")).toBeTruthy();
+
+    model.dispatch("STOP_EDITION");
+    await nextTick();
+    await nextTick();
+    expect(fixture.querySelector(".o-formula-assistant-container")).toBeFalsy();
+
+    selectCell(model, "B4");
+    await keyDown({ key: "Enter" });
+    expect(fixture.querySelector(".o-formula-assistant-container")).toBeFalsy();
   });
 
   test("=sum(1,2) + enter + edit sum does not add parenthesis", async () => {
@@ -375,9 +383,12 @@ describe("composer Assistant", () => {
   test("render below the cell by default", async () => {
     ({ model, fixture, parent } = await mountComposerWrapper());
     await typeInComposer("=s");
+    expect(fixture.querySelectorAll(".o-composer-assistant").length).toBe(1);
     const assistantEl = fixture.querySelector(".o-composer-assistant")! as HTMLElement;
     expect(assistantEl).toMatchSnapshot();
     expect(assistantEl.style.width).toBe("300px");
+    expect(assistantEl.style.top).toBe("");
+    expect(assistantEl.style.transform).toBe("");
   });
 
   test("render above the cell when not enough place below", async () => {

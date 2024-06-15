@@ -9,9 +9,11 @@ import { DEFAULT_LOCALES } from "../../src/types/locale";
 import {
   copy,
   createFilter,
+  foldHeaderGroup,
   freezeColumns,
   freezeRows,
   groupColumns,
+  groupHeaders,
   groupRows,
   hideColumns,
   hideRows,
@@ -28,6 +30,7 @@ import {
 import { FR_LOCALE } from "../test_helpers/constants";
 import { getCell, getCellContent, getEvaluatedCell } from "../test_helpers/getters_helpers";
 import {
+  clearFunctions,
   doAction,
   getName,
   getNode,
@@ -310,6 +313,17 @@ describe("Menu Item actions", () => {
       selectRow(model, 4, "newAnchor");
       selectRow(model, lastRow, "updateAnchor");
 
+      expect(getNode(path).isVisible(env)).toBeFalsy();
+    });
+
+    test("Delete row option unavailable when selecting all rows with folded row grouping", () => {
+      const lastRow = model.getters.getNumberRows(sheetId) - 1;
+
+      groupHeaders(model, "ROW", 0, 2, sheetId);
+      foldHeaderGroup(model, "ROW", 0, 2, sheetId);
+
+      selectRow(model, 3, "newAnchor");
+      selectRow(model, lastRow, "updateAnchor");
       expect(getNode(path).isVisible(env)).toBeFalsy();
     });
   });
@@ -916,6 +930,26 @@ describe("Menu Item actions", () => {
     restoreDefaultFunctions();
   });
 
+  test("Insert -> Function -> hidden formulas are filtered out", () => {
+    clearFunctions();
+    functionRegistry.add("HIDDEN.FUNC", {
+      args: [],
+      compute: () => 42,
+      description: "Test function",
+      returns: ["NUMBER"],
+      hidden: true,
+      category: "hidden",
+    });
+    const env = makeTestEnv();
+    const functionCategories = getNode(["insert", "insert_function"]).children(env);
+    expect(functionCategories.map((f) => f.name(env))).not.toContain("hidden");
+    const allFunctions = getNode(["insert", "insert_function", "categorie_function_all"]).children(
+      env
+    );
+    expect(allFunctions.map((f) => f.name(env))).not.toContain("HIDDEN.FUNC");
+    restoreDefaultFunctions();
+  });
+
   describe("Format -> numbers", () => {
     test("Automatic", () => {
       const action = getNode(["format", "format_number", "format_number_automatic"]);
@@ -1421,79 +1455,98 @@ describe("Menu Item actions", () => {
       });
     });
 
-    describe("Filters", () => {
-      const createFilterPath = ["data", "add_data_filter"];
-      const removeFilterPath = ["data", "remove_data_filter"];
+    test("Hide row option unavailable when selecting all rows with folded row grouping", () => {
+      const lastRow = model.getters.getNumberRows(sheetId) - 1;
 
-      test("Filters -> Create filter", () => {
-        setSelection(model, ["A1:A5"]);
-        expect(getName(createFilterPath, env)).toBe("Create filter");
-        expect(getNode(createFilterPath).isVisible(env)).toBeTruthy();
-        expect(getNode(removeFilterPath).isVisible(env)).toBeFalsy();
-        doAction(createFilterPath, env);
-        expect(dispatch).toHaveBeenCalledWith("CREATE_FILTER_TABLE", {
-          sheetId: model.getters.getActiveSheetId(),
-          target: target("A1:A5"),
-        });
+      groupHeaders(model, "ROW", 0, 2, sheetId);
+      foldHeaderGroup(model, "ROW", 0, 2, sheetId);
+
+      selectRow(model, 3, "newAnchor");
+      selectRow(model, lastRow, "updateAnchor");
+      expect(getNode(hidePath, rowMenuRegistry).isVisible(env)).toBeFalsy();
+    });
+  });
+
+  describe("Filters", () => {
+    const FilterItemPath = ["data", "add_remove_data_filter"];
+
+    test("Filters -> Create filter", () => {
+      setSelection(model, ["A1:A5"]);
+      expect(getName(FilterItemPath, env)).toBe("Create filter");
+      doAction(FilterItemPath, env);
+      expect(dispatch).toHaveBeenCalledWith("CREATE_FILTER_TABLE", {
+        sheetId: model.getters.getActiveSheetId(),
+        target: target("A1:A5"),
       });
+      expect(getName(FilterItemPath, env)).toBe("Remove filter");
+    });
 
-      test("Filters -> Remove filter", () => {
-        createFilter(model, "A1:A5");
-        setSelection(model, ["A1:A5"]);
-        expect(getName(removeFilterPath, env)).toBe("Remove filter");
-        expect(getNode(removeFilterPath).isVisible(env)).toBeTruthy();
-        expect(getNode(createFilterPath).isVisible(env)).toBeFalsy();
-        doAction(removeFilterPath, env);
-        expect(dispatch).toHaveBeenCalledWith("REMOVE_FILTER_TABLE", {
-          sheetId: model.getters.getActiveSheetId(),
-          target: target("A1:A5"),
-        });
+    test("Filters -> Remove filter", () => {
+      createFilter(model, "A1:A5");
+      setSelection(model, ["A1:A5"]);
+      expect(getName(FilterItemPath, env)).toBe("Remove filter");
+      doAction(FilterItemPath, env);
+      expect(dispatch).toHaveBeenCalledWith("REMOVE_FILTER_TABLE", {
+        sheetId: model.getters.getActiveSheetId(),
+        target: target("A1:A5"),
       });
+      expect(getName(FilterItemPath, env)).toBe("Create filter");
+    });
 
-      test("Filters -> Create filter is disabled when the selection isn't continuous", () => {
-        setSelection(model, ["A1", "B6"]);
-        expect(getNode(createFilterPath).isVisible(env)).toBeTruthy();
-        expect(getNode(createFilterPath).isEnabled(env)).toBeFalsy();
-      });
+    test("Filters -> Create filter is disabled when the selection isn't continuous", () => {
+      setSelection(model, ["A1", "B6"]);
+      expect(getNode(FilterItemPath).isVisible(env)).toBeTruthy();
+      expect(getNode(FilterItemPath).isEnabled(env)).toBeFalsy();
+    });
 
-      test("Filters -> Create filter is enabled for continuous selection of multiple zones", () => {
-        setSelection(model, ["A1", "A2:A5", "B1:B5"]);
-        expect(getNode(createFilterPath).isVisible(env)).toBeTruthy();
-        expect(getNode(createFilterPath).isEnabled(env)).toBeTruthy();
-      });
+    test("Filters -> Create filter is enabled for continuous selection of multiple zones", () => {
+      setSelection(model, ["A1", "A2:A5", "B1:B5"]);
+      expect(getNode(FilterItemPath).isVisible(env)).toBeTruthy();
+      expect(getNode(FilterItemPath).isEnabled(env)).toBeTruthy();
+    });
 
-      test("Filters -> Remove filter is displayed instead of add filter when the selection contains a filter", () => {
-        setSelection(model, ["A1:A5"]);
-        expect(getNode(removeFilterPath).isVisible(env)).toBeFalsy();
-        expect(getNode(createFilterPath).isVisible(env)).toBeTruthy();
+    test("Filters -> Remove filter is displayed instead of add filter when the selection contains a filter", () => {
+      setSelection(model, ["A1:A5"]);
+      expect(getName(FilterItemPath, env)).toBe("Create filter");
 
-        createFilter(model, "A1:B5");
-        expect(getNode(removeFilterPath).isVisible(env)).toBeTruthy();
-        expect(getNode(createFilterPath).isVisible(env)).toBeFalsy();
+      createFilter(model, "A1:B5");
+      expect(getName(FilterItemPath, env)).toBe("Remove filter");
 
-        setSelection(model, ["A1:B9"]);
-        expect(getNode(removeFilterPath).isVisible(env)).toBeTruthy();
-        expect(getNode(createFilterPath).isVisible(env)).toBeFalsy();
+      setSelection(model, ["A1:B9"]);
+      expect(getName(FilterItemPath, env)).toBe("Remove filter");
 
-        setSelection(model, ["A1"]);
-        expect(getNode(removeFilterPath).isVisible(env)).toBeTruthy();
-        expect(getNode(createFilterPath).isVisible(env)).toBeFalsy();
+      setSelection(model, ["A1"]);
+      expect(getName(FilterItemPath, env)).toBe("Remove filter");
 
-        setSelection(model, ["B5"]);
-        expect(getNode(removeFilterPath).isVisible(env)).toBeTruthy();
-        expect(getNode(createFilterPath).isVisible(env)).toBeFalsy();
+      setSelection(model, ["B5"]);
+      expect(getName(FilterItemPath, env)).toBe("Remove filter");
 
-        setSelection(model, ["C3", "A3"]);
-        expect(getNode(removeFilterPath).isVisible(env)).toBeTruthy();
-        expect(getNode(createFilterPath).isVisible(env)).toBeFalsy();
+      setSelection(model, ["C3", "A3"]);
+      expect(getName(FilterItemPath, env)).toBe("Remove filter");
 
-        setSelection(model, ["C3"]);
-        expect(getNode(removeFilterPath).isVisible(env)).toBeFalsy();
-        expect(getNode(createFilterPath).isVisible(env)).toBeTruthy();
+      setSelection(model, ["C3"]);
+      expect(getName(FilterItemPath, env)).toBe("Create filter");
 
-        setSelection(model, ["C3", "D3"]);
-        expect(getNode(removeFilterPath).isVisible(env)).toBeFalsy();
-        expect(getNode(createFilterPath).isVisible(env)).toBeTruthy();
+      setSelection(model, ["C3", "D3"]);
+      expect(getName(FilterItemPath, env)).toBe("Create filter");
+    });
+
+    test("Filters -> Adjacent cells selection while applying filter on single cell", async () => {
+      setCellContent(model, "A1", "A");
+      setCellContent(model, "A2", "A3");
+      setCellContent(model, "B2", "B");
+      setCellContent(model, "B3", "3");
+      setCellContent(model, "C3", "B4");
+      setCellContent(model, "C4", "Hello");
+      setCellContent(model, "D4", "2");
+      selectCell(model, "A1");
+
+      doAction(FilterItemPath, env);
+      const selection = model.getters.getSelectedZone();
+      expect(zoneToXc(selection)).toEqual("A1:D4");
+      expect(dispatch).toHaveBeenCalledWith("CREATE_FILTER_TABLE", {
+        sheetId: model.getters.getActiveSheetId(),
+        target: target("A1:D4"),
       });
     });
   });

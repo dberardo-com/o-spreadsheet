@@ -1,6 +1,6 @@
 import type { ChartConfiguration, ChartDataset, LegendOptions } from "chart.js";
 import { DeepPartial } from "chart.js/dist/types/utils";
-import { BACKGROUND_CHART_COLOR } from "../../../constants";
+import { BACKGROUND_CHART_COLOR, INCORRECT_RANGE_STRING } from "../../../constants";
 import {
   AddColumnsRowsCommand,
   ApplyRangeChange,
@@ -24,7 +24,7 @@ import { LegendPosition, VerticalAxisPosition } from "../../../types/chart/commo
 import { Validator } from "../../../types/validator";
 import { toXlsxHexColor } from "../../../xlsx/helpers/colors";
 import { formatValue } from "../../format";
-import { createRange } from "../../range";
+import { createValidRange } from "../../range";
 import { AbstractChart } from "./abstract_chart";
 import {
   ChartColors,
@@ -68,7 +68,7 @@ export class BarChart extends AbstractChart {
       sheetId,
       definition.dataSetsHaveTitle
     );
-    this.labelRange = createRange(getters, sheetId, definition.labelRange);
+    this.labelRange = createValidRange(getters, sheetId, definition.labelRange);
     this.background = definition.background;
     this.verticalAxisPosition = definition.verticalAxisPosition;
     this.legendPosition = definition.legendPosition;
@@ -167,7 +167,7 @@ export class BarChart extends AbstractChart {
     if (this.aggregated) return undefined;
     const dataSets: ExcelChartDataset[] = this.dataSets
       .map((ds: DataSet) => toExcelDataset(this.getters, ds))
-      .filter((ds) => ds.range !== ""); // && range !== INCORRECT_RANGE_STRING ? show incorrect #ref ?
+      .filter((ds) => ds.range !== "" && ds.range !== INCORRECT_RANGE_STRING);
     const labelRange = toExcelLabelRange(
       this.getters,
       this.labelRange,
@@ -233,7 +233,10 @@ function getBarConfiguration(
           value = Number(value);
           if (isNaN(value)) return value;
           const { locale, format } = localeFormat;
-          return formatValue(value, { locale, format: !format && value > 1000 ? "#,##" : format });
+          return formatValue(value, {
+            locale,
+            format: !format && Math.abs(value) >= 1000 ? "#,##" : format,
+          });
         },
       },
     },

@@ -134,6 +134,9 @@ export class DataValidationPlugin
   }
 
   getValidationRuleForCell({ sheetId, col, row }: CellPosition): DataValidationRule | undefined {
+    if (!this.rules[sheetId]) {
+      return undefined;
+    }
     for (const rule of this.rules[sheetId]) {
       for (const range of rule.ranges) {
         if (isInside(col, row, range.zone)) {
@@ -159,7 +162,10 @@ export class DataValidationPlugin
 
     if (newRule.criterion.type === "isBoolean") {
       this.setCenterStyleToBooleanCells(newRule);
+    } else if (newRule.criterion.type === "isValueInList") {
+      newRule.criterion.values = Array.from(new Set(newRule.criterion.values));
     }
+
     const adaptedRules = this.removeRangesFromRules(sheetId, newRule.ranges, rules);
     const ruleIndex = adaptedRules.findIndex((rule) => rule.id === newRule.id);
 

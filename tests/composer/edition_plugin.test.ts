@@ -1,4 +1,4 @@
-import { getCanonicalSheetName, jsDateToRoundNumber, toZone } from "../../src/helpers";
+import { DateTime, getCanonicalSheetName, jsDateToRoundNumber, toZone } from "../../src/helpers";
 import { Model } from "../../src/model";
 import { CellValueType, CommandResult, DEFAULT_LOCALE } from "../../src/types";
 import {
@@ -85,10 +85,10 @@ describe("edition", () => {
     const sheet1 = model.getters.getSheetIds()[0];
     model.dispatch("START_EDITION", { text: "=" });
     expect(model.getters.getEditionMode()).toBe("selecting");
-    expect(model.getters.getCurrentEditedCell().sheetId).toBe(sheet1);
+    expect(model.getters.getCurrentEditedCell()?.sheetId).toBe(sheet1);
     createSheet(model, { activate: true, sheetId: "42" });
     expect(model.getters.getEditionMode()).toBe("selecting");
-    expect(model.getters.getCurrentEditedCell().sheetId).toBe(sheet1);
+    expect(model.getters.getCurrentEditedCell()?.sheetId).toBe(sheet1);
     model.dispatch("STOP_EDITION");
     expect(model.getters.getActiveSheetId()).toBe(sheet1);
     expect(getCellText(model, "A1")).toBe("=");
@@ -1144,7 +1144,12 @@ describe("edition", () => {
         editCell(model, "A1", "=SUM(B2;5)");
         expect(getEvaluatedCell(model, "A1").type).toBe(CellValueType.error);
 
-        updateLocale(model, { ...DEFAULT_LOCALE, formulaArgSeparator: ";", decimalSeparator: "," });
+        updateLocale(model, {
+          ...DEFAULT_LOCALE,
+          formulaArgSeparator: ";",
+          decimalSeparator: ",",
+          thousandsSeparator: " ",
+        });
         editCell(model, "A1", "=SUM(B2,5)");
         expect(getEvaluatedCell(model, "A1").type).toBe(CellValueType.error);
         editCell(model, "A1", "=SUM(B2;5)");
@@ -1154,6 +1159,7 @@ describe("edition", () => {
       test("Decimal numbers as function argument", () => {
         updateLocale(model, {
           ...DEFAULT_LOCALE,
+          thousandsSeparator: " ",
           decimalSeparator: ",",
           formulaArgSeparator: ";",
         });
@@ -1173,9 +1179,18 @@ describe("edition", () => {
         editCell(model, "A1", "30/01/2020");
         expect(getCell(model, "A1")?.format).toBe("dd/mm/yyyy");
         expect(getCell(model, "A1")?.content).toBe(
-          jsDateToRoundNumber(new Date(2020, 0, 30)).toString()
+          jsDateToRoundNumber(new DateTime(2020, 0, 30)).toString()
         );
       });
     });
+  });
+
+  test("Invalid references are filtered out from the highlights", () => {
+    const model = new Model({});
+    const fakeSheetName = "louloulou";
+    model.dispatch("START_EDITION", { text: `=${fakeSheetName}!A1+A2+ZZZZZZZZZ1000000` });
+    const highlights = model.getters.getComposerHighlights();
+    expect(highlights).toHaveLength(1);
+    expect(highlights[0].zone).toMatchObject(toZone("A2"));
   });
 });

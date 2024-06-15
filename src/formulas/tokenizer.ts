@@ -37,8 +37,8 @@ type TokenType =
   | "UNKNOWN";
 
 export interface Token {
-  type: TokenType;
-  value: string;
+  readonly type: TokenType;
+  readonly value: string;
 }
 
 export function tokenize(str: string, locale = DEFAULT_LOCALE): Token[] {
@@ -50,7 +50,7 @@ export function tokenize(str: string, locale = DEFAULT_LOCALE): Token[] {
     let token =
       tokenizeSpace(chars) ||
       tokenizeArgsSeparator(chars, locale) ||
-      tokenizeMisc(chars) ||
+      tokenizeParenthesis(chars) ||
       tokenizeOperator(chars) ||
       tokenizeString(chars) ||
       tokenizeDebugger(chars) ||
@@ -68,30 +68,28 @@ export function tokenize(str: string, locale = DEFAULT_LOCALE): Token[] {
 }
 
 function tokenizeDebugger(chars: TokenizingChars): Token | null {
-  if (chars.current() === "?") {
+  if (chars.current === "?") {
     chars.shift();
     return { type: "DEBUGGER", value: "?" };
   }
   return null;
 }
 
-const misc = {
-  "(": "LEFT_PAREN",
-  ")": "RIGHT_PAREN",
+const parenthesis = {
+  "(": { type: "LEFT_PAREN", value: "(" },
+  ")": { type: "RIGHT_PAREN", value: ")" },
 } as const;
 
-function tokenizeMisc(chars: TokenizingChars): Token | null {
-  if (chars.current() in misc) {
+function tokenizeParenthesis(chars: TokenizingChars): Token | null {
+  if (chars.current === "(" || chars.current === ")") {
     const value = chars.shift();
-    const type = misc[value];
-    return { type, value };
+    return parenthesis[value];
   }
-
   return null;
 }
 
 function tokenizeArgsSeparator(chars: TokenizingChars, locale: Locale): Token | null {
-  if (chars.current() === locale.formulaArgSeparator) {
+  if (chars.current === locale.formulaArgSeparator) {
     const value = chars.shift();
     const type = "ARG_SEPARATOR";
     return { type, value };
@@ -110,7 +108,15 @@ function tokenizeOperator(chars: TokenizingChars): Token | null {
   return null;
 }
 
+const FIRST_POSSIBLE_NUMBER_CHARS = new Set("0123456789");
+
 function tokenizeNumber(chars: TokenizingChars, locale: Locale): Token | null {
+  if (
+    !FIRST_POSSIBLE_NUMBER_CHARS.has(chars.current) &&
+    chars.current !== locale.decimalSeparator
+  ) {
+    return null;
+  }
   const match = chars.remaining().match(getFormulaNumberRegex(locale.decimalSeparator));
   if (match) {
     chars.advanceBy(match[0].length);
@@ -120,16 +126,13 @@ function tokenizeNumber(chars: TokenizingChars, locale: Locale): Token | null {
 }
 
 function tokenizeString(chars: TokenizingChars): Token | null {
-  if (chars.current() === '"') {
+  if (chars.current === '"') {
     const startChar = chars.shift();
     let letters: string = startChar;
-    while (
-      chars.current() &&
-      (chars.current() !== startChar || letters[letters.length - 1] === "\\")
-    ) {
+    while (chars.current && (chars.current !== startChar || letters[letters.length - 1] === "\\")) {
       letters += chars.shift();
     }
-    if (chars.current() === '"') {
+    if (chars.current === '"') {
       letters += chars.shift();
     }
     return {
@@ -140,7 +143,7 @@ function tokenizeString(chars: TokenizingChars): Token | null {
   return null;
 }
 
-const separatorRegexp = /\w|\.|!|\$/;
+const SYMBOL_CHARS = new Set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.!$");
 
 /**
  * A "Symbol" is just basically any word-like element that can appear in a
@@ -158,14 +161,14 @@ function tokenizeSymbol(chars: TokenizingChars): Token | null {
   let result: string = "";
   // there are two main cases to manage: either something which starts with
   // a ', like 'Sheet 2'A2, or a word-like element.
-  if (chars.current() === "'") {
+  if (chars.current === "'") {
     let lastChar = chars.shift();
     result += lastChar;
-    while (chars.current()) {
+    while (chars.current) {
       lastChar = chars.shift();
       result += lastChar;
       if (lastChar === "'") {
-        if (chars.current() && chars.current() === "'") {
+        if (chars.current && chars.current === "'") {
           lastChar = chars.shift();
           result += lastChar;
         } else {
@@ -181,7 +184,7 @@ function tokenizeSymbol(chars: TokenizingChars): Token | null {
       };
     }
   }
-  while (chars.current() && separatorRegexp.test(chars.current())) {
+  while (chars.current && SYMBOL_CHARS.has(chars.current)) {
     result += chars.shift();
   }
   if (result.length) {
@@ -197,7 +200,7 @@ function tokenizeSymbol(chars: TokenizingChars): Token | null {
 
 function tokenizeSpace(chars: TokenizingChars): Token | null {
   let length = 0;
-  while (chars.current() === NEWLINE) {
+  while (chars.current === NEWLINE) {
     length++;
     chars.shift();
   }
@@ -205,7 +208,7 @@ function tokenizeSpace(chars: TokenizingChars): Token | null {
     return { type: "SPACE", value: NEWLINE.repeat(length) };
   }
 
-  while (chars.current() === " ") {
+  while (chars.current === " ") {
     length++;
     chars.shift();
   }
@@ -227,21 +230,23 @@ function tokenizeInvalidRange(chars: TokenizingChars): Token | null {
 class TokenizingChars {
   private text: string;
   private currentIndex: number = 0;
+  current: string;
 
   constructor(text: string) {
     this.text = text;
-  }
-
-  current() {
-    return this.text[this.currentIndex];
+    this.current = text[0];
   }
 
   shift() {
-    return this.text[this.currentIndex++];
+    const current = this.current;
+    const next = this.text[++this.currentIndex];
+    this.current = next;
+    return current;
   }
 
   advanceBy(length: number) {
     this.currentIndex += length;
+    this.current = this.text[this.currentIndex];
   }
 
   isOver() {
@@ -253,7 +258,10 @@ class TokenizingChars {
   }
 
   currentStartsWith(str: string) {
-    for (let j = 0; j < str.length; j++) {
+    if (this.current !== str[0]) {
+      return false;
+    }
+    for (let j = 1; j < str.length; j++) {
       if (this.text[this.currentIndex + j] !== str[j]) {
         return false;
       }

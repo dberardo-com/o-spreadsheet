@@ -58,6 +58,10 @@ css/*SCSS*/ `
       height: 0px;
     }
   }
+  .o-figure-container {
+    -webkit-user-select: none; // safari
+    user-select: none;
+  }
 `;
 
 /**
@@ -209,7 +213,7 @@ export class FiguresContainer extends Component<Props, SpreadsheetChildEnv> {
   }
 
   private getContainerRect(container: ContainerType): Rect {
-    const { width: viewWidth, height: viewHeight } = this.env.model.getters.getMainViewportRect();
+    const { width: viewWidth, height: viewHeight } = this.env.model.getters.getSheetViewDimension();
     const { x: viewportX, y: viewportY } = this.env.model.getters.getMainViewportCoordinates();
 
     const x = ["bottomRight", "topRight"].includes(container) ? viewportX : 0;
@@ -338,7 +342,8 @@ export class FiguresContainer extends Component<Props, SpreadsheetChildEnv> {
         currentMousePosition,
         initialMousePosition,
         keepRatio,
-        minFigSize
+        minFigSize,
+        this.env.model.getters.getActiveSheetScrollInfo()
       );
 
       const otherFigures = this.getOtherFigures(figure.id);

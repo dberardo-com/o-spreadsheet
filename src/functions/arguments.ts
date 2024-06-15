@@ -27,6 +27,9 @@ export function arg(definition: string, description: string = ""): ArgDefinition
 function makeArg(str: string, description: string): ArgDefinition {
   let parts = str.match(ARG_REGEXP)!;
   let name = parts[1].trim();
+  if (!name) {
+    throw new Error(`Function argument definition is missing a name: '${str}'.`);
+  }
   let types: ArgType[] = [];
   let isOptional = false;
   let isRepeating = false;
@@ -67,6 +70,9 @@ function makeArg(str: string, description: string): ArgDefinition {
   if (defaultValue !== undefined) {
     result.default = true;
     result.defaultValue = defaultValue;
+  }
+  if (types.some((t) => t.startsWith("RANGE"))) {
+    result.acceptMatrix = true;
   }
   return result;
 }

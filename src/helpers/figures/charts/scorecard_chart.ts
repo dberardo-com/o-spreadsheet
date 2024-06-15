@@ -25,14 +25,13 @@ import {
   ScorecardChartRuntime,
 } from "../../../types/chart/scorecard_chart";
 import { Validator } from "../../../types/validator";
-import { createRange } from "../../range";
+import { createValidRange } from "../../range";
 import { rangeReference } from "../../references";
 import { drawDecoratedText } from "../../text_helper";
 import { toUnboundedZone, zoneToXc } from "../../zones";
 import { AbstractChart } from "./abstract_chart";
 import {
   adaptChartRange,
-  chartFontColor,
   copyLabelRangeWithNewSheetId,
   getBaselineArrowDirection,
   getBaselineColor,
@@ -72,8 +71,8 @@ export class ScorecardChart extends AbstractChart {
 
   constructor(definition: ScorecardChartDefinition, sheetId: UID, getters: CoreGetters) {
     super(definition, sheetId, getters);
-    this.keyValue = createRange(getters, sheetId, definition.keyValue);
-    this.baseline = createRange(getters, sheetId, definition.baseline);
+    this.keyValue = createValidRange(getters, sheetId, definition.keyValue);
+    this.baseline = createValidRange(getters, sheetId, definition.baseline);
     this.baselineMode = definition.baselineMode;
     this.baselineDescr = definition.baselineDescr;
     this.background = definition.background;
@@ -282,7 +281,11 @@ export function createScorecardChartRuntime(
     };
     baselineCell = getters.getEvaluatedCell(baselinePosition);
   }
-  const background = getters.getBackgroundOfSingleCellChart(chart.background, chart.keyValue);
+  const { background, fontColor } = getters.getStyleOfSingleCellChart(
+    chart.background,
+    chart.keyValue
+  );
+
   const locale = getters.getLocale();
   return {
     title: _t(chart.title),
@@ -297,7 +300,7 @@ export function createScorecardChartRuntime(
       chart.baselineColorDown
     ),
     baselineDescr: chart.baselineDescr ? _t(chart.baselineDescr) : "",
-    fontColor: chartFontColor(background),
+    fontColor,
     background,
     baselineStyle:
       chart.baselineMode !== "percentage" && baseline

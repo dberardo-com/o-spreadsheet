@@ -1,14 +1,17 @@
 import { DEFAULT_BORDER_DESC } from "../../src/constants";
 import { Model } from "../../src/model";
-import { BorderDescr } from "../../src/types/index";
+import { BorderDescr, CommandResult } from "../../src/types/index";
 import {
   addColumns,
   addRows,
   cut,
   deleteCells,
+  deleteColumns,
+  deleteRows,
   paste,
   selectCell,
   setAnchorCorner,
+  setBorders,
   setCellContent,
   setZoneBorders,
   undo,
@@ -97,6 +100,21 @@ describe("borders", () => {
     setZoneBorders(model, { position: "clear" });
 
     expect(getCell(model, "C3")).toBeUndefined();
+  });
+
+  test("set the same border twice is cancelled", () => {
+    const model = new Model();
+    const border = { top: DEFAULT_BORDER_DESC };
+    setBorders(model, "A1", border);
+    expect(setBorders(model, "A1", border)).toBeCancelledBecause(CommandResult.NoChanges);
+  });
+
+  test("reset border when there is no border is cancelled", () => {
+    const model = new Model();
+    expect(setBorders(model, "A1", undefined)).toBeCancelledBecause(CommandResult.NoChanges);
+    expect(setBorders(model, "A1", { top: undefined })).toBeCancelledBecause(
+      CommandResult.NoChanges
+    );
   });
 
   test("can set all borders in a zone", () => {
@@ -555,6 +573,21 @@ describe("Grid manipulation", () => {
     });
     expect(getBorder(model, "C2")).toBeNull();
     expect(getBorder(model, "B4")).toEqual({ top: DEFAULT_BORDER_DESC });
+  });
+
+  test("Remove multiple headers before the borders", () => {
+    const b = DEFAULT_BORDER_DESC;
+    setZoneBorders(model, { position: "external" }, ["C3"]);
+    deleteRows(model, [0, 1]);
+    expect(getBorder(model, "B1")).toEqual({ right: b });
+    expect(getBorder(model, "C1")).toEqual({ top: b, left: b, right: b, bottom: b });
+    expect(getBorder(model, "D1")).toEqual({ left: b });
+    expect(getBorder(model, "C2")).toEqual({ top: b });
+
+    deleteColumns(model, ["A", "B"]);
+    expect(getBorder(model, "A1")).toEqual({ top: b, left: b, right: b, bottom: b });
+    expect(getBorder(model, "B1")).toEqual({ left: b });
+    expect(getBorder(model, "A2")).toEqual({ top: b });
   });
 
   test("Borders are correctly duplicated on sheet dup", () => {

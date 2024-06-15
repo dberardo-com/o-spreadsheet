@@ -1,10 +1,6 @@
 import { ChartType, TooltipItem } from "chart.js";
 import { CommandResult, Model } from "../../../src";
-import { ChartTerms } from "../../../src/components/translations_terms";
-import { FIGURE_ID_SPLITTER } from "../../../src/constants";
 import { toZone, zoneToXc } from "../../../src/helpers";
-import { BarChart } from "../../../src/helpers/figures/charts";
-import { ChartPlugin } from "../../../src/plugins/core";
 import { ChartDefinition, UID } from "../../../src/types";
 import {
   BarChartDefinition,
@@ -28,12 +24,20 @@ import {
   selectCell,
   setCellContent,
   setCellFormat,
+  setFormat,
   undo,
   updateChart,
   updateLocale,
 } from "../../test_helpers/commands_helpers";
-import { FR_LOCALE } from "../../test_helpers/constants";
 import { getPlugin, mockChart, nextTick, target } from "../../test_helpers/helpers";
+
+import { ChartTerms } from "../../../src/components/translations_terms";
+import { FIGURE_ID_SPLITTER, MAX_CHAR_LABEL } from "../../../src/constants";
+import { BarChart } from "../../../src/helpers/figures/charts";
+import { ChartPlugin } from "../../../src/plugins/core";
+import { FR_LOCALE } from "../../test_helpers/constants";
+import { getCellContent } from "../../test_helpers/getters_helpers";
+
 jest.mock("../../../src/helpers/uuid", () => require("../../__mocks__/uuid"));
 
 let model: Model;
@@ -238,12 +242,14 @@ describe("datasource tests", function () {
     );
     const chart = model.getters.getChartRuntime("1") as LineChartRuntime;
     expect(model.getters.getChartDefinition("1")).toMatchObject({
-      dataSets: [],
+      dataSets: ["B8"],
       labelRange: "Sheet1!B7:D7",
       title: "test",
       type: "line",
     });
-    expect(chart.chartJsConfig.data?.datasets).toHaveLength(0);
+    expect(chart.chartJsConfig.data?.datasets?.[0].data).toEqual(
+      expect.arrayContaining([undefined, undefined])
+    );
     expect(model.getters.getChartRuntime("1")).toMatchSnapshot();
   });
 
@@ -582,7 +588,8 @@ describe("datasource tests", function () {
     );
     deleteRows(model, [1, 2, 3, 4]);
     const chart = (model.getters.getChartRuntime("1") as LineChartRuntime).chartJsConfig;
-    expect(chart.data!.datasets).toHaveLength(0);
+    expect(chart.data!.datasets?.[0].data).toHaveLength(0);
+    expect(chart.data!.datasets?.[1].data).toHaveLength(0);
     expect(chart.data!.labels).toEqual([]);
   });
 
@@ -1562,6 +1569,10 @@ describe("Chart design configuration", () => {
         expect(runtime.chartJsConfig.options.scales.y?.ticks.callback!(60000000)).toEqual(
           "60,000,000"
         );
+        //@ts-ignore
+        expect(runtime.chartJsConfig.options.scales.y?.ticks.callback!(-60000000)).toEqual(
+          "-60,000,000"
+        );
       }
     );
 
@@ -1574,6 +1585,10 @@ describe("Chart design configuration", () => {
         //@ts-ignore
         expect(runtime.chartJsConfig.options.scales.y?.ticks.callback!(60000000)).toEqual(
           "60 000 000"
+        );
+        // @ts-ignore
+        expect(runtime.chartJsConfig.options.scales.y?.ticks.callback!(-60000000)).toEqual(
+          "-60 000 000"
         );
       }
     );
@@ -1597,7 +1612,7 @@ describe("Chart design configuration", () => {
     });
 
     test.each(["bar", "line"])(
-      "Basic chart tooltip label, cell without format: thousand separator",
+      "Basic chart tooltip label, cell without format: thousand separator for positive values",
       (chartType) => {
         setCellContent(model, "A2", "60000000");
         createChart(model, { ...defaultChart, type: chartType as "bar" | "line" | "pie" }, "42");
@@ -1608,14 +1623,17 @@ describe("Chart design configuration", () => {
       }
     );
 
-    test.each(["bar", "line"])("Basic chart tooltip label, cell with format", (chartType) => {
-      setCellContent(model, "A2", "6000");
-      setCellFormat(model, "A2", "[$$]#,##0.00");
-      createChart(model, { ...defaultChart, type: chartType as "bar" | "line" | "pie" }, "42");
-      const runtime = model.getters.getChartRuntime("42") as BarChartRuntime;
-      const label = getTooltipLabel(runtime, 0, 0);
-      expect(label).toEqual("$6,000.00");
-    });
+    test.each(["bar", "line"])(
+      "Basic chart tooltip label, cell without format: thousand separator for negative values",
+      (chartType) => {
+        setCellContent(model, "A2", "-60000000");
+        createChart(model, { ...defaultChart, type: chartType as "bar" | "line" | "pie" }, "42");
+        const runtime = model.getters.getChartRuntime("42") as BarChartRuntime;
+        const label = getTooltipLabel(runtime, 0, 0);
+
+        expect(label).toEqual("-60,000,000");
+      }
+    );
 
     test.each(["bar", "line"])("Basic chart tooltip label, date format is ignored", (chartType) => {
       setCellContent(model, "A2", "6000");
@@ -1665,6 +1683,24 @@ describe("Chart design configuration", () => {
 
       expect(label).toBe("P1: $6,000.00 (100.00%)");
     });
+  });
+
+  test("pie chart tooltip label with negative value", () => {
+    setCellContent(model, "A1", "P1");
+    setCellContent(model, "A2", "-6000");
+    createChart(
+      model,
+      {
+        dataSets: ["A1:A2"],
+        labelRange: "A1",
+        type: "pie",
+      },
+      "1"
+    );
+    const chart = model.getters.getChartRuntime("1") as PieChartRuntime;
+    const label = getTooltipLabel(chart, 0, 0);
+
+    expect(label).toBe("P1: -6,000 (100.00%)");
   });
 });
 
@@ -1786,6 +1822,26 @@ describe("Chart aggregate labels", () => {
     expect(chart.data!.datasets![1].data).toEqual([52, 54, 56, 58]);
     expect(chart.data!.labels).toEqual(["P1", "P2", "P3", "P4"]);
   });
+
+  test.each(["bar", "line", "pie"] as const)(
+    "Labels will not be sorted when aggregated in %s chart",
+    (type) => {
+      createChart(aggregatedModel, aggregatedChart, "42");
+      updateChart(aggregatedModel, "42", { type });
+
+      setCellContent(aggregatedModel, "A3", "2023");
+      setCellContent(aggregatedModel, "A7", "2024");
+
+      let chart = (aggregatedModel.getters.getChartRuntime("42") as ChartJSRuntime).chartJsConfig;
+      expect(chart.data!.datasets![0].data).toEqual([10, 11, 12, 13, 14, 15, 16, 17]);
+      expect(chart.data!.labels).toEqual(["P1", "2023", "P3", "P4", "P1", "2024", "P3", "P4"]);
+
+      updateChart(aggregatedModel, "42", { aggregated: true });
+      chart = (aggregatedModel.getters.getChartRuntime("42") as ChartJSRuntime).chartJsConfig;
+      expect(chart.data!.datasets![0].data).toEqual([24, 11, 28, 30, 15]);
+      expect(chart.data!.labels).toEqual(["P1", "2023", "P3", "P4", "2024"]);
+    }
+  );
 });
 
 describe("Linear/Time charts", () => {
@@ -1857,6 +1913,47 @@ describe("Linear/Time charts", () => {
     expect(chart.chartJsConfig.options?.scales?.x?.type).toEqual("time");
   });
 
+  test("time axis: the axis unit are correct", () => {
+    createChart(
+      model,
+      {
+        type: "line",
+        dataSets: ["B2:B5"],
+        labelRange: "C2:C3",
+        labelsAsText: false,
+      },
+      chartId
+    );
+    setFormat(model, "mm/dd/yyyy", target("C2:C3"));
+    setCellContent(model, "C2", "1/1/2022");
+
+    setCellContent(model, "C3", "1/1/2025");
+    let chart = (model.getters.getChartRuntime(chartId) as any).chartJsConfig;
+    expect(chart.options!.scales!.x!.time!.unit).toEqual("year");
+
+    setCellContent(model, "C3", "5/1/2022");
+    chart = (model.getters.getChartRuntime(chartId) as any).chartJsConfig;
+    expect(chart.options!.scales!.x!.time!.unit).toEqual("month");
+
+    setCellContent(model, "C3", "1/10/2022");
+    chart = (model.getters.getChartRuntime(chartId) as any).chartJsConfig;
+    expect(chart.options!.scales!.x!.time!.unit).toEqual("day");
+
+    setFormat(model, "hh:mm:ss", target("C2:C3"));
+
+    setCellContent(model, "C3", "1/1/2022 00:00:15");
+    chart = (model.getters.getChartRuntime(chartId) as any).chartJsConfig;
+    expect(chart.options!.scales!.x!.time!.unit).toEqual("second");
+
+    setCellContent(model, "C3", "1/1/2022 00:15:00");
+    chart = (model.getters.getChartRuntime(chartId) as any).chartJsConfig;
+    expect(chart.options!.scales!.x!.time!.unit).toEqual("minute");
+
+    setCellContent(model, "C3", "1/1/2022 15:00:00");
+    chart = (model.getters.getChartRuntime(chartId) as any).chartJsConfig;
+    expect(chart.options!.scales!.x!.time!.unit).toEqual("hour");
+  });
+
   test("date chart: empty label with a value is replaced by arbitrary label with no value", () => {
     model.dispatch("SET_FORMATTING", {
       sheetId: model.getters.getActiveSheetId(),
@@ -1878,6 +1975,33 @@ describe("Linear/Time charts", () => {
     const chart = (model.getters.getChartRuntime(chartId) as LineChartRuntime).chartJsConfig;
     expect(chart.data!.labels![1]).toEqual("1/17/1900");
     expect(chart.data!.datasets![0].data![1]).toEqual({ y: undefined, x: "1/17/1900" });
+  });
+
+  test("date chart: long labels are not truncated", () => {
+    model.dispatch("SET_FORMATTING", {
+      sheetId: model.getters.getActiveSheetId(),
+      target: [toZone("C2")],
+      format: "m/d/yyyy hh:mm:ss a",
+    });
+    setCellContent(model, "C2", "300");
+    setCellContent(model, "B2", "10");
+    const formattedValue = getCellContent(model, "C2");
+    expect(formattedValue).toEqual("10/26/1900 12:00:00 AM");
+    expect(formattedValue.length).toBeGreaterThan(MAX_CHAR_LABEL);
+    createChart(
+      model,
+      {
+        type: "line",
+        dataSets: ["B2"],
+        labelRange: "C2",
+        labelsAsText: false,
+        dataSetsHaveTitle: false,
+      },
+      chartId
+    );
+    const chart = (model.getters.getChartRuntime(chartId) as LineChartRuntime).chartJsConfig;
+    expect(chart.data!.labels![0]).toEqual(formattedValue);
+    expect(chart.data!.datasets![0].data![0]).toEqual({ y: 10, x: formattedValue });
   });
 
   test("linear chart: label 0 isn't set to undefined", () => {

@@ -739,4 +739,32 @@ describe("Selection Input", () => {
     await nextTick();
     expect(fixture.querySelectorAll(".o-selection-ok").length).toBe(1);
   });
+
+  test("Reset selection button reset the selection input and remove focus", async () => {
+    const { model } = await createSelectionInput({ initialRanges: ["C4", "A1"] });
+    const input = fixture.querySelector("input")!;
+    await simulateClick(input);
+    setInputValueAndTrigger(input, "C5:D9");
+    await nextTick();
+    expect(input.value).toBe("C5:D9");
+
+    await simulateClick(".o-selection-ko");
+    expect(input.value).toBe("C4");
+
+    expect(model.getters.isGridSelectionActive()).toBeTruthy();
+  });
+
+  test("Ensure responsive behavior of selection input after entering an invalid range", async () => {
+    const { model, id } = await createSelectionInput({
+      hasSingleRange: true,
+      initialRanges: ["TEST"],
+    });
+    expect(model.getters.getSelectionInput(id)[0].xc).toBe("TEST");
+
+    await keyDown({ key: "Enter" });
+    await simulateClick("input");
+
+    selectCell(model, "B4");
+    expect(model.getters.getSelectionInput(id)[0].xc).toBe("B4");
+  });
 });

@@ -307,6 +307,7 @@ export class GridSelectionPlugin extends UIPlugin {
           this.gridSelection.anchor.zone
         );
         this.setSelectionMixin(this.gridSelection.anchor, this.gridSelection.zones);
+        this.selectedFigureId = null;
         break;
     }
     /** Any change to the selection has to be  reflected in the selection processor. */
@@ -651,7 +652,7 @@ export class GridSelectionPlugin extends UIPlugin {
       sheetId: cmd.sheetId,
       base: cmd.base,
       quantity: thickness,
-      position: "before",
+      position: cmd.position,
     });
 
     const isCol = cmd.dimension === "COL";
@@ -676,12 +677,13 @@ export class GridSelectionPlugin extends UIPlugin {
       this.dispatch,
       this.selection
     );
+    const base = isBasedBefore ? cmd.base : cmd.base + 1;
     const pasteTarget = [
       {
-        left: isCol ? cmd.base : 0,
-        right: isCol ? cmd.base + thickness - 1 : this.getters.getNumberCols(cmd.sheetId) - 1,
-        top: !isCol ? cmd.base : 0,
-        bottom: !isCol ? cmd.base + thickness - 1 : this.getters.getNumberRows(cmd.sheetId) - 1,
+        left: isCol ? base : 0,
+        right: isCol ? base + thickness - 1 : this.getters.getNumberCols(cmd.sheetId) - 1,
+        top: !isCol ? base : 0,
+        bottom: !isCol ? base + thickness - 1 : this.getters.getNumberRows(cmd.sheetId) - 1,
       },
     ];
     state.paste(pasteTarget, { selectTarget: true });
@@ -720,6 +722,11 @@ export class GridSelectionPlugin extends UIPlugin {
       doesElementsHaveCommonMerges(id, cmd.base - 1, cmd.base)
     ) {
       return CommandResult.WillRemoveExistingMerge;
+    }
+    const headers = [cmd.base, ...cmd.elements];
+    const maxHeaderValue = isCol ? this.getters.getNumberCols(id) : this.getters.getNumberRows(id);
+    if (headers.some((h) => h < 0 || h >= maxHeaderValue)) {
+      return CommandResult.InvalidHeaderIndex;
     }
     return CommandResult.Success;
   }

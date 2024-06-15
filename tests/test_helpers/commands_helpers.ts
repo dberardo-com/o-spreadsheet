@@ -2,6 +2,7 @@ import { isInside, lettersToNumber, toCartesian, toZone } from "../../src/helper
 import { Model } from "../../src/model";
 import {
   AnchorZone,
+  Border,
   BorderData,
   ChartDefinition,
   ClipboardPasteOptions,
@@ -528,6 +529,21 @@ export function setZoneBorders(model: Model, border: BorderData, xcs?: string[])
   });
 }
 
+export function setBorders(
+  model: Model,
+  xc: string,
+  border?: Border,
+  sheetId: UID = model.getters.getActiveSheetId()
+) {
+  const { col, row } = toCartesian(xc);
+  return model.dispatch("SET_BORDER", {
+    sheetId,
+    col,
+    row,
+    border,
+  });
+}
+
 /**
  * Clear a cell
  */
@@ -537,7 +553,7 @@ export function clearCell(
   sheetId: UID = model.getters.getActiveSheetId()
 ) {
   const { col, row } = toCartesian(xc);
-  model.dispatch("CLEAR_CELL", { col, row, sheetId });
+  return model.dispatch("CLEAR_CELL", { col, row, sheetId });
 }
 
 /**
@@ -760,6 +776,7 @@ export function moveColumns(
   model: Model,
   target: string,
   columns: string[],
+  position: "before" | "after" = "before",
   sheetId: UID = model.getters.getActiveSheetId()
 ): DispatchResult {
   return model.dispatch("MOVE_COLUMNS_ROWS", {
@@ -767,6 +784,7 @@ export function moveColumns(
     base: lettersToNumber(target),
     dimension: "COL",
     elements: columns.map(lettersToNumber),
+    position,
   });
 }
 
@@ -774,6 +792,7 @@ export function moveRows(
   model: Model,
   target: number,
   rows: number[],
+  position: "before" | "after" = "before",
   sheetId: UID = model.getters.getActiveSheetId()
 ): DispatchResult {
   return model.dispatch("MOVE_COLUMNS_ROWS", {
@@ -781,6 +800,7 @@ export function moveRows(
     base: target,
     dimension: "ROW",
     elements: rows,
+    position,
   });
 }
 

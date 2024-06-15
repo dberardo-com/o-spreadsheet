@@ -8,7 +8,8 @@ import {
   isDefined,
   isZoneInside,
   isZoneValid,
-  positions,
+  largeMax,
+  largeMin,
   range,
   toCartesian,
 } from "../../helpers/index";
@@ -69,7 +70,6 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     "getNumberHeaders",
     "getGridLinesVisibility",
     "getNextSheetName",
-    "isEmpty",
     "getSheetSize",
     "getSheetZone",
     "getPaneDivisions",
@@ -129,8 +129,8 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
         }
         return CommandResult.Success;
       case "REMOVE_COLUMNS_ROWS": {
-        const min = Math.min(...cmd.elements);
-        const max = Math.max(...cmd.elements);
+        const min = largeMin(cmd.elements);
+        const max = largeMax(cmd.elements);
         if (min < 0 || !this.doesHeaderExist(cmd.sheetId, cmd.dimension, max)) {
           return CommandResult.InvalidHeaderIndex;
         } else if (
@@ -507,15 +507,6 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
   // Row/Col manipulation
   // ---------------------------------------------------------------------------
 
-  /**
-   * Check if a zone only contains empty cells
-   */
-  isEmpty(sheetId: UID, zone: Zone): boolean {
-    return positions(zone)
-      .map(({ col, row }) => this.getCell({ sheetId, col, row }))
-      .every((cell) => !cell || cell.content === "");
-  }
-
   getCommandZones(cmd: Command): Zone[] {
     const zones: Zone[] = [];
     if ("zone" in cmd) {
@@ -856,11 +847,13 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     rows.sort((a, b) => b - a);
 
     for (let group of groupConsecutive(rows)) {
+      // indexes are sorted in the descending order
+      const from = group[group.length - 1];
+      const to = group[0];
       // Move the cells.
-      this.moveCellOnRowsDeletion(sheet, group[group.length - 1], group[0]);
-
-      // Effectively delete the element and recompute the left-right/top-bottom.
-      group.map((row) => this.updateRowsStructureOnDeletion(row, sheet));
+      this.moveCellOnRowsDeletion(sheet, from, to);
+      // Effectively delete the rows
+      this.updateRowsStructureOnDeletion(sheet, from, to);
     }
     const count = rows.filter((row) => row < sheet.panes.ySplit).length;
     if (count) {
@@ -892,8 +885,6 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     // Move the cells.
     this.moveCellsOnAddition(sheet, index, quantity, "rows");
 
-    // Recompute the left-right/top-bottom.
-    this.updateRowsStructureOnAddition(sheet, row, quantity);
     if (index < sheet.panes.ySplit) {
       this.setPaneDivisions(sheet.id, sheet.panes.ySplit + quantity, "ROW");
     }
@@ -1007,36 +998,22 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     }
   }
 
-  private updateRowsStructureOnDeletion(index: HeaderIndex, sheet: Sheet) {
+  private updateRowsStructureOnDeletion(
+    sheet: Sheet,
+    deleteFromRow: HeaderIndex,
+    deleteToRow: HeaderIndex
+  ) {
     const rows: Row[] = [];
-    const cellsQueue = sheet.rows.map((row) => row.cells);
+    const cellsQueue = sheet.rows.map((row) => row.cells).reverse();
     for (let i in sheet.rows) {
-      if (Number(i) === index) {
+      const row = Number(i);
+      if (row >= deleteFromRow && row <= deleteToRow) {
         continue;
       }
       rows.push({
-        cells: cellsQueue.shift()!,
+        cells: cellsQueue.pop()!,
       });
     }
-    this.history.update("sheets", sheet.id, "rows", rows);
-  }
-
-  /**
-   * Update the rows of the sheet after an addition:
-   * - Rename the rows
-   *
-   * @param sheet Sheet on which the deletion occurs
-   * @param addedRow Index of the added row
-   * @param rowsToAdd Number of the rows to add
-   */
-  private updateRowsStructureOnAddition(sheet: Sheet, addedRow: HeaderIndex, rowsToAdd: number) {
-    const rows: Row[] = [];
-    const cellsQueue = sheet.rows.map((row) => row.cells);
-    sheet.rows.forEach(() =>
-      rows.push({
-        cells: cellsQueue.shift()!,
-      })
-    );
     this.history.update("sheets", sheet.id, "rows", rows);
   }
 

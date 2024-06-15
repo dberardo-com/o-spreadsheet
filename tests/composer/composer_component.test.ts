@@ -2,12 +2,14 @@ import {
   selectionIndicatorClass,
   tokenColors,
 } from "../../src/components/composer/composer/composer";
+import { DEFAULT_CELL_HEIGHT, DEFAULT_CELL_WIDTH } from "../../src/constants";
 import { colors, toCartesian, toZone } from "../../src/helpers/index";
 import { Model } from "../../src/model";
 import { Highlight } from "../../src/types";
 import { ContentEditableHelper } from "../__mocks__/content_editable_helper";
 import { MockClipboardData, getClipboardEvent } from "../test_helpers/clipboard";
 import {
+  createFilter,
   createSheet,
   createSheetWithName,
   merge,
@@ -28,11 +30,13 @@ import {
   getCellContent,
   getCellText,
   getEvaluatedCell,
+  getFilterTable,
   getSelectionAnchorCellXc,
 } from "../test_helpers/getters_helpers";
 import {
   ComposerWrapper,
   mountComposerWrapper,
+  mountSpreadsheet,
   nextTick,
   typeInComposerHelper,
 } from "../test_helpers/helpers";
@@ -388,7 +392,7 @@ describe("ranges and highlights", () => {
       await nextTick();
       expect(composerEl.textContent).toBe("=C1");
 
-      composerEl = await typeInComposer("+B2");
+      composerEl = await typeInComposer("+B2", false);
       model.dispatch("START_CHANGE_HIGHLIGHT", {
         zone: toZone("B1:B2"),
       });
@@ -507,6 +511,19 @@ describe("composer", () => {
     expect(model.getters.getEditionMode()).toBe("inactive");
   });
 
+  test("should create a table when a cell is double clicked in edit mode", async () => {
+    ({ model, fixture } = await mountSpreadsheet());
+    selectCell(model, "A1");
+    triggerMouseEvent(
+      ".o-grid-overlay",
+      "dblclick",
+      0.5 * DEFAULT_CELL_WIDTH,
+      0.5 * DEFAULT_CELL_HEIGHT
+    );
+    createFilter(model, "A1");
+    expect(getFilterTable(model, "A1")).toBeTruthy();
+  });
+
   test("edit link cell changes the label", async () => {
     setCellContent(model, "A1", "[label](http://odoo.com)");
     composerEl = await startComposition();
@@ -515,6 +532,20 @@ describe("composer", () => {
     const link = getEvaluatedCell(model, "A1").link;
     expect(link?.label).toBe("label updated");
     expect(link?.url).toBe("http://odoo.com");
+  });
+
+  test("Pressing Enter while editing a label does not open grid composer", async () => {
+    ({ model, fixture } = await mountSpreadsheet());
+    setCellContent(model, "A1", "[label](http://odoo.com)");
+    await simulateClick(".o-topbar-menu[data-id='insert']");
+    await simulateClick(".o-menu-item[data-name='insert_link']");
+    const editor = fixture.querySelector(".o-link-editor");
+    expect(editor).toBeTruthy();
+
+    editor!.querySelectorAll("input")[0].focus();
+    await keyDown({ key: "Enter" });
+    expect(fixture.querySelector(".o-link-editor")).toBeFalsy();
+    expect(model.getters.getEditionMode()).toBe("inactive");
   });
 
   describe("change selecting mode when typing specific token value", () => {
@@ -591,7 +622,7 @@ describe("composer", () => {
           composerEl = await startComposition();
           await typeInComposer(matchingValue);
           await moveToStart();
-          composerEl = await typeInComposer(formula + ",");
+          composerEl = await typeInComposer(formula + ",", false);
           expect(model.getters.getEditionMode()).toBe("selecting");
           expect(composerEl.textContent).toBe(formula + "," + matchingValue);
           expect(cehMock.selectionState.isSelectingRange).toBeTruthy();
@@ -605,7 +636,7 @@ describe("composer", () => {
           composerEl = await startComposition();
           await typeInComposer(mismatchingValue);
           await moveToStart();
-          await typeInComposer(formula + ",");
+          await typeInComposer(formula + ",", false);
           expect(model.getters.getEditionMode()).not.toBe("selecting");
           expect(composerEl.textContent).toBe(formula + "," + mismatchingValue);
         }
@@ -618,7 +649,7 @@ describe("composer", () => {
           await typeInComposer(matchingValue);
           await moveToStart();
           const formulaInput = formula + ",  ";
-          composerEl = await typeInComposer(formulaInput);
+          composerEl = await typeInComposer(formulaInput, false);
           expect(model.getters.getEditionMode()).toBe("selecting");
           expect(composerEl.textContent).toBe(formulaInput + matchingValue);
           expect(cehMock.selectionState.isSelectingRange).toBeTruthy();
@@ -632,7 +663,7 @@ describe("composer", () => {
           composerEl = await startComposition();
           await typeInComposer(mismatchingValue);
           await moveToStart();
-          await typeInComposer(formula + ",  ");
+          await typeInComposer(formula + ",  ", false);
           expect(model.getters.getEditionMode()).not.toBe("selecting");
           expect(composerEl.textContent).toBe(formula + ",  " + mismatchingValue);
           expect(cehMock.selectionState.isSelectingRange).toBeFalsy();
@@ -645,7 +676,7 @@ describe("composer", () => {
           composerEl = await startComposition();
           await typeInComposer("   " + matchingValue);
           await moveToStart();
-          composerEl = await typeInComposer(formula + ",");
+          composerEl = await typeInComposer(formula + ",", false);
           expect(model.getters.getEditionMode()).toBe("selecting");
           expect(composerEl.textContent).toBe(formula + ",   " + matchingValue);
           expect(cehMock.selectionState.isSelectingRange).toBeTruthy();
@@ -659,7 +690,7 @@ describe("composer", () => {
           composerEl = await startComposition();
           await typeInComposer("   " + mismatchingValue);
           await moveToStart();
-          composerEl = await typeInComposer(formula + ",");
+          composerEl = await typeInComposer(formula + ",", false);
           expect(model.getters.getEditionMode()).not.toBe("selecting");
           expect(cehMock.selectionState.isSelectingRange).toBeFalsy();
           expect(composerEl.textContent).toBe(formula + ",   " + mismatchingValue);
@@ -817,7 +848,7 @@ describe("composer", () => {
   test("Add a character changing the edition mode to 'selecting' correctly renders the composer", async () => {
     await typeInComposer("=sum(4");
     expect(cehMock.selectionState.isSelectingRange).toBeFalsy();
-    await typeInComposer(",");
+    await typeInComposer(",", false);
     expect(cehMock.selectionState.isSelectingRange).toBeTruthy();
   });
 
@@ -1103,6 +1134,15 @@ describe("Copy/paste in composer", () => {
     expect(pasteFn).not.toBeCalled();
     fixture.removeEventListener("paste", parentPasteFn);
   });
+
+  test("Default paste is prevented in a closed composer", async () => {
+    composerEl = fixture.querySelector("div.o-composer")! as HTMLDivElement;
+    const pasteEvent = new Event("paste", { cancelable: true });
+    composerEl.dispatchEvent(pasteEvent);
+    await nextTick();
+    expect(pasteEvent.defaultPrevented).toBeTruthy();
+    expect(model.getters.getEditionMode()).toBe("inactive");
+  });
 });
 
 describe("Double click selection in composer", () => {
@@ -1183,6 +1223,25 @@ describe("Double click selection in composer", () => {
     expect(model.getters.getComposerSelection()).toEqual({
       start: 8,
       end: 14,
+    });
+  });
+
+  test("Double click on function parameters does not produce a traceback", async () => {
+    const composerEl = await typeInComposer("=A1+A2+A3");
+    model.dispatch("CHANGE_COMPOSER_CURSOR_SELECTION", {
+      start: 1,
+      end: 6,
+    });
+    await nextTick();
+    expect(model.getters.getComposerSelection()).toEqual({
+      start: 1,
+      end: 6,
+    });
+    triggerMouseEvent(composerEl, "dblclick");
+    await nextTick();
+    expect(model.getters.getComposerSelection()).toEqual({
+      start: 1,
+      end: 6,
     });
   });
 });

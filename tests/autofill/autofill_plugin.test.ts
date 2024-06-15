@@ -1,4 +1,5 @@
 import { Model } from "../../src";
+import { functionRegistry } from "../../src/functions";
 import { buildSheetLink, toCartesian, toZone } from "../../src/helpers";
 import { AutofillPlugin } from "../../src/plugins/ui_feature/autofill";
 import { Border, ConditionalFormat, Style } from "../../src/types";
@@ -380,6 +381,19 @@ describe("Autofill", () => {
       });
     });
 
+    test("Autofill number and formulas", () => {
+      setCellContent(model, "A1", "1");
+      setCellContent(model, "A2", "2");
+      setCellContent(model, "A3", "=A1 + 10");
+      autofill("A1:A3", "A9");
+      expect(getCellContent(model, "A4")).toBe("3");
+      expect(getCellContent(model, "A5")).toBe("4");
+      expect(getCellContent(model, "A6")).toBe("13");
+      expect(getCellContent(model, "A7")).toBe("5");
+      expect(getCellContent(model, "A8")).toBe("6");
+      expect(getCellContent(model, "A9")).toBe("15");
+    });
+
     test.each([
       ["=A1", "=#REF"],
       ["=SUM(A1:B1)", "=SUM(#REF)"],
@@ -520,6 +534,41 @@ describe("Autofill", () => {
     expect(getCellContent(model, "A3")).toBe("2");
     expect(getCellContent(model, "A4")).toBe("2");
     expect(getCell(model, "A5")).toBeUndefined();
+  });
+
+  test("Auto-autofill considers cells with a content", () => {
+    setCellContent(model, "B2", "1");
+    setCellContent(model, "B3", '=""');
+    setCellContent(model, "B4", '=""');
+    setCellContent(model, "A2", "2");
+    setSelection(model, ["A2"]);
+    model.dispatch("AUTOFILL_AUTO");
+    expect(getCellContent(model, "A3")).toBe("2");
+    expect(getCellContent(model, "A4")).toBe("2");
+    expect(getCell(model, "A5")).toBeUndefined();
+  });
+
+  test("Auto-autofill considers formula spreaded value", () => {
+    functionRegistry.add("SPREAD.EMPTY", {
+      description: "spreads empty values",
+      args: [],
+      returns: ["NUMBER"],
+      compute: function (): string[][] {
+        return [
+          ["", "", ""], // return 2 col, 3 row matrix
+          ["", "", ""],
+        ];
+      },
+      isExported: false,
+    });
+    setCellContent(model, "A1", "=SPREAD.EMPTY()");
+    setCellContent(model, "C1", "2");
+    setSelection(model, ["C1"]);
+    model.dispatch("AUTOFILL_AUTO");
+    expect(getCellContent(model, "C1")).toBe("2");
+    expect(getCellContent(model, "C2")).toBe("2");
+    expect(getCellContent(model, "C3")).toBe("2");
+    expect(getCell(model, "C4")).toBeUndefined();
   });
 
   test("autofill with merge in selection", () => {

@@ -5,6 +5,8 @@ import {
   groupConsecutive,
   isZoneInside,
   isZoneValid,
+  largeMax,
+  largeMin,
   numberToLetters,
   RangeImpl,
   rangeReference,
@@ -74,8 +76,8 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
           let newRange = range;
           let changeType: ChangeType = "NONE";
           for (let group of groups) {
-            const min = Math.min(...group);
-            const max = Math.max(...group);
+            const min = largeMin(group);
+            const max = largeMax(group);
             if (range.zone[start] <= min && min <= range.zone[end]) {
               const toRemove = Math.min(range.zone[end], max) - min + 1;
               changeType = "RESIZE";
@@ -329,13 +331,18 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
    *
    * @param range the range (received from getRangeFromXC or getRangeFromZone)
    * @param forSheetId the id of the sheet where the range string is supposed to be used.
+   * @param options
+   * @param options.useFixedReference if true, the range will be returned with fixed row and column
    */
-  getRangeString(range: Range, forSheetId: UID): string {
+  getRangeString(range: Range, forSheetId: UID, options = { useFixedReference: false }): string {
     if (!range) {
       return INCORRECT_RANGE_STRING;
     }
     if (range.invalidXc) {
       return range.invalidXc;
+    }
+    if (!this.getters.tryGetSheet(range.sheetId)) {
+      return INCORRECT_RANGE_STRING;
     }
     if (range.zone.bottom - range.zone.top < 0 || range.zone.right - range.zone.left < 0) {
       return INCORRECT_RANGE_STRING;
@@ -359,7 +366,7 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
       return INCORRECT_RANGE_STRING;
     }
 
-    let rangeString = this.getRangePartString(rangeImpl, 0);
+    let rangeString = this.getRangePartString(rangeImpl, 0, options);
     if (rangeImpl.parts && rangeImpl.parts.length === 2) {
       // this if converts A2:A2 into A2 except if any part of the original range had fixed row or column (with $)
       if (
@@ -371,7 +378,7 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
         rangeImpl.parts[1].colFixed
       ) {
         rangeString += ":";
-        rangeString += this.getRangePartString(rangeImpl, 1);
+        rangeString += this.getRangePartString(rangeImpl, 1, options);
       }
     }
 
@@ -423,20 +430,24 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
   /**
    * Get a Xc string that represent a part of a range
    */
-  private getRangePartString(range: RangeImpl, part: 0 | 1): string {
-    const colFixed = range.parts && range.parts[part].colFixed ? "$" : "";
+  private getRangePartString(
+    range: RangeImpl,
+    part: 0 | 1,
+    options: { useFixedReference: boolean } = { useFixedReference: false }
+  ): string {
+    const colFixed = range.parts && range.parts[part]?.colFixed ? "$" : "";
     const col = part === 0 ? numberToLetters(range.zone.left) : numberToLetters(range.zone.right);
-    const rowFixed = range.parts && range.parts[part].rowFixed ? "$" : "";
+    const rowFixed = range.parts && range.parts[part]?.rowFixed ? "$" : "";
     const row = part === 0 ? String(range.zone.top + 1) : String(range.zone.bottom + 1);
 
     let str = "";
-    if (range.isFullCol) {
+    if (range.isFullCol && !options.useFixedReference) {
       if (part === 0 && range.unboundedZone.hasHeader) {
         str = colFixed + col + rowFixed + row;
       } else {
         str = colFixed + col;
       }
-    } else if (range.isFullRow) {
+    } else if (range.isFullRow && !options.useFixedReference) {
       if (part === 0 && range.unboundedZone.hasHeader) {
         str = colFixed + col + rowFixed + row;
       } else {

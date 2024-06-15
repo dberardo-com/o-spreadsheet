@@ -240,6 +240,23 @@ describe("clipboard", () => {
     expect(getCell(model, "A2", sheet2Id)).toBe(undefined);
   });
 
+  test("can paste even if sheet containing copy zone has been deleted", () => {
+    const model = new Model();
+    const sheet1Id = model.getters.getActiveSheetId();
+    const sheet2Id = "sheet2";
+    createSheet(model, { sheetId: sheet2Id });
+
+    setCellContent(model, "A1", "Apple", sheet1Id);
+    setStyle(model, "A1", { bold: true });
+    copy(model, "A1");
+
+    activateSheet(model, sheet2Id);
+    deleteSheet(model, sheet1Id);
+    paste(model, "A2");
+    expect(getCellContent(model, "A2", sheet2Id)).toBe("Apple");
+    expect(getCell(model, "A2", sheet2Id)!.style).toEqual({ bold: true });
+  });
+
   test("can copy into a cell with style", () => {
     const model = new Model();
     // set value and style in B2
@@ -2046,10 +2063,88 @@ describe("clipboard: pasting outside of sheet", () => {
 
   test("Can paste localized formula from the OS", () => {
     const model = new Model();
-    updateLocale(model, { ...DEFAULT_LOCALE, decimalSeparator: ",", formulaArgSeparator: ";" });
+    updateLocale(model, {
+      ...DEFAULT_LOCALE,
+      decimalSeparator: ",",
+      formulaArgSeparator: ";",
+      thousandsSeparator: " ",
+    });
     pasteFromOSClipboard(model, "A1", "=SUM(5 ; 3,14)");
     expect(getCell(model, "A1")?.content).toBe("=SUM(5 , 3.14)");
     expect(getEvaluatedCell(model, "A1").value).toBe(8.14);
+  });
+
+  test("Can copy parts of the spread values", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "1");
+    setCellContent(model, "A2", "2");
+    setCellContent(model, "A3", "3");
+    setCellContent(model, "B1", "=TRANSPOSE(A1:A3)");
+    copy(model, "C1:D1");
+    paste(model, "C2");
+    expect(getEvaluatedCell(model, "C2").value).toBe(2);
+    expect(getEvaluatedCell(model, "D2").value).toBe(3);
+  });
+
+  test("Cutting parts of the spread values will make a copy of the values", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "1");
+    setCellContent(model, "A2", "2");
+    setCellContent(model, "A3", "3");
+    setCellContent(model, "B1", "=TRANSPOSE(A1:A3)");
+    cut(model, "C1:D1");
+    paste(model, "C2");
+    expect(getEvaluatedCell(model, "B1").value).toBe(1);
+    expect(getEvaluatedCell(model, "C1").value).toBe(2);
+    expect(getEvaluatedCell(model, "C2").value).toBe(2);
+    expect(getEvaluatedCell(model, "D1").value).toBe(3);
+    expect(getEvaluatedCell(model, "D2").value).toBe(3);
+  });
+
+  test("can copy and paste format only from spread value", () => {
+    const model = new Model();
+
+    // formula without format
+    setCellContent(model, "A1", "=SUM(1+2)");
+
+    // formula with format set on it
+    setCellContent(model, "A2", "=SUM(1+2)");
+    setCellFormat(model, "A2", "0%");
+
+    // formula that return value with format
+    setCellContent(model, "A3", "=DATE(2042,1,1)");
+
+    // formula that return value with format and other format seted on it
+    setCellContent(model, "A4", "=DATE(2042,1,1)");
+    setCellFormat(model, "A4", "0%");
+
+    // formula that return value with format inferred from reference
+    setCellContent(model, "A5", "3");
+    setCellFormat(model, "A5", "0%");
+    setCellContent(model, "A6", "=SUM(1+A5)");
+
+    // formula that return value with format inferred from reference and other format seted on it
+    setCellContent(model, "A7", "3");
+    setCellFormat(model, "A7", "0%");
+    setCellContent(model, "A8", "=SUM(1+A7)");
+    setCellFormat(model, "A8", "#,##0[$$]");
+
+    setCellContent(model, "B1", "=TRANSPOSE(A1:A8)");
+
+    for (const cell of ["C2", "D2", "E2", "F2", "G2", "H2", "I2"]) {
+      setCellContent(model, cell, "42");
+    }
+
+    copy(model, "C1:I1");
+    paste(model, "C2", "onlyFormat");
+
+    expect(getCellContent(model, "C2")).toBe("4200%");
+    expect(getCellContent(model, "D2")).toBe("2/10/1900");
+    expect(getCellContent(model, "E2")).toBe("4200%");
+    expect(getCellContent(model, "F2")).toBe("4200%");
+    expect(getCellContent(model, "G2")).toBe("4200%");
+    expect(getCellContent(model, "H2")).toBe("4200%");
+    expect(getCellContent(model, "I2")).toBe("42$");
   });
 
   describe("add col/row can invalidate the clipboard of cut", () => {
@@ -2166,6 +2261,20 @@ describe("clipboard: pasting outside of sheet", () => {
       expect(getCellContent(model, "C1")).toBe("");
       expect(getCellContent(model, "C3")).toBe("");
     });
+
+    test("Adding rows in another sheet does not invalidate the clipboard", () => {
+      const model = new Model();
+      setCellContent(model, "A1", "1");
+      setCellContent(model, "A2", "2");
+      cut(model, "A1:A2");
+
+      createSheet(model, { activate: true });
+      addRows(model, "after", 0, 5);
+
+      paste(model, "A1");
+      expect(getCellContent(model, "A1")).toBe("1");
+      expect(getCellContent(model, "A2")).toBe("2");
+    });
   });
 
   describe("remove col/row can invalidate the clipboard of cut", () => {
@@ -2247,6 +2356,20 @@ describe("clipboard: pasting outside of sheet", () => {
       paste(model, "D1");
       expect(getCellContent(model, "B2")).toBe("1");
       expect(getCellContent(model, "D1")).toBe("");
+    });
+
+    test("Removing rows in another sheet does not invalidate the clipboard", () => {
+      const model = new Model();
+      setCellContent(model, "A1", "1");
+      setCellContent(model, "A2", "2");
+      cut(model, "A1:A2");
+
+      createSheet(model, { activate: true });
+      deleteRows(model, [1]);
+
+      paste(model, "A1");
+      expect(getCellContent(model, "A1")).toBe("1");
+      expect(getCellContent(model, "A2")).toBe("2");
     });
   });
 });

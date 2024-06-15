@@ -6,7 +6,12 @@ import {
   GRID_ICON_MARGIN,
 } from "../../src/constants";
 import { IsValueInListCriterion, UID } from "../../src/types";
-import { addDataValidation, setCellContent, setSelection } from "../test_helpers/commands_helpers";
+import {
+  addDataValidation,
+  createFilter,
+  setCellContent,
+  setSelection,
+} from "../test_helpers/commands_helpers";
 import { click, keyDown, setInputValueAndTrigger } from "../test_helpers/dom_helper";
 import { getCellContent } from "../test_helpers/getters_helpers";
 import {
@@ -203,10 +208,13 @@ describe("autocomplete in composer", () => {
 
     test("Values displayed are not filtered when the user opens the composer with a valid value", async () => {
       setCellContent(model, "A1", "hello");
-      model.dispatch("START_EDITION", {});
-      ({ fixture, parent } = await mountComposerWrapper(model, { focus: "cellFocus" }));
+      ({ fixture, parent } = await mountComposerWrapper(model, { focus: "inactive" }));
+      parent.startComposition();
+      // start edition
       await nextTick();
-      expect(fixture.querySelectorAll<HTMLElement>(".o-autocomplete-value")).toHaveLength(3);
+      // autocomplete update
+      await nextTick();
+      expect(document.querySelectorAll<HTMLElement>(".o-autocomplete-value")).toHaveLength(3);
     });
 
     test("Values displayed are not filtered when the input has no match in valid values", async () => {
@@ -254,6 +262,33 @@ describe("autocomplete in composer", () => {
     expect(values[1].textContent).toBe("ok");
     expect(values[2].textContent).toBe("thing");
   });
+
+  test("Duplicate values will be removed before sending proposals to the autocomplete dropdown in data validation with range", async () => {
+    setCellContent(model, "A2", "ok");
+    setCellContent(model, "A3", "hello");
+    setCellContent(model, "A4", "ok");
+    addDataValidation(model, "A1", "id", {
+      type: "isValueInRange",
+      values: ["A2:A4"],
+      displayStyle: "arrow",
+    });
+
+    ({ fixture, parent } = await mountComposerWrapper(model));
+    await typeInComposer("");
+    expect(model.getters.getAutoCompleteDataValidationValues()).toMatchObject(["ok", "hello"]);
+  });
+
+  test("Duplicate values will be removed before sending proposals to the autocomplete dropdown in data validation with list", async () => {
+    addDataValidation(model, "A1", "id", {
+      type: "isValueInList",
+      values: ["ok", "hello", "ok", "hello"],
+      displayStyle: "arrow",
+    });
+
+    ({ fixture, parent } = await mountComposerWrapper(model));
+    await typeInComposer("");
+    expect(model.getters.getAutoCompleteDataValidationValues()).toMatchObject(["ok", "hello"]);
+  });
 });
 
 describe("Selection arrow icon in grid", () => {
@@ -278,12 +313,18 @@ describe("Selection arrow icon in grid", () => {
     );
   });
 
-  test("Clicking on the icon opens the composer", async () => {
+  test("Clicking on the icon opens the composer with suggestions", async () => {
     setSelection(model, ["B2"]);
     ({ fixture } = await mountSpreadsheet({ model }));
     await click(fixture, ".o-dv-list-icon");
+    await nextTick();
     expect(model.getters.getEditionMode()).toBe("editing");
     expect(model.getters.getCurrentEditedCell()).toEqual({ sheetId, col: 0, row: 0 });
+    const suggestions = fixture.querySelectorAll(".o-autocomplete-dropdown .o-autocomplete-value");
+    expect(suggestions.length).toBe(3);
+    expect(suggestions[0].textContent).toBe("ok");
+    expect(suggestions[1].textContent).toBe("hello");
+    expect(suggestions[2].textContent).toBe("okay");
   });
 
   test("Icon is not displayed when display style is plainText", async () => {
@@ -293,7 +334,7 @@ describe("Selection arrow icon in grid", () => {
       displayStyle: "plainText",
     });
     ({ fixture } = await mountSpreadsheet({ model }));
-    expect(fixture.querySelector(".o-grid-cell-icon")).toBeNull();
+    expect(fixture.querySelector(".o-dv-list-icon")).toBeNull();
   });
 
   test("Icon is not displayed in dashboard", async () => {
@@ -301,9 +342,22 @@ describe("Selection arrow icon in grid", () => {
     addDataValidation(model, "A1", "id", {
       type: "isValueInList",
       values: ["ok", "hello", "okay"],
-      displayStyle: "plainText",
+      displayStyle: "arrow",
     });
     ({ fixture } = await mountSpreadsheet({ model }));
-    expect(fixture.querySelector(".o-grid-cell-icon")).toBeNull();
+    expect(fixture.querySelector(".o-dv-list-icon")).toBeNull();
+  });
+
+  test("Icon is not displayed if there is a filter icon", async () => {
+    addDataValidation(model, "A1", "id", {
+      type: "isValueInList",
+      values: ["ok", "hello", "okay"],
+      displayStyle: "arrow",
+    });
+    createFilter(model, "A1:A4");
+
+    ({ fixture } = await mountSpreadsheet({ model }));
+    expect(fixture.querySelector(".o-dv-list-icon")).toBeNull();
+    expect(fixture.querySelector(".o-filter-icon")).not.toBeNull();
   });
 });

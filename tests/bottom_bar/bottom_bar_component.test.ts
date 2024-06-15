@@ -1,5 +1,6 @@
 import { Component, onMounted, onWillUnmount, xml } from "@odoo/owl";
 import { BottomBar } from "../../src/components/bottom_bar/bottom_bar";
+import { interactiveRenameSheet } from "../../src/helpers/ui/sheet_interactive";
 import { Model } from "../../src/model";
 import { Pixel, SpreadsheetChildEnv, UID } from "../../src/types";
 import {
@@ -25,7 +26,7 @@ import {
   triggerMouseEvent,
   triggerWheelEvent,
 } from "../test_helpers/dom_helper";
-import { mockUuidV4To, mountComponent, nextTick } from "../test_helpers/helpers";
+import { makeTestEnv, mockUuidV4To, mountComponent, nextTick } from "../test_helpers/helpers";
 import { mockGetBoundingClientRect } from "../test_helpers/mock_helpers";
 
 jest.mock("../../src/helpers/uuid", () => require("../__mocks__/uuid"));
@@ -56,11 +57,16 @@ function isDragAndDropActive(): boolean {
 
 async function mountBottomBar(
   model: Model = new Model(),
-  env: Partial<SpreadsheetChildEnv> = {}
-): Promise<{ parent: Parent; model: Model }> {
+  partialEnv: Partial<SpreadsheetChildEnv> = {}
+): Promise<{ parent: Parent; model: Model; env: SpreadsheetChildEnv }> {
   let parent: Component;
-  ({ fixture, parent } = await mountComponent(Parent, { model, env, props: { model } }));
-  return { parent: parent as Parent, model };
+  let env: SpreadsheetChildEnv;
+  ({ fixture, parent, env } = await mountComponent(Parent, {
+    model,
+    env: partialEnv,
+    props: { model },
+  }));
+  return { parent: parent as Parent, model, env };
 }
 
 describe("BottomBar component", () => {
@@ -240,20 +246,32 @@ describe("BottomBar component", () => {
   describe("Rename a sheet", () => {
     let model: Model;
     let raiseError: jest.Mock;
+    let env: SpreadsheetChildEnv;
     beforeEach(async () => {
       raiseError = jest.fn((string, callback) => {
         callback();
       });
-      ({ model } = await mountBottomBar(new Model(), { raiseError }));
-      model;
+      ({ model, env } = await mountBottomBar(new Model(), { raiseError }));
+      env.focusableElement.focus = jest.fn();
     });
 
     test("Double click on the sheet name make it editable and give it the focus", async () => {
       const sheetName = fixture.querySelector<HTMLElement>(".o-sheet-name")!;
       expect(sheetName.getAttribute("contenteditable")).toEqual("false");
       await doubleClick(sheetName);
+      await nextTick();
       expect(sheetName.getAttribute("contenteditable")).toEqual("true");
       expect(document.activeElement).toEqual(sheetName);
+    });
+
+    test("Double click on the sheet name in readonly mode doesn't make it editable", async () => {
+      model.updateMode("readonly");
+      await nextTick();
+      const sheetName = fixture.querySelector<HTMLElement>(".o-sheet-name")!;
+      expect(sheetName.getAttribute("contenteditable")).toEqual("false");
+      triggerMouseEvent(sheetName, "dblclick");
+      await nextTick();
+      expect(sheetName.getAttribute("contenteditable")).toEqual("false");
     });
 
     test("Rename sheet with context menu makes sheet name editable and give it the focus", async () => {
@@ -326,6 +344,45 @@ describe("BottomBar component", () => {
       expect(raiseError).not.toHaveBeenCalled();
       expect(sheetName.textContent).toEqual("SHEET1");
     });
+
+    test("Pasting styled content in sheet name and renaming sheet does not throw a trackback", async () => {
+      const HTML = `<span style="color: rgb(242, 44, 61); background-color: rgb(0, 0, 0);">HELLO</span>`;
+
+      const sheetName = fixture.querySelector<HTMLElement>(".o-sheet-name")!;
+      triggerMouseEvent(sheetName, "dblclick");
+      await nextTick();
+
+      sheetName.innerHTML = HTML;
+      await keyDown({ key: "Enter" });
+
+      expect(sheetName.getAttribute("contenteditable")).toEqual("false");
+      await nextTick();
+
+      expect(sheetName.innerText).toEqual("HELLO");
+    });
+
+    test.each(["Enter", "Escape"])(
+      "Pressing %s ends the edition and yields back the DOM focus",
+      async (key) => {
+        const sheetName = fixture.querySelector<HTMLElement>(".o-sheet-name")!;
+        // will give focus back to the component main node
+        triggerMouseEvent(sheetName, "dblclick");
+        await nextTick();
+        sheetName.textContent = "New name";
+        await keyDown({ key });
+        expect(env.focusableElement.focus).toHaveBeenCalled();
+      }
+    );
+  });
+
+  test("Can't rename a sheet in readonly mode", async () => {
+    const sheetName = "New name";
+    const raiseError = jest.fn();
+    const model = new Model({}, { mode: "readonly" });
+    const env = makeTestEnv({ model, raiseError });
+    interactiveRenameSheet(env, model.getters.getActiveSheetId(), sheetName, raiseError);
+    expect(raiseError).not.toHaveBeenCalled();
+    expect(model.getters.getActiveSheet().name).toEqual("Sheet1");
   });
 
   test("Can duplicate a sheet", async () => {
@@ -823,6 +880,13 @@ describe("BottomBar component", () => {
       expect(fixture.querySelector(".o-menu")).toBeTruthy();
       await dragSheet("Sheet1", { mouseMoveX: 10, mouseUp: false });
       expect(fixture.querySelector(".o-menu")).toBeFalsy();
+    });
+
+    test("Cannot drag & drop sheets in readonly mode", async () => {
+      model.updateMode("readonly");
+      await dragSheet("Sheet1", { mouseMoveX: 10, mouseUp: false });
+      expect(getElComputedStyle('.o-sheet[data-id="Sheet1"]', "position")).toBe("");
+      expect(getElComputedStyle('.o-sheet[data-id="Sheet1"]', "left")).toBe("");
     });
   });
 });

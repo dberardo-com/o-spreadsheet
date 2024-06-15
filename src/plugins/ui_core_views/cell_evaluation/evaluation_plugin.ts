@@ -1,9 +1,11 @@
 import { compileTokens } from "../../../formulas/compiler";
-import { Token, compile, isExportableToExcel } from "../../../formulas/index";
+import { Token, isExportableToExcel } from "../../../formulas/index";
 import { getItemId, positions, toXC } from "../../../helpers/index";
+import { CellErrorType, EvaluationError } from "../../../types/errors";
 import {
   CellPosition,
   CellValue,
+  CellValueType,
   Command,
   EvaluatedCell,
   ExcelCellData,
@@ -16,11 +18,9 @@ import {
   UID,
   Zone,
   invalidateDependenciesCommands,
-  isMatrix,
 } from "../../../types/index";
 import { UIPlugin, UIPluginConfig } from "../../ui_plugin";
 import { CoreViewCommand } from "./../../../types/commands";
-import { CompilationParameters, buildCompilationParameters } from "./compilation_parameters";
 import { Evaluator } from "./evaluator";
 
 //#region
@@ -149,17 +149,17 @@ export class EvaluationPlugin extends UIPlugin {
     "getEvaluatedCells",
     "getEvaluatedCellsInZone",
     "getSpreadPositionsOf",
+    "getArrayFormulaSpreadingOn",
+    "isEmpty",
   ] as const;
 
   private shouldRebuildDependenciesGraph = true;
 
   private evaluator: Evaluator;
-  private compilationParams: CompilationParameters;
   private positionsToUpdate: CellPosition[] = [];
 
-  constructor(private config: UIPluginConfig) {
+  constructor(config: UIPluginConfig) {
     super(config);
-    this.compilationParams = this.getCompilationParameters();
     this.evaluator = new Evaluator(config.custom, this.getters);
   }
 
@@ -188,10 +188,6 @@ export class EvaluationPlugin extends UIPlugin {
       case "EVALUATE_CELLS":
         this.evaluator.evaluateAllCells();
         break;
-      case "UPDATE_LOCALE":
-        this.compilationParams = this.getCompilationParameters();
-        this.evaluator.updateCompilationParameters();
-        break;
     }
   }
 
@@ -211,17 +207,11 @@ export class EvaluationPlugin extends UIPlugin {
   // ---------------------------------------------------------------------------
 
   evaluateFormula(sheetId: UID, formulaString: string): CellValue | Matrix<CellValue> {
-    const compiledFormula = compile(formulaString);
-
-    const ranges: Range[] = [];
-    for (let xc of compiledFormula.dependencies) {
-      ranges.push(this.getters.getRangeFromSheetXC(sheetId, xc));
+    try {
+      return this.evaluator.evaluateFormula(sheetId, formulaString);
+    } catch (error) {
+      return error instanceof EvaluationError ? error.errorType : CellErrorType.GenericError;
     }
-    const array = compiledFormula.execute(ranges, ...this.compilationParams);
-    if (isMatrix(array)) {
-      return array.map((col) => col.map((row) => row.value));
-    }
-    return array.value;
   }
 
   /**
@@ -277,6 +267,19 @@ export class EvaluationPlugin extends UIPlugin {
     return this.evaluator.getSpreadPositionsOf(position);
   }
 
+  getArrayFormulaSpreadingOn(position: CellPosition): CellPosition | undefined {
+    return this.evaluator.getArrayFormulaSpreadingOn(position);
+  }
+
+  /**
+   * Check if a zone only contains empty cells
+   */
+  isEmpty(sheetId: UID, zone: Zone): boolean {
+    return positions(zone)
+      .map(({ col, row }) => this.getEvaluatedCell({ sheetId, col, row }))
+      .every((cell) => cell.type === CellValueType.empty);
+  }
+
   // ---------------------------------------------------------------------------
   // Export
   // ---------------------------------------------------------------------------
@@ -286,12 +289,13 @@ export class EvaluationPlugin extends UIPlugin {
       const evaluatedCell = this.evaluator.getEvaluatedCell(position);
 
       const xc = toXC(position.col, position.row);
-
       const value = evaluatedCell.value;
       let isFormula = false;
       let newContent: string | undefined = undefined;
       let newFormat: string | undefined = undefined;
       let isExported: boolean = true;
+
+      const exportedSheetData = data.sheets.find((sheet) => sheet.id === position.sheetId)!;
 
       const formulaCell = this.getCorrespondingFormulaCell(position);
       if (formulaCell) {
@@ -299,18 +303,33 @@ export class EvaluationPlugin extends UIPlugin {
         isFormula = isExported;
 
         if (!isExported) {
-          newContent = value.toString();
-          newFormat = evaluatedCell.format;
+          // If the cell contains a non-exported formula and that is evaluates to
+          // nothing* ,we don't export it.
+          // * non-falsy value are relevant and so are 0 and FALSE, which only leaves
+          // the empty string.
+          if (value !== "") {
+            newContent = value.toString();
+            newFormat = evaluatedCell.format;
+          }
         }
       }
 
-      const exportedSheetData = data.sheets.find((sheet) => sheet.id === position.sheetId)!;
       const exportedCellData: ExcelCellData = exportedSheetData.cells[xc] || ({} as ExcelCellData);
 
       const format = newFormat
         ? getItemId<Format>(newFormat, data.formats)
         : exportedCellData.format;
-      const content = !isExported ? newContent : exportedCellData.content;
+      let content: string | undefined;
+      if (isExported && isFormula && formulaCell?.compiledFormula.dependencies.length) {
+        content = this.getters.getFormulaCellContent(
+          exportedSheetData.id,
+          formulaCell.compiledFormula,
+          formulaCell.compiledFormula.dependencies,
+          true
+        );
+      } else {
+        content = !isExported ? newContent : exportedCellData.content;
+      }
       exportedSheetData.cells[xc] = { ...exportedCellData, value, isFormula, content, format };
     }
   }
@@ -329,7 +348,7 @@ export class EvaluationPlugin extends UIPlugin {
       return undefined;
     }
 
-    const spreadingFormulaPosition = this.evaluator.getArrayFormulaSpreadingOn(position);
+    const spreadingFormulaPosition = this.getArrayFormulaSpreadingOn(position);
 
     if (spreadingFormulaPosition === undefined) {
       return undefined;
@@ -341,12 +360,6 @@ export class EvaluationPlugin extends UIPlugin {
       return spreadingFormulaCell;
     }
     return undefined;
-  }
-
-  private getCompilationParameters() {
-    return buildCompilationParameters(this.config.custom, this.getters, (position) =>
-      this.evaluator.getEvaluatedCell(position)
-    );
   }
 }
 

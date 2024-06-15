@@ -6,10 +6,14 @@ import { ChartDefinition } from "../../../src/types";
 import { BarChartDefinition } from "../../../src/types/chart/bar_chart";
 import { LineChartDefinition } from "../../../src/types/chart/line_chart";
 import {
+  copy,
   createChart,
   createGaugeChart,
   createScorecardChart,
   createSheet,
+  paste,
+  selectCell,
+  setCellContent,
   setStyle,
   updateChart,
 } from "../../test_helpers/commands_helpers";
@@ -23,6 +27,7 @@ import {
   simulateClick,
   triggerMouseEvent,
 } from "../../test_helpers/dom_helper";
+import { getCellContent } from "../../test_helpers/getters_helpers";
 import {
   mockChart,
   mountSpreadsheet,
@@ -1047,6 +1052,100 @@ describe("charts", () => {
 
       expect(document.querySelector("input[name='labelsAsText']")).toBeFalsy();
     });
+
+    test("Side panel correctly reacts to has_header checkbox check/uncheck (with only one point)", async () => {
+      createTestChart("basicChart");
+      updateChart(model, chartId, { type: "line", labelRange: "C2", dataSets: ["A1"] });
+      await nextTick();
+      await simulateClick(".o-figure");
+      await simulateClick(".o-figure-menu-item");
+      await simulateClick(".o-menu div[data-name='edit']");
+
+      const checkbox = document.querySelector("input[name='labelsAsText']") as HTMLInputElement;
+      expect(checkbox.checked).toBe(false);
+
+      await simulateClick(checkbox);
+      expect(checkbox.checked).toBe(true);
+    });
+
+    test("Side panel correctly reacts to has_header checkbox check/uncheck (with two datasets)", async () => {
+      createTestChart("basicChart");
+      updateChart(model, chartId, { type: "line", labelRange: "C2", dataSets: ["A1:A2", "A1"] });
+      await nextTick();
+      await simulateClick(".o-figure");
+      await simulateClick(".o-figure-menu-item");
+      await simulateClick(".o-menu div[data-name='edit']");
+
+      const checkbox = document.querySelector("input[name='labelsAsText']") as HTMLInputElement;
+      expect(checkbox.checked).toBe(false);
+
+      expect(checkbox.checked).toBe(false);
+      expect((model.getters.getChartDefinition(chartId) as LineChartDefinition).dataSets).toEqual([
+        "A1:A2",
+        "A1",
+      ]);
+
+      await simulateClick(checkbox);
+      expect(checkbox.checked).toBe(true);
+      expect((model.getters.getChartDefinition(chartId) as LineChartDefinition).dataSets).toEqual([
+        "A1:A2",
+        "A1",
+      ]);
+
+      await simulateClick(checkbox);
+      expect(checkbox.checked).toBe(false);
+      expect((model.getters.getChartDefinition(chartId) as LineChartDefinition).dataSets).toEqual([
+        "A1:A2",
+        "A1",
+      ]);
+    });
+  });
+
+  test("When a figure is selected, pressing Ctrl+A will not propagate to the grid to select all cells", async () => {
+    selectCell(model, "A1");
+    createTestChart("gauge");
+    await nextTick();
+
+    await simulateClick(".o-figure");
+    await keyDown({ key: "A", ctrlKey: true });
+
+    expect(model.getters.getSelectedFigureId()).toBe("someuuid");
+    expect(model.getters.getSelectedZone()).toEqual(toZone("A1"));
+  });
+
+  test("Can undo multiple times after pasting figure", async () => {
+    setCellContent(model, "D6", "HELLO");
+    createTestChart("gauge");
+    await nextTick();
+    parent.env.model.dispatch("SELECT_FIGURE", { id: chartId });
+    await nextTick();
+
+    copy(model);
+    await simulateClick(".o-grid-overlay", 0, 0);
+    paste(model, "A1");
+    await nextTick();
+
+    await keyDown({ key: "Z", ctrlKey: true });
+    expect(model.getters.getChartIds(sheetId)).toHaveLength(1);
+
+    await keyDown({ key: "Y", ctrlKey: true });
+    expect(model.getters.getChartIds(sheetId)).toHaveLength(2);
+
+    await keyDown({ key: "Z", ctrlKey: true });
+    await keyDown({ key: "Z", ctrlKey: true });
+    expect(model.getters.getChartIds(sheetId)).toHaveLength(0);
+
+    await keyDown({ key: "Z", ctrlKey: true });
+    expect(getCellContent(model, "D6")).toEqual("");
+  });
+
+  test("Chart is not re-rendered if its runtime do not change", async () => {
+    const updateChart = jest.spyOn((window as any).Chart.prototype, "update");
+    createTestChart("basicChart");
+    await nextTick();
+    setCellContent(model, "C3", "value");
+    await nextTick();
+    expect(updateChart).not.toHaveBeenCalled();
   });
 });
 

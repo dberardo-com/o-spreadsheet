@@ -1,6 +1,10 @@
 import type { ChartConfiguration, ChartDataset, Chart as ChartType, LegendOptions } from "chart.js";
 import { DeepPartial } from "chart.js/dist/types/utils";
-import { BACKGROUND_CHART_COLOR, LINE_FILL_TRANSPARENCY } from "../../../constants";
+import {
+  BACKGROUND_CHART_COLOR,
+  INCORRECT_RANGE_STRING,
+  LINE_FILL_TRANSPARENCY,
+} from "../../../constants";
 import {
   AddColumnsRowsCommand,
   ApplyRangeChange,
@@ -29,7 +33,7 @@ import { getChartTimeOptions, timeFormatLuxonCompatible } from "../../chart_date
 import { colorToRGBA, rgbaToHex } from "../../color";
 import { formatValue } from "../../format";
 import { deepCopy, findNextDefinedValue } from "../../misc";
-import { createRange } from "../../range";
+import { createValidRange } from "../../range";
 import { AbstractChart } from "./abstract_chart";
 import {
   ChartColors,
@@ -77,7 +81,7 @@ export class LineChart extends AbstractChart {
       sheetId,
       definition.dataSetsHaveTitle
     );
-    this.labelRange = createRange(this.getters, sheetId, definition.labelRange);
+    this.labelRange = createValidRange(this.getters, sheetId, definition.labelRange);
     this.background = definition.background;
     this.verticalAxisPosition = definition.verticalAxisPosition;
     this.legendPosition = definition.legendPosition;
@@ -180,7 +184,7 @@ export class LineChart extends AbstractChart {
     if (this.aggregated) return undefined;
     const dataSets: ExcelChartDataset[] = this.dataSets
       .map((ds: DataSet) => toExcelDataset(this.getters, ds))
-      .filter((ds) => ds.range !== ""); // && range !== INCORRECT_RANGE_STRING ? show incorrect #ref ?
+      .filter((ds) => ds.range !== "" && ds.range !== INCORRECT_RANGE_STRING);
     const labelRange = toExcelLabelRange(
       this.getters,
       this.labelRange,
@@ -285,10 +289,10 @@ function canBeLinearChart(labelRange: Range | undefined, getters: Getters): bool
 function getLineConfiguration(
   chart: LineChart,
   labels: string[],
-  localeFormat: LocaleFormat
+  options: LocaleFormat & { truncateLabels?: boolean }
 ): Required<ChartConfiguration> {
   const fontColor = chartFontColor(chart.background);
-  const config = getDefaultChartJsRuntime(chart, labels, fontColor, localeFormat);
+  const config = getDefaultChartJsRuntime(chart, labels, fontColor, options);
 
   const legend: DeepPartial<LegendOptions<"line">> = {
     labels: {
@@ -331,8 +335,11 @@ function getLineConfiguration(
         callback: (value) => {
           value = Number(value);
           if (isNaN(value)) return value;
-          const { locale, format } = localeFormat;
-          return formatValue(value, { locale, format: !format && value > 1000 ? "#,##" : format });
+          const { locale, format } = options;
+          return formatValue(value, {
+            locale,
+            format: !format && Math.abs(value) >= 1000 ? "#,##" : format,
+          });
         },
       },
     },
@@ -366,9 +373,10 @@ export function createLineChartRuntime(chart: LineChart, getters: Getters): Line
   }
 
   const locale = getters.getLocale();
+  const truncateLabels = axisType === "category";
   const dataSetFormat = getChartDatasetFormat(getters, chart.dataSets);
-  const localeFormat = { format: dataSetFormat, locale };
-  const config = getLineConfiguration(chart, labels, localeFormat);
+  const options = { format: dataSetFormat, locale, truncateLabels };
+  const config = getLineConfiguration(chart, labels, options);
   const labelFormat = getChartLabelFormat(getters, chart.labelRange)!;
   if (axisType === "time") {
     const axis = {

@@ -12,7 +12,7 @@ import { DataValidationOverlay } from "../data_validation_overlay/data_validatio
 import { FiguresContainer } from "../figures/figure_container/figure_container";
 import { GridAddRowsFooter } from "../grid_add_rows_footer/grid_add_rows_footer";
 import { css } from "../helpers";
-import { getBoundingRectAsPOJO } from "../helpers/dom_helpers";
+import { getBoundingRectAsPOJO, isCtrlKey } from "../helpers/dom_helpers";
 import { useRefListener } from "../helpers/listener_hook";
 import { useAbsoluteBoundingRect } from "../helpers/position_hook";
 import { useInterval } from "../helpers/time_hooks";
@@ -159,7 +159,7 @@ interface Props {
   onCellClicked: (
     col: HeaderIndex,
     row: HeaderIndex,
-    modifiers: { ctrlKey: boolean; shiftKey: boolean }
+    modifiers: { addZone: boolean; expandZone: boolean }
   ) => void;
   onCellRightClicked: (col: HeaderIndex, row: HeaderIndex, coordinates: DOMCoordinates) => void;
   onGridResized: (dimension: Rect) => void;
@@ -226,7 +226,10 @@ export class GridOverlay extends Component<Props, SpreadsheetChildEnv> {
       return;
     }
     const [col, row] = this.getCartesianCoordinates(ev);
-    this.props.onCellClicked(col, row, { shiftKey: ev.shiftKey, ctrlKey: ev.ctrlKey });
+    this.props.onCellClicked(col, row, {
+      expandZone: ev.shiftKey,
+      addZone: isCtrlKey(ev),
+    });
   }
 
   onDoubleClick(ev: MouseEvent) {
@@ -235,7 +238,6 @@ export class GridOverlay extends Component<Props, SpreadsheetChildEnv> {
   }
 
   onContextMenu(ev: MouseEvent) {
-    ev.preventDefault();
     const [col, row] = this.getCartesianCoordinates(ev);
     this.props.onCellRightClicked(col, row, { x: ev.clientX, y: ev.clientY });
   }

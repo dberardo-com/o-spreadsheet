@@ -78,7 +78,11 @@ export function addRows(
         let cellNode = escapeXml``;
         // Either formula or static value inside the cell
         if (cell.isFormula) {
-          ({ attrs: additionalAttrs, node: cellNode } = addFormula(cell));
+          const res = addFormula(cell);
+          if (!res) {
+            continue;
+          }
+          ({ attrs: additionalAttrs, node: cellNode } = res);
         } else if (cell.content && isMarkdownLink(cell.content)) {
           const { label } = parseMarkdownLink(cell.content);
           ({ attrs: additionalAttrs, node: cellNode } = addContent(label, construct.sharedStrings));
@@ -91,11 +95,10 @@ export function addRows(
           ));
         }
         attributes.push(...additionalAttrs);
-        cellNodes.push(escapeXml/*xml*/ `
-          <c ${formatAttributes(attributes)}>
-            ${cellNode}
-          </c>
-        `);
+        // prettier-ignore
+        cellNodes.push(escapeXml/*xml*/ `<c ${formatAttributes(attributes)}>
+  ${cellNode}
+</c>`);
       }
     }
     if (cellNodes.length || row.size !== DEFAULT_CELL_HEIGHT || row.isHidden) {

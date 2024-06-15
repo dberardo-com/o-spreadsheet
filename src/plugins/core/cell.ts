@@ -1,5 +1,6 @@
 import { DEFAULT_STYLE } from "../../constants";
 import { Token, compile, tokenize } from "../../formulas";
+import { deepEquals } from "../../helpers";
 import { parseLiteral } from "../../helpers/cells";
 import {
   concat,
@@ -18,6 +19,7 @@ import {
   Cell,
   CellData,
   CellPosition,
+  ClearCellCommand,
   CommandResult,
   CompiledFormula,
   CoreCommand,
@@ -26,11 +28,13 @@ import {
   FormulaCell,
   HeaderIndex,
   LiteralCell,
+  PositionDependentCommand,
   Range,
   RangeCompiledFormula,
   RangePart,
   Style,
   UID,
+  UpdateCellCommand,
   UpdateCellData,
   WorkbookData,
   Zone,
@@ -90,11 +94,12 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
   // Command Handling
   // ---------------------------------------------------------------------------
 
-  allowDispatch(cmd: CoreCommand): CommandResult {
+  allowDispatch(cmd: CoreCommand): CommandResult | CommandResult[] {
     switch (cmd.type) {
       case "UPDATE_CELL":
+        return this.checkValidations(cmd, this.checkCellOutOfSheet, this.checkUselessUpdateCell);
       case "CLEAR_CELL":
-        return this.checkCellOutOfSheet(cmd.sheetId, cmd.col, cmd.row);
+        return this.checkValidations(cmd, this.checkCellOutOfSheet, this.checkUselessClearCell);
       default:
         return CommandResult.Success;
     }
@@ -262,8 +267,8 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
 
   private removeDefaultStyleValues(style: Style | undefined): Style {
     const cleanedStyle = { ...style };
-    for (const [property, defaultValue] of Object.entries(DEFAULT_STYLE)) {
-      if (cleanedStyle[property] === defaultValue) {
+    for (const property in DEFAULT_STYLE) {
+      if (cleanedStyle[property] === DEFAULT_STYLE[property]) {
         delete cleanedStyle[property];
       }
     }
@@ -283,18 +288,9 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
    */
   getCellById(cellId: UID): Cell | undefined {
     // this must be as fast as possible
-    // const position = this.getters.getCellPosition(cellId);
-    // const sheet = this.cells[position.sheetId];
-    // return sheet[cellId];
-
-    for (const sheetId in this.cells) {
-      const sheet = this.cells[sheetId];
-      const cell = sheet[cellId];
-      if (cell) {
-        return cell;
-      }
-    }
-    return undefined;
+    const position = this.getters.getCellPosition(cellId);
+    const sheet = this.cells[position.sheetId];
+    return sheet[cellId];
   }
 
   /*
@@ -303,7 +299,8 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
   getFormulaCellContent(
     sheetId: UID,
     compiledFormula: RangeCompiledFormula,
-    dependencies?: Range[]
+    dependencies?: Range[],
+    useFixedReference: boolean = false
   ): string {
     const ranges = dependencies || compiledFormula.dependencies;
     let rangeIndex = 0;
@@ -311,7 +308,7 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
       compiledFormula.tokens.map((token) => {
         if (token.type === "REFERENCE") {
           const range = ranges[rangeIndex++];
-          return this.getters.getRangeString(range, sheetId);
+          return this.getters.getRangeString(range, sheetId, { useFixedReference });
         }
         return token.value;
       })
@@ -470,11 +467,7 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
     } else {
       style = before ? before.style : undefined;
     }
-    const locale = this.getters.getLocale();
-    let format =
-      ("format" in after ? after.format : before && before.format) ||
-      detectDateFormat(afterContent, locale) ||
-      detectNumberFormat(afterContent);
+    const format = "format" in after ? after.format : before && before.format;
 
     /* Read the following IF as:
      * we need to remove the cell if it is completely empty, but we can know if it completely empty if:
@@ -531,12 +524,11 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
     style: Style | undefined
   ): LiteralCell {
     const locale = this.getters.getLocale();
-    content = parseLiteral(content, locale).toString();
     return {
       id,
-      content,
+      content: parseLiteral(content, locale).toString(),
       style,
-      format,
+      format: format || detectDateFormat(content, locale) || detectNumberFormat(content),
       isFormula: false,
     };
   }
@@ -576,9 +568,10 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
     style: Style | undefined,
     sheetId: UID
   ): FormulaCell {
-    const dependencies = compiledFormula.dependencies.map((xc) =>
-      this.getters.getRangeFromSheetXC(sheetId, xc)
-    );
+    const dependencies: Range[] = [];
+    for (const xc of compiledFormula.dependencies) {
+      dependencies.push(this.getters.getRangeFromSheetXC(sheetId, xc));
+    }
     return new FormulaCellWithDependencies(
       id,
       compiledFormula,
@@ -586,7 +579,7 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
       style,
       dependencies,
       sheetId,
-      this.getters.getRangeString.bind(this)
+      this.getters.getRangeString
     );
   }
 
@@ -613,11 +606,36 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
     };
   }
 
-  private checkCellOutOfSheet(sheetId: UID, col: HeaderIndex, row: HeaderIndex): CommandResult {
+  private checkCellOutOfSheet(cmd: PositionDependentCommand): CommandResult {
+    const { sheetId, col, row } = cmd;
     const sheet = this.getters.tryGetSheet(sheetId);
     if (!sheet) return CommandResult.InvalidSheetId;
     const sheetZone = this.getters.getSheetZone(sheetId);
     return isInside(col, row, sheetZone) ? CommandResult.Success : CommandResult.TargetOutOfSheet;
+  }
+
+  private checkUselessClearCell(cmd: ClearCellCommand): CommandResult {
+    const cell = this.getters.getCell(cmd);
+    if (!cell) return CommandResult.NoChanges;
+    if (!cell.content && !cell.style && !cell.format) {
+      return CommandResult.NoChanges;
+    }
+    return CommandResult.Success;
+  }
+
+  private checkUselessUpdateCell(cmd: UpdateCellCommand): CommandResult {
+    const cell = this.getters.getCell(cmd);
+    const hasContent = "content" in cmd || "formula" in cmd;
+    const hasStyle = "style" in cmd;
+    const hasFormat = "format" in cmd;
+    if (
+      (!hasContent || cell?.content === cmd.content) &&
+      (!hasStyle || deepEquals(cell?.style, cmd.style)) &&
+      (!hasFormat || cell?.format === cmd.format)
+    ) {
+      return CommandResult.NoChanges;
+    }
+    return CommandResult.Success;
   }
 }
 
@@ -631,15 +649,17 @@ class FormulaCellWithDependencies implements FormulaCell {
     readonly style: Style | undefined,
     dependencies: Range[],
     private readonly sheetId: UID,
-    private readonly getRangeString: (range: Range, sheetId: UID) => string
+    private readonly getRangeString: (
+      range: Range,
+      sheetId: UID,
+      option?: { useFixedReference: boolean }
+    ) => string
   ) {
     let rangeIndex = 0;
     const tokens = compiledFormula.tokens.map((token) => {
       if (token.type === "REFERENCE") {
         const index = rangeIndex++;
-        return new RangeReferenceToken(() =>
-          this.getRangeString(dependencies[index], this.sheetId)
-        );
+        return new RangeReferenceToken(dependencies, index, this.sheetId, this.getRangeString);
       }
       return token;
     });
@@ -653,14 +673,35 @@ class FormulaCellWithDependencies implements FormulaCell {
   get content() {
     return concat(this.compiledFormula.tokens.map((token) => token.value));
   }
+
+  get contentWithFixedReferences() {
+    let rangeIndex = 0;
+    return concat(
+      this.compiledFormula.tokens.map((token) => {
+        if (token.type === "REFERENCE") {
+          const index = rangeIndex++;
+          return this.getRangeString(this.compiledFormula.dependencies[index], this.sheetId, {
+            useFixedReference: true,
+          });
+        }
+        return token.value;
+      })
+    );
+  }
 }
 
 class RangeReferenceToken implements Token {
   type = "REFERENCE" as const;
 
-  constructor(private getValue: () => string) { }
+  constructor(
+    private ranges: Range[],
+    private rangeIndex: number,
+    private sheetId,
+    private getRangeString: (range: Range, sheetId: UID) => string
+  ) { }
 
   get value() {
-    return this.getValue();
+    const range = this.ranges[this.rangeIndex];
+    return this.getRangeString(range, this.sheetId);
   }
 }

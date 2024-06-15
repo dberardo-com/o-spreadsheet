@@ -59,6 +59,7 @@ import { GridOverlay } from "../grid_overlay/grid_overlay";
 import { GridPopover } from "../grid_popover/grid_popover";
 import { HeadersOverlay } from "../headers_overlay/headers_overlay";
 import { cssPropertiesToCss } from "../helpers";
+import { isCtrlKey } from "../helpers/dom_helpers";
 import { dragAndDropBeyondTheViewport } from "../helpers/drag_and_drop";
 import { useGridDrawing } from "../helpers/draw_grid_hook";
 import { useAbsoluteBoundingRect } from "../helpers/position_hook";
@@ -97,6 +98,8 @@ const registries = {
   UNGROUP_HEADERS: unGroupHeadersMenuRegistry,
 };
 
+const MODIFIER_KEYS = ["Shift", "Control", "Alt", "Meta"];
+
 interface Props {
   sidePanelIsOpen: boolean;
   exposeFocus: (focus: () => void) => void;
@@ -128,7 +131,6 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
   readonly HEADER_WIDTH = HEADER_WIDTH;
   private menuState!: MenuState;
   private gridRef!: Ref<HTMLElement>;
-  private hiddenInput!: Ref<HTMLElement>;
 
   onMouseWheel!: (ev: WheelEvent) => void;
   canvasPosition!: DOMCoordinates;
@@ -141,7 +143,6 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
       menuItems: [],
     });
     this.gridRef = useRef("grid");
-    this.hiddenInput = useRef("hiddenInput");
     this.canvasPosition = useAbsoluteBoundingRect(this.gridRef);
     this.hoveredCell = useState({ col: undefined, row: undefined });
 
@@ -149,13 +150,13 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
     useExternalListener(document.body, "cut", this.copy.bind(this, true));
     useExternalListener(document.body, "copy", this.copy.bind(this, false));
     useExternalListener(document.body, "paste", this.paste);
-    onMounted(() => this.focus());
-    this.props.exposeFocus(() => this.focus());
+    onMounted(() => this.focusDefaultElement());
+    this.props.exposeFocus(() => this.focusDefaultElement());
     useGridDrawing("canvas", this.env.model, () =>
       this.env.model.getters.getSheetViewDimensionWithHeaders()
     );
     useEffect(
-      () => this.focus(),
+      () => this.focusDefaultElement(),
       () => [this.env.model.getters.getActiveSheetId()]
     );
     this.onMouseWheel = useWheelHandler((deltaX, deltaY) => {
@@ -183,7 +184,7 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
     if (this.env.model.getters.hasOpenedPopover()) {
       this.closeOpenedPopover();
     }
-    this.focus();
+    this.focusDefaultElement();
   }
 
   // this map will handle most of the actions that should happen on key down. The arrow keys are managed in the key
@@ -374,12 +375,12 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
     "ALT+SHIFT+ARROWDOWN": () => this.processHeaderGroupingKey("down"),
   };
 
-  focus() {
+  focusDefaultElement() {
     if (
       !this.env.model.getters.getSelectedFigureId() &&
       this.env.model.getters.getEditionMode() === "inactive"
     ) {
-      this.hiddenInput.el?.focus();
+      this.env.focusableElement.focus();
     }
   }
 
@@ -446,7 +447,7 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
   onCellClicked(
     col: HeaderIndex,
     row: HeaderIndex,
-    { ctrlKey, shiftKey }: { ctrlKey: boolean; shiftKey: boolean }
+    { addZone, expandZone }: { addZone: boolean; expandZone: boolean }
   ) {
     if (this.env.model.getters.hasOpenedPopover()) {
       this.closeOpenedPopover();
@@ -454,9 +455,9 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
     if (this.env.model.getters.getEditionMode() === "editing") {
       interactiveStopEdition(this.env);
     }
-    if (shiftKey) {
+    if (expandZone) {
       this.env.model.selection.setAnchorCorner(col, row);
-    } else if (ctrlKey) {
+    } else if (addZone) {
       this.env.model.selection.addCellToSelection(col, row);
     } else {
       this.env.model.selection.selectCell(col, row);
@@ -520,12 +521,12 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
   }
 
   onKeydown(ev: KeyboardEvent) {
-    const eventKey = ev.key.toUpperCase();
     let keyDownString = "";
-    if (ev.ctrlKey && eventKey !== "CTRL") keyDownString += "CTRL+";
-    if (ev.metaKey) keyDownString += "CTRL+";
-    if (ev.altKey && eventKey !== "ALT") keyDownString += "ALT+";
-    if (ev.shiftKey && eventKey !== "SHIFT") keyDownString += "SHIFT+";
+    if (!MODIFIER_KEYS.includes(ev.key)) {
+      if (isCtrlKey(ev)) keyDownString += "CTRL+";
+      if (ev.altKey) keyDownString += "ALT+";
+      if (ev.shiftKey) keyDownString += "SHIFT+";
+    }
     keyDownString += ev.key.toUpperCase();
 
     let handler = this.keyDownMapping[keyDownString];
@@ -539,20 +540,6 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
     if (ev.key.startsWith("Arrow")) {
       this.processArrows(ev);
       return;
-    }
-  }
-
-  onInput(ev: InputEvent) {
-    // the user meant to paste in the sheet, not open the composer with the pasted content
-    if (!ev.isComposing && ev.inputType === "insertFromPaste") {
-      return;
-    }
-    if (ev.data) {
-      // if the user types a character on the grid, it means he wants to start composing the selected cell with that
-      // character
-      ev.preventDefault();
-      ev.stopPropagation();
-      this.props.onGridComposerCellFocused(ev.data);
     }
   }
 
@@ -644,13 +631,14 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
       const content = clipboardData.getData(ClipboardMIMEType.PlainText);
       const target = this.env.model.getters.getSelectedZones();
       const clipboardString = this.env.model.getters.getClipboardTextContent();
+      const isCutOperation = this.env.model.getters.isCutOperation();
       if (clipboardString === content) {
         // the paste actually comes from o-spreadsheet itself
         interactivePaste(this.env, target);
       } else {
         interactivePasteFromOS(this.env, target, content);
       }
-      if (this.env.model.getters.isCutOperation()) {
+      if (isCutOperation) {
         await this.env.clipboard.write({ [ClipboardMIMEType.PlainText]: "" });
       }
     }
@@ -677,7 +665,7 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
 
   closeMenu() {
     this.menuState.isOpen = false;
-    this.focus();
+    this.focusDefaultElement();
   }
 
   private processHeaderGroupingKey(direction: Direction) {

@@ -936,21 +936,21 @@ describe("Grid component", () => {
     await rightClickCell(model, "B2");
     await simulateClick(".o-menu div[data-name='add_row_before']");
     expect(fixture.querySelector(".o-menu div[data-name='add_row_before']")).toBeFalsy();
-    expect(document.activeElement).toBe(fixture.querySelector(".o-grid>input"));
+    expect(document.activeElement).toBe(fixture.querySelector(".o-grid div.o-composer"));
   });
 
   test("Duplicating sheet in the bottom bar focus the grid afterward", async () => {
-    expect(document.activeElement).toBe(fixture.querySelector(".o-grid>input"));
+    expect(document.activeElement).toBe(fixture.querySelector(".o-grid div.o-composer"));
 
     // open and close sheet context menu
     await simulateClick(".o-spreadsheet-bottom-bar .o-all-sheets .o-sheet .o-icon");
     await simulateClick(".o-menu-item[title='Duplicate']");
 
-    expect(document.activeElement).toBe(fixture.querySelector(".o-grid>input"));
+    expect(document.activeElement).toBe(fixture.querySelector(".o-grid div.o-composer"));
   });
 
   test("Can open context menu with a keyboard input ", async () => {
-    const selector = ".o-grid>input";
+    const selector = ".o-grid div.o-composer";
     const target = document.querySelector(selector)! as HTMLElement;
     target.focus();
     triggerMouseEvent(selector, "contextmenu", 0, 0, { button: 1, bubbles: true });
@@ -963,18 +963,17 @@ describe("Grid component", () => {
     expect(parseInt(popover.style.top)).toBe(mockGridPosition.y + HEADER_HEIGHT);
   });
 
-  test("input event triggered from a paste should not open composer", async () => {
-    const input = fixture.querySelector(".o-grid>input");
-    input?.dispatchEvent(
-      new InputEvent("input", {
-        data: "d",
-        bubbles: true,
-        isComposing: false,
-        inputType: "insertFromPaste",
-      })
+  test("Mac user use metaKey, not CtrlKey", async () => {
+    const mockUserAgent = jest.spyOn(navigator, "userAgent", "get");
+    mockUserAgent.mockImplementation(
+      () => "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/119.0"
     );
+    await keyDown({ key: "A", ctrlKey: true, bubbles: true });
+    expect(model.getters.getSelectedZone()).toEqual(toZone("A1"));
     await nextTick();
-    expect(model.getters.getEditionMode()).toBe("inactive");
+    await keyDown({ key: "A", metaKey: true, bubbles: true });
+    expect(model.getters.getSelectedZone()).toEqual(toZone("A1:Z100"));
+    jest.restoreAllMocks();
   });
 });
 

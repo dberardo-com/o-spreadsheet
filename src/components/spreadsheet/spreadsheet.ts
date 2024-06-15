@@ -29,6 +29,7 @@ import {
   TOPBAR_HEIGHT,
 } from "../../constants";
 import { ImageProvider } from "../../helpers/figures/images/image_provider";
+import { FocusableElement } from "../../helpers/focus_manager";
 import { Model } from "../../model";
 import { ComposerSelection } from "../../plugins/ui_stateful/edition";
 import { _t } from "../../translation";
@@ -38,6 +39,7 @@ import { SpreadsheetDashboard } from "../dashboard/dashboard";
 import { Grid } from "../grid/grid";
 import { HeaderGroupContainer } from "../header_group/header_group_container";
 import { css, cssPropertiesToCss } from "../helpers/css";
+import { isCtrlKey } from "../helpers/dom_helpers";
 import { SidePanel } from "../side_panel/side_panel/side_panel";
 import { TopBar } from "../top_bar/top_bar";
 import { instantiateClipboard } from "./../../helpers/clipboard/navigator_clipboard_wrapper";
@@ -66,9 +68,6 @@ css/* scss */ `
     .text-muted {
       color: grey !important;
     }
-    button {
-      color: #333;
-    }
     .o-disabled {
       opacity: 0.4;
       pointer: default;
@@ -80,6 +79,8 @@ css/* scss */ `
     *:before,
     *:after {
       box-sizing: content-box;
+      /** rtl not supported ATM */
+      direction: ltr;
     }
     .o-separator {
       border-bottom: ${MENU_SEPARATOR_BORDER_WIDTH}px solid ${SEPARATOR_COLOR};
@@ -189,17 +190,17 @@ css/* scss */ `
   }
 
   .o-button {
-    border: 1px solid lightgrey;
+    border: 1px solid;
     padding: 0px 20px 0px 20px;
     border-radius: 4px;
     font-weight: 500;
     font-size: 14px;
     height: 30px;
     line-height: 16px;
-    background: white;
     margin-right: 8px;
-    &:hover:enabled {
-      background-color: rgba(0, 0, 0, 0.08);
+
+    &:not(:hover) {
+      background-color: transparent;
     }
 
     &:enabled {
@@ -212,6 +213,15 @@ css/* scss */ `
 
     &:last-child {
       margin-right: 0px;
+    }
+
+    &.o-button-grey {
+      border-color: lightgrey;
+      background: #ffffff;
+      color: #333;
+      &:hover:enabled {
+        background-color: rgba(0, 0, 0, 0.08);
+      }
     }
   }
 
@@ -333,6 +343,10 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
     useSubEnv({
       model: this.model,
       imageProvider: fileStore ? new ImageProvider(fileStore) : undefined,
+
+      notifyUser: this.notifyUser,
+      raiseError: this.raiseError,
+      askConfirmation: this.askConfirmation,
       loadCurrencies: this.model.config.external.loadCurrencies,
       loadLocales: this.model.config.external.loadLocales,
       isDashboard: () => this.model.getters.isDashboard(),
@@ -340,13 +354,16 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
       toggleSidePanel: this.toggleSidePanel.bind(this),
       clipboard: this.env.clipboard || instantiateClipboard(),
       startCellEdition: (content?: string) => this.onGridComposerCellFocused(content),
-      notifyUser: this.notifyUser,
-      raiseError: this.raiseError,
-      askConfirmation: this.askConfirmation,
+      focusableElement: new FocusableElement(),
     });
 
     // useExternalListener(window as any, "resize", () => this.render(true));
     // useExternalListener(window, "beforeunload", this.unbindModelEvents.bind(this));
+
+    // For some reason, the wheel event is not properly registered inside templates
+    // in Chromium-based browsers based on chromium 125
+    // This hack ensures the event declared in the template is properly registered/working
+    useExternalListener(document.body, "wheel", () => { });
 
     this.bindModelEvents();
 
@@ -450,7 +467,7 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
 
   onKeydown(ev: KeyboardEvent) {
     let keyDownString = "";
-    if (ev.ctrlKey || ev.metaKey) {
+    if (isCtrlKey(ev)) {
       keyDownString += "CTRL+";
     }
     keyDownString += ev.key.toUpperCase();
@@ -470,18 +487,19 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
     }
     this.composer.topBarFocus = "contentFocus";
     this.composer.gridFocusMode = "inactive";
-    this.setComposerContent({ selection } || {});
+    this.setComposerContent({ selection });
   }
 
-  onGridComposerContentFocused() {
+  onGridComposerContentFocused(selection: ComposerSelection) {
     if (this.model.getters.isReadonly()) {
       return;
     }
     this.composer.topBarFocus = "inactive";
     this.composer.gridFocusMode = "contentFocus";
-    this.setComposerContent({});
+    this.setComposerContent({ selection });
   }
 
+  // TODO: either both are defined or none of them. change those args to an object
   onGridComposerCellFocused(content?: string, selection?: ComposerSelection) {
     if (this.model.getters.isReadonly()) {
       return;

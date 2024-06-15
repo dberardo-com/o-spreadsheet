@@ -1,7 +1,7 @@
 import { _t } from "../translation";
 import { CellValue, Currency, Format, FormattedValue, Locale, LocaleFormat } from "../types";
 import { DEFAULT_LOCALE } from "./../types/locale";
-import { INITIAL_1900_DAY, isDateTime, numberToJsDate, parseDateTime } from "./dates";
+import { DateTime, INITIAL_1900_DAY, isDateTime, numberToJsDate, parseDateTime } from "./dates";
 import { escapeRegExp, memoize } from "./misc";
 import { isNumber } from "./numbers";
 
@@ -114,6 +114,9 @@ function parseFormat(formatString: Format): InternalFormat {
 export function formatValue(value: CellValue, { format, locale }: LocaleFormat): FormattedValue {
   switch (typeof value) {
     case "string":
+      if (value.includes('\\"')) {
+        return value.replace(/\\"/g, '"');
+      }
       return value;
     case "boolean":
       return value ? "TRUE" : "FALSE";
@@ -390,7 +393,7 @@ export function applyDateTimeFormat(value: number, format: Format): FormattedVal
   return strDate + (strDate && strTime ? " " : "") + strTime;
 }
 
-function formatJSDate(jsDate: Date, format: Format): FormattedValue {
+function formatJSDate(jsDate: DateTime, format: Format): FormattedValue {
   const sep = format.match(/\/|-|\s/)?.[0];
   const parts = sep ? format.split(sep) : [format];
   return parts
@@ -426,7 +429,7 @@ function formatJSDate(jsDate: Date, format: Format): FormattedValue {
     .join(sep);
 }
 
-function formatJSTime(jsDate: Date, format: Format): FormattedValue {
+function formatJSTime(jsDate: DateTime, format: Format): FormattedValue {
   let parts = format.split(/:|\s/);
 
   const dateHours = jsDate.getHours();
@@ -445,7 +448,7 @@ function formatJSTime(jsDate: Date, format: Format): FormattedValue {
         switch (p) {
           case "hhhh":
             const helapsedHours = Math.floor(
-              (jsDate.getTime() - INITIAL_1900_DAY) / (60 * 60 * 1000)
+              (jsDate.getTime() - INITIAL_1900_DAY.getTime()) / (60 * 60 * 1000)
             );
             return helapsedHours.toString();
           case "hh":
@@ -570,27 +573,32 @@ export function createLargeNumberFormat(
   locale: Locale
 ): Format {
   const internalFormat = parseFormat(format || "#,##0");
-  const largeNumberFormat = internalFormat
-    .map((formatPart) => {
-      if (formatPart.type === "NUMBER") {
-        return [
-          {
-            ...formatPart,
-            format: {
-              ...formatPart.format,
-              magnitude,
-              decimalPart: undefined,
-            },
-          },
-          {
-            type: "STRING" as const,
-            format: postFix,
-          },
-        ];
-      }
-      return formatPart;
-    })
-    .flat();
+  const largeNumberFormat: InternalFormat = [];
+  for (let i = 0; i < internalFormat.length; i++) {
+    const formatPart = internalFormat[i];
+    if (formatPart.type !== "NUMBER") {
+      largeNumberFormat.push(formatPart);
+      continue;
+    }
+
+    largeNumberFormat.push({
+      ...formatPart,
+      format: {
+        ...formatPart.format,
+        magnitude,
+        decimalPart: undefined,
+      },
+    });
+    largeNumberFormat.push({
+      type: "STRING" as const,
+      format: postFix,
+    });
+
+    const nextFormatPart = internalFormat[i + 1];
+    if (nextFormatPart?.type === "STRING" && ["k", "m", "b"].includes(nextFormatPart.format)) {
+      i++;
+    }
+  }
   return convertInternalFormatToFormat(largeNumberFormat);
 }
 

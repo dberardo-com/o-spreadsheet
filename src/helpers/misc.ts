@@ -4,13 +4,6 @@
 import { NEWLINE } from "../constants";
 import { ConsecutiveIndexes, Lazy, UID } from "../types";
 import { Cloneable } from "./../types/misc";
-/**
- * Stringify an object, like JSON.stringify, except that the first level of keys
- * is ordered.
- */
-export function stringify(obj: any): string {
-  return JSON.stringify(obj, Object.keys(obj).sort());
-}
 
 /**
  * Remove quotes from a quoted string
@@ -77,7 +70,12 @@ export function deepCopy<T>(obj: T): T {
  * Check if the object is a plain old javascript object.
  */
 function isPlainObject(obj: unknown): boolean {
-  return typeof obj === "object" && obj?.constructor === Object;
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    // obj.constructor can be undefined when there's no prototype (`Object.create(null, {})`)
+    (obj?.constructor === Object || obj?.constructor === undefined)
+  );
 }
 
 /**
@@ -174,7 +172,7 @@ export function isBoolean(str: string): boolean {
   return upperCased === "TRUE" || upperCased === "FALSE";
 }
 
-const MARKDOWN_LINK_REGEX = /^\[([^\[]+)\]\((.+)\)$/;
+const MARKDOWN_LINK_REGEX = /^\[(.+)\]\((.+)\)$/;
 //link must start with http or https
 //https://stackoverflow.com/a/3809435/4760614
 const WEB_LINK_REGEX =
@@ -259,15 +257,15 @@ export function isObjectEmptyRecursive<T extends object>(argument: T | undefined
  * If the given item does not exist in the dictionary, it creates one with a new id.
  */
 export function getItemId<T>(item: T, itemsDic: { [id: number]: T }) {
-  for (let [key, value] of Object.entries(itemsDic)) {
-    if (stringify(value) === stringify(item)) {
+  for (const key in itemsDic) {
+    if (deepEquals(itemsDic[key], item)) {
       return parseInt(key, 10);
     }
   }
 
   // Generate new Id if the item didn't exist in the dictionary
   const ids = Object.keys(itemsDic);
-  const maxId = ids.length === 0 ? 0 : Math.max(...ids.map((id) => parseInt(id, 10)));
+  const maxId = ids.length === 0 ? 0 : largeMax(ids.map((id) => parseInt(id, 10)));
 
   itemsDic[maxId + 1] = item;
   return maxId + 1;
@@ -357,26 +355,49 @@ export function getAddHeaderStartIndex(position: "before" | "after", base: numbe
 /**
  * Compares two objects.
  */
-export function deepEquals(o1: any, o2: any): boolean {
+export function deepEquals(o1: any, o2: any, ignoreFunctions?: "ignoreFunctions"): boolean {
   if (o1 === o2) return true;
   if ((o1 && !o2) || (o2 && !o1)) return false;
   if (typeof o1 !== typeof o2) return false;
-  if (typeof o1 !== "object") return o1 === o2;
+  if (typeof o1 !== "object") return false;
 
   // Objects can have different keys if the values are undefined
-  const keys = new Set<string>();
-  Object.keys(o1).forEach((key) => keys.add(key));
-  Object.keys(o2).forEach((key) => keys.add(key));
+  for (const key in o2) {
+    if (!(key in o1) && o2[key] !== undefined) {
+      return false;
+    }
+  }
 
-  for (let key of keys) {
-    if (typeof o1[key] !== typeof o1[key]) return false;
-    if (typeof o1[key] === "object") {
-      if (!deepEquals(o1[key], o2[key])) return false;
+  for (const key in o1) {
+    const typeOfO1Key = typeof o1[key];
+    if (typeOfO1Key !== typeof o2[key]) return false;
+    if (typeOfO1Key === "object") {
+      if (!deepEquals(o1[key], o2[key], ignoreFunctions)) return false;
     } else {
+      if (ignoreFunctions && typeOfO1Key === "function") {
+        continue;
+      }
       if (o1[key] !== o2[key]) return false;
     }
   }
 
+  return true;
+}
+
+/**
+ * Compares two arrays.
+ * For performance reasons, this function is to be preferred
+ * to 'deepEquals' in the case we know that the inputs are arrays.
+ */
+export function deepEqualsArray(arr1: unknown[], arr2: unknown[]): boolean {
+  if (arr1.length !== arr2.length) {
+    return false;
+  }
+  for (let i = 0; i < arr1.length; i++) {
+    if (!deepEquals(arr1[i], arr2[i])) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -399,8 +420,7 @@ export function removeFalsyAttributes(obj: Object): Object {
  *
  * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions/Character_Classes
  */
-const whiteSpaceCharacters = [
-  " ",
+const whiteSpaceSpecialCharacters = [
   "\t",
   "\f",
   "\v",
@@ -415,8 +435,7 @@ const whiteSpaceCharacters = [
   String.fromCharCode(parseInt("3000", 16)),
   String.fromCharCode(parseInt("feff", 16)),
 ];
-const whiteSpaceRegexp = new RegExp(whiteSpaceCharacters.join("|"), "g");
-const newLineRegex = /\r\n|\r|\n/g;
+const whiteSpaceRegexp = new RegExp(whiteSpaceSpecialCharacters.join("|") + "|(\r\n|\r|\n)", "g");
 
 /**
  * Replace all the special spaces in a string (non-breaking, tabs, ...) by normal spaces, and all the
@@ -424,9 +443,8 @@ const newLineRegex = /\r\n|\r|\n/g;
  */
 export function replaceSpecialSpaces(text: string | undefined): string {
   if (!text) return "";
-  text = text.replace(whiteSpaceRegexp, " ");
-  text = text.replace(newLineRegex, NEWLINE);
-  return text;
+  if (!whiteSpaceRegexp.test(text)) return text;
+  return text.replace(whiteSpaceRegexp, (match, newLine) => (newLine ? NEWLINE : " "));
 }
 
 /** Move the item at the starting index to the target index in an array */
@@ -452,18 +470,18 @@ export function isConsecutive(iterable: Iterable<number>): boolean {
 }
 
 export class JetSet<T> extends Set<T> {
-  add(...iterable: T[]): this {
+  addMany(iterable: Iterable<T>): this {
     for (const element of iterable) {
       super.add(element);
     }
     return this;
   }
-  delete(...iterable: T[]): boolean {
-    let deleted = false;
+  deleteMany(iterable: Iterable<T>): boolean {
+    let wasDeleted = false;
     for (const element of iterable) {
-      deleted ||= super.delete(element);
+      wasDeleted ||= super.delete(element);
     }
-    return deleted;
+    return wasDeleted;
   }
 }
 
@@ -504,4 +522,36 @@ export function isNumberBetween(value: number, min: number, max: number): boolea
     return isNumberBetween(value, max, min);
   }
   return value >= min && value <= max;
+}
+
+/**
+ * Alternative to Math.max that works with large arrays.
+ * Typically useful for arrays bigger than 100k elements.
+ */
+export function largeMax(array: number[]) {
+  let len = array.length;
+
+  if (len < 100_000) return Math.max(...array);
+
+  let max: number = -Infinity;
+  while (len--) {
+    max = array[len] > max ? array[len] : max;
+  }
+  return max;
+}
+
+/**
+ * Alternative to Math.min that works with large arrays.
+ * Typically useful for arrays bigger than 100k elements.
+ */
+export function largeMin(array: number[]) {
+  let len = array.length;
+
+  if (len < 100_000) return Math.min(...array);
+
+  let min: number = +Infinity;
+  while (len--) {
+    min = array[len] < min ? array[len] : min;
+  }
+  return min;
 }

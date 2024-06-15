@@ -16,7 +16,13 @@ import {
   setCellContent,
   setStyle,
 } from "../test_helpers/commands_helpers";
-import { getCell, getCellContent, getMerges } from "../test_helpers/getters_helpers";
+import { FR_LOCALE } from "../test_helpers/constants";
+import {
+  getCell,
+  getCellContent,
+  getEvaluatedCell,
+  getMerges,
+} from "../test_helpers/getters_helpers";
 
 jest.mock("../../src/helpers/uuid", () => require("../__mocks__/uuid"));
 describe("data", () => {
@@ -30,7 +36,7 @@ describe("data", () => {
 });
 
 describe("Migrations", () => {
-  test("Can upgrade from 1 to 12", () => {
+  test("Can upgrade from 1 to 13", () => {
     const model = new Model({
       version: 1,
       sheets: [
@@ -372,9 +378,23 @@ describe("Migrations", () => {
     expect(data.sheets[1].cells["A2"]?.format).toEqual(2);
   });
 
-  test("migrate version 12: update border description structure", () => {
+  test("migrate version 12: Fix Overlapping datafilters", () => {
     const model = new Model({
       version: 12,
+      sheets: [
+        {
+          id: "1",
+          filterTables: [{ range: "A1:B2" }, { range: "A1:C2" }],
+        },
+      ],
+    });
+    const data = model.exportData();
+    expect(data.sheets[0].filterTables).toEqual([{ range: "A1:C2" }]);
+  });
+
+  test("migrate version 12.5: update border description structure", () => {
+    const model = new Model({
+      version: 12.5,
       sheets: [
         {
           id: "1",
@@ -406,6 +426,20 @@ describe("Migrations", () => {
     let model = new Model({ version: 13 });
     let data = model.exportData();
     expect(data.settings).toEqual({ locale: DEFAULT_LOCALE });
+  });
+
+  test("migrate version 14.5: Fix Overlapping datafilters", () => {
+    const model = new Model({
+      version: 14,
+      sheets: [
+        {
+          id: "1",
+          filterTables: [{ range: "A1:B2" }, { range: "A1:C2" }],
+        },
+      ],
+    });
+    const data = model.exportData();
+    expect(data.sheets[0].filterTables).toEqual([{ range: "A1:C2" }]);
   });
 });
 
@@ -550,11 +584,11 @@ test("complete import, then export", () => {
           1: { size: 13 },
         },
         cells: {
-          A1: { content: "hello" },
+          A1: { content: "hello", border: 1 },
           B1: {
             content: "=A1",
             style: 1,
-            border: 1,
+            border: 2,
             format: 1,
           },
           C1: { content: "=mqdlskjfqmslfkj(++%//@@@)" },
@@ -601,6 +635,9 @@ test("complete import, then export", () => {
     borders: {
       1: {
         top: { style: "thin", color: "#000" } as BorderDescr,
+      },
+      2: {
+        top: { style: "medium", color: "#000" } as BorderDescr,
       },
     },
     uniqueFigureIds: true,
@@ -681,6 +718,33 @@ test("import then export (figures)", () => {
   };
   const model = new Model(modelData);
   expect(model).toExport(modelData);
+});
+
+test("import date as string and detect the format", () => {
+  const model = new Model({
+    sheets: [
+      {
+        cells: { A1: { content: "12/31/2020" } },
+      },
+    ],
+  });
+  expect(getCell(model, "A1")?.format).toBe("m/d/yyyy");
+  expect(getCell(model, "A1")?.content).toBe("44196");
+  expect(getEvaluatedCell(model, "A1")?.formattedValue).toBe("12/31/2020");
+});
+
+test("import localized date as string and detect the format", () => {
+  const model = new Model({
+    sheets: [
+      {
+        cells: { A1: { content: "31/12/2020" } },
+      },
+    ],
+    settings: { locale: FR_LOCALE },
+  });
+  expect(getCell(model, "A1")?.format).toBe("d/m/yyyy");
+  expect(getCell(model, "A1")?.content).toBe("44196");
+  expect(getEvaluatedCell(model, "A1")?.formattedValue).toBe("31/12/2020");
 });
 
 test("Can import spreadsheet with only version", () => {

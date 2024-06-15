@@ -5,7 +5,7 @@ import { _t } from "../../../translation";
 import { Color, Figure, Format, Getters, LocaleFormat, Range } from "../../../types";
 import { ChartRuntime, DataSet, DatasetValues, LabelValues } from "../../../types/chart/chart";
 import { formatValue, isDateTimeFormat } from "../../format";
-import { range } from "../../misc";
+import { deepCopy, range } from "../../misc";
 import { recomputeZones, zoneToXc } from "../../zones";
 import { AbstractChart } from "./abstract_chart";
 import { drawScoreChart } from "./scorecard_chart";
@@ -75,10 +75,10 @@ export function aggregateDataForLabels(
   }
 
   return {
-    labels: Object.keys(labelMap),
+    labels: Array.from(labelSet),
     dataSetsValues: datasets.map((dataset, indexOfDataset) => ({
       ...dataset,
-      data: Object.values(labelMap).map((dataOfLabel: any[]) => dataOfLabel[indexOfDataset]),
+      data: Array.from(labelSet).map((label) => labelMap[label][indexOfDataset]),
     })),
   };
 }
@@ -100,7 +100,7 @@ export function getDefaultChartJsRuntime(
   chart: AbstractChart,
   labels: string[],
   fontColor: Color,
-  { format, locale }: LocaleFormat
+  { format, locale, truncateLabels }: LocaleFormat & { truncateLabels?: boolean }
 ): Required<ChartConfiguration> {
   const options: ChartOptions = {
     // https://www.chartjs.org/docs/latest/general/responsive.html
@@ -136,7 +136,7 @@ export function getDefaultChartJsRuntime(
             const xLabel = tooltipItem.dataset?.label || tooltipItem.label;
             // tooltipItem.parsed.y can be an object or a number for pie charts
             const yLabel = tooltipItem.parsed.y ?? tooltipItem.parsed;
-            const toolTipFormat = !format && yLabel > 1000 ? "#,##" : format;
+            const toolTipFormat = !format && Math.abs(yLabel) >= 1000 ? "#,##" : format;
             const yLabelStr = formatValue(yLabel, { format: toolTipFormat, locale });
             return xLabel ? `${xLabel}: ${yLabelStr}` : yLabelStr;
           },
@@ -148,7 +148,7 @@ export function getDefaultChartJsRuntime(
     type: chart.type as ChartType,
     options,
     data: {
-      labels: labels.map(truncateLabel),
+      labels: truncateLabels ? labels.map(truncateLabel) : labels,
       datasets: [],
     },
     plugins: [],
@@ -260,7 +260,7 @@ export function chartToImage(runtime: ChartRuntime, figure: Figure, type: string
   if ("chartJsConfig" in runtime) {
     runtime.chartJsConfig.plugins = [backgroundColorChartJSPlugin];
     // @ts-ignore
-    const chart = new window.Chart(canvas, runtime.chartJsConfig);
+    const chart = new window.Chart(canvas, deepCopy(runtime.chartJsConfig));
     const imgContent = chart.toBase64Image();
     chart.destroy();
     div.remove();

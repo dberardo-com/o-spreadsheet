@@ -117,11 +117,14 @@ export class ClipboardPlugin extends UIPlugin {
         const pasteOption =
           cmd.pasteOption || (this.paintFormatStatus !== "inactive" ? "onlyFormat" : undefined);
         this.state.paste(cmd.target, { pasteOption, shouldPasteCF: true, selectTarget: true });
+        if (this.state.operation === "CUT") {
+          this.state = undefined;
+        }
         this.lastPasteState = this.state;
         if (this.paintFormatStatus === "oneOff") {
           this.paintFormatStatus = "inactive";
-          this.status = "invisible";
         }
+        this.status = "invisible";
         break;
       case "COPY_PASTE_CELLS_ABOVE":
         {
@@ -182,7 +185,7 @@ export class ClipboardPlugin extends UIPlugin {
         this.status = "invisible";
 
         // If we add a col/row inside or before the cut area, we invalidate the clipboard
-        if (this.state?.operation !== "CUT") {
+        if (this.state?.operation !== "CUT" || cmd.sheetId !== this.state?.sheetId) {
           return;
         }
         const isClipboardDirty = this.state.isColRowDirtyingClipboard(
@@ -198,7 +201,7 @@ export class ClipboardPlugin extends UIPlugin {
         this.status = "invisible";
 
         // If we remove a col/row inside or before the cut area, we invalidate the clipboard
-        if (this.state?.operation !== "CUT") {
+        if (this.state?.operation !== "CUT" || cmd.sheetId !== this.state?.sheetId) {
           return;
         }
         for (let el of cmd.elements) {

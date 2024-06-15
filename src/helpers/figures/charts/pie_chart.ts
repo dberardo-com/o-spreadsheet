@@ -6,7 +6,7 @@ import type {
   Point,
 } from "chart.js";
 import { DeepPartial } from "chart.js/dist/types/utils";
-import { BACKGROUND_CHART_COLOR } from "../../../constants";
+import { BACKGROUND_CHART_COLOR, INCORRECT_RANGE_STRING } from "../../../constants";
 import {
   AddColumnsRowsCommand,
   ApplyRangeChange,
@@ -31,7 +31,8 @@ import { PieChartDefinition, PieChartRuntime } from "../../../types/chart/pie_ch
 import { Validator } from "../../../types/validator";
 import { toXlsxHexColor } from "../../../xlsx/helpers/colors";
 import { formatValue } from "../../format";
-import { createRange } from "../../range";
+import { largeMax } from "../../misc";
+import { createValidRange } from "../../range";
 import { AbstractChart } from "./abstract_chart";
 import {
   ChartColors,
@@ -73,7 +74,7 @@ export class PieChart extends AbstractChart {
       sheetId,
       definition.dataSetsHaveTitle
     );
-    this.labelRange = createRange(getters, sheetId, definition.labelRange);
+    this.labelRange = createValidRange(getters, sheetId, definition.labelRange);
     this.background = definition.background;
     this.legendPosition = definition.legendPosition;
     this.aggregated = definition.aggregated;
@@ -166,7 +167,7 @@ export class PieChart extends AbstractChart {
     if (this.aggregated) return undefined;
     const dataSets: ExcelChartDataset[] = this.dataSets
       .map((ds: DataSet) => toExcelDataset(this.getters, ds))
-      .filter((ds) => ds.range !== ""); // && range !== INCORRECT_RANGE_STRING ? show incorrect #ref ?
+      .filter((ds) => ds.range !== "" && ds.range !== INCORRECT_RANGE_STRING);
     const labelRange = toExcelLabelRange(
       this.getters,
       this.labelRange,
@@ -227,7 +228,7 @@ function getPieConfiguration(
 
     const xLabel = tooltipItem.label || tooltipItem.dataset.label;
     const yLabel = tooltipItem.parsed.y ?? tooltipItem.parsed;
-    const toolTipFormat = !format && yLabel > 1000 ? "#,##" : format;
+    const toolTipFormat = !format && Math.abs(yLabel) >= 1000 ? "#,##" : format;
     const yLabelStr = formatValue(yLabel, { format: toolTipFormat, locale });
 
     return xLabel ? `${xLabel}: ${yLabelStr} (${percentage}%)` : `${yLabelStr} (${percentage}%)`;
@@ -237,7 +238,7 @@ function getPieConfiguration(
 
 function getPieColors(colors: ChartColors, dataSetsValues: DatasetValues[]): Color[] {
   const pieColors: Color[] = [];
-  const maxLength = Math.max(...dataSetsValues.map((ds) => ds.data.length));
+  const maxLength = largeMax(dataSetsValues.map((ds) => ds.data.length));
   for (let i = 0; i <= maxLength; i++) {
     pieColors.push(colors.next());
   }

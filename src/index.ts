@@ -45,6 +45,7 @@ import {
   colorToRGBA,
   computeTextWidth,
   createCurrencyFormat,
+  deepEquals,
   formatValue,
   isDefined,
   isMarkdownLink,
@@ -96,7 +97,7 @@ import {
   repeatCommandTransformRegistry,
   repeatLocalCommandTransformRegistry,
 } from "./registries/repeat_commands_registry";
-import { AddFunctionDescription } from "./types";
+import { AddFunctionDescription, isMatrix } from "./types";
 import { CellErrorLevel, EvaluationError } from "./types/errors";
 import { DEFAULT_LOCALE } from "./types/locale";
 
@@ -217,11 +218,13 @@ export const helpers = {
   colorToRGBA,
   positionToZone,
   isDefined,
+  isMatrix,
   lazy,
   genericRepeat,
   createAction,
   createActions,
   transformRangeData,
+  deepEquals,
 };
 
 export const links = {

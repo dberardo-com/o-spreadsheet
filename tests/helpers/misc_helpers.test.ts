@@ -1,4 +1,5 @@
 import {
+  DateTime,
   deepCopy,
   deepEquals,
   groupConsecutive,
@@ -68,7 +69,7 @@ describe("deepCopy", () => {
     expect(deepCopy(obj)).toEqual(obj);
   });
 
-  test.each([new Set(), new Map(), new Set([1]), new Date()])(
+  test.each([new Set(), new Map(), new Set([1]), new Date(), new DateTime(2023, 10, 30)])(
     "unsupported type %s throws an error",
     (obj) => {
       expect(() => deepCopy(obj)).toThrow();
@@ -82,6 +83,19 @@ describe("deepCopy", () => {
     copy["b"] = 2;
     expect(obj["a"]).toBe(1);
     expect("b" in obj).toBe(false);
+  });
+
+  test("copy object without any prototype", () => {
+    const obj = Object.create(null, {
+      foo: {
+        writable: true,
+        configurable: true,
+        enumerable: true,
+        value: "hello",
+      },
+    });
+    const copy = deepCopy(obj);
+    expect(copy.foo).toBe("hello");
   });
 
   test("nested objects is not mutated", () => {
@@ -219,12 +233,30 @@ test.each([
   [{ a: 1 }, { a: 1 }, true],
   [{ a: 1 }, { a: 2 }, false],
   [{ a: undefined }, {}, true],
+  [{ a: undefined }, { a: undefined }, true],
   [{ a: undefined }, { a: null }, false],
   [{ a: null }, {}, false],
   [{ a: 1, b: undefined }, { a: 1 }, true],
   [undefined, undefined, true],
+  [[1], [1], true],
+  [[1], [], false],
+  [[], [], true],
 ])("deepEquals %s %s", (o1: any, o2: any, expectedResult) => {
   expect(deepEquals(o1, o2)).toEqual(expectedResult);
+  expect(deepEquals(o2, o1)).toEqual(expectedResult);
+});
+
+test("deepEquals with argument ignoring functions", () => {
+  const o1 = { a: 1, b: () => 2, c: 2 };
+  const o2 = { a: 1, b: () => 2, c: 2 };
+  const o3 = { a: 1, b: () => 2, c: 3 };
+  const o4 = { a: 2, b: () => 2, c: 2 };
+  expect(deepEquals(o1, o2)).toEqual(false);
+  expect(deepEquals(o1, o2, "ignoreFunctions")).toEqual(true);
+  expect(deepEquals(o1, o3)).toEqual(false);
+  expect(deepEquals(o1, o3, "ignoreFunctions")).toEqual(false);
+  expect(deepEquals(o1, o4)).toEqual(false);
+  expect(deepEquals(o1, o4, "ignoreFunctions")).toEqual(false);
 });
 
 describe("isConsecutive", () => {

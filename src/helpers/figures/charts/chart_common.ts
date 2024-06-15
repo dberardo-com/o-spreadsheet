@@ -185,13 +185,8 @@ export function createDataSets(
           )
         );
       }
-    } else if (zone.left === zone.right && zone.top === zone.bottom) {
-      // A single cell. If it's only the title, the dataset is not added.
-      if (!dataSetsHaveTitle) {
-        dataSets.push(createDataSet(getters, dataSetSheetId, zone, undefined));
-      }
     } else {
-      /* 1 row or 1 column */
+      /* 1 cell, 1 row or 1 column */
       dataSets.push(
         createDataSet(
           getters,
@@ -254,8 +249,10 @@ export function toExcelDataset(getters: CoreGetters, ds: DataSet): ExcelChartDat
   const dataRange = ds.dataRange.clone({ zone: dataZone });
 
   return {
-    label: ds.labelCell ? getters.getRangeString(ds.labelCell, "forceSheetReference") : undefined,
-    range: getters.getRangeString(dataRange, "forceSheetReference"),
+    label: ds.labelCell
+      ? getters.getRangeString(ds.labelCell, "forceSheetReference", { useFixedReference: true })
+      : undefined,
+    range: getters.getRangeString(dataRange, "forceSheetReference", { useFixedReference: true }),
   };
 }
 
@@ -272,7 +269,7 @@ export function toExcelLabelRange(
     zone.top = zone.top + 1;
   }
   const range = labelRange.clone({ zone });
-  return getters.getRangeString(range, "forceSheetReference");
+  return getters.getRangeString(range, "forceSheetReference", { useFixedReference: true });
 }
 
 /**

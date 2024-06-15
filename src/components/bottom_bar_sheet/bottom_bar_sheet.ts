@@ -128,6 +128,9 @@ export class BottomBarSheet extends Component<Props, SpreadsheetChildEnv> {
   }
 
   onDblClick() {
+    if (this.env.model.getters.isReadonly()) {
+      return;
+    }
     this.startEdition();
   }
 
@@ -136,9 +139,11 @@ export class BottomBarSheet extends Component<Props, SpreadsheetChildEnv> {
     if (ev.key === "Enter") {
       ev.preventDefault();
       this.stopEdition();
+      this.env.focusableElement.focus();
     }
     if (ev.key === "Escape") {
       this.cancelEdition();
+      this.env.focusableElement.focus();
     }
   }
 
@@ -152,13 +157,16 @@ export class BottomBarSheet extends Component<Props, SpreadsheetChildEnv> {
   }
 
   private stopEdition() {
-    if (!this.state.isEditing) return;
+    const input = this.sheetNameRef.el;
+    if (!this.state.isEditing || !input) return;
 
     this.state.isEditing = false;
     this.editionState = "initializing";
-    this.sheetNameRef.el?.blur();
+    input.blur();
 
     const inputValue = this.getInputContent() || "";
+    input.innerText = inputValue;
+
     interactiveRenameSheet(this.env, this.props.sheetId, inputValue, () => this.startEdition());
   }
 
