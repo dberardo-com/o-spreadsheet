@@ -701,7 +701,9 @@ class RangeReferenceToken implements Token {
   ) { }
 
   get value() {
+    // @ts-ignore
     const range = this.ranges[this.rangeIndex];
+    // @ts-ignore
     return this.getRangeString(range, this.sheetId);
   }
 }
