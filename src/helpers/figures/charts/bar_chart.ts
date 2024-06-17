@@ -15,25 +15,31 @@ import {
 } from "../../../types";
 import { BarChartDefinition, BarChartRuntime } from "../../../types/chart/bar_chart";
 import {
+  AxesDesign,
   ChartCreationContext,
+  CustomizedDataSet,
   DataSet,
+  DatasetDesign,
   ExcelChartDataset,
   ExcelChartDefinition,
 } from "../../../types/chart/chart";
-import { LegendPosition, VerticalAxisPosition } from "../../../types/chart/common_chart";
+import { LegendPosition } from "../../../types/chart/common_chart";
+import { CellErrorType } from "../../../types/errors";
 import { Validator } from "../../../types/validator";
 import { toXlsxHexColor } from "../../../xlsx/helpers/colors";
+import { ColorGenerator } from "../../color";
 import { formatValue } from "../../format";
 import { createValidRange } from "../../range";
 import { AbstractChart } from "./abstract_chart";
 import {
-  ChartColors,
   chartFontColor,
   checkDataset,
   checkLabelRange,
   copyDataSetsWithNewSheetId,
   copyLabelRangeWithNewSheetId,
   createDataSets,
+  getChartAxisTitleRuntime,
+  getDefinedAxis,
   shouldRemoveFirstLabel,
   toExcelDataset,
   toExcelLabelRange,
@@ -53,12 +59,13 @@ export class BarChart extends AbstractChart {
   readonly dataSets: DataSet[];
   readonly labelRange?: Range | undefined;
   readonly background?: Color;
-  readonly verticalAxisPosition: VerticalAxisPosition;
   readonly legendPosition: LegendPosition;
   readonly stacked: boolean;
   readonly aggregated?: boolean;
   readonly type = "bar";
   readonly dataSetsHaveTitle: boolean;
+  readonly dataSetDesign?: DatasetDesign[];
+  readonly axesDesign?: AxesDesign;
 
   constructor(definition: BarChartDefinition, sheetId: UID, getters: CoreGetters) {
     super(definition, sheetId, getters);
@@ -70,11 +77,12 @@ export class BarChart extends AbstractChart {
     );
     this.labelRange = createValidRange(getters, sheetId, definition.labelRange);
     this.background = definition.background;
-    this.verticalAxisPosition = definition.verticalAxisPosition;
     this.legendPosition = definition.legendPosition;
     this.stacked = definition.stacked;
     this.aggregated = definition.aggregated;
     this.dataSetsHaveTitle = definition.dataSetsHaveTitle;
+    this.dataSetDesign = definition.dataSets;
+    this.axesDesign = definition.axesDesign;
   }
 
   static transformDefinition(
@@ -94,25 +102,29 @@ export class BarChart extends AbstractChart {
   static getDefinitionFromContextCreation(context: ChartCreationContext): BarChartDefinition {
     return {
       background: context.background,
-      dataSets: context.range ? context.range : [],
-      dataSetsHaveTitle: false,
-      stacked: false,
-      aggregated: false,
-      legendPosition: "top",
-      title: context.title || "",
+      dataSets: context.range ?? [],
+      dataSetsHaveTitle: context.dataSetsHaveTitle ?? false,
+      stacked: context.stacked ?? false,
+      aggregated: context.aggregated ?? false,
+      legendPosition: context.legendPosition ?? "top",
+      title: context.title || { text: "" },
       type: "bar",
-      verticalAxisPosition: "left",
       labelRange: context.auxiliaryRange || undefined,
+      axesDesign: context.axesDesign,
     };
   }
 
   getContextCreation(): ChartCreationContext {
+    const range: CustomizedDataSet[] = [];
+    for (const [i, dataSet] of this.dataSets.entries()) {
+      range.push({
+        ...this.dataSetDesign?.[i],
+        dataRange: this.getters.getRangeString(dataSet.dataRange, this.sheetId),
+      });
+    }
     return {
-      background: this.background,
-      title: this.title,
-      range: this.dataSets.map((ds: DataSet) =>
-        this.getters.getRangeString(ds.dataRange, this.sheetId)
-      ),
+      ...this,
+      range,
       auxiliaryRange: this.labelRange
         ? this.getters.getRangeString(this.labelRange, this.sheetId)
         : undefined,
@@ -144,21 +156,26 @@ export class BarChart extends AbstractChart {
     labelRange: Range | undefined,
     targetSheetId?: UID
   ): BarChartDefinition {
+    const ranges: CustomizedDataSet[] = [];
+    for (const [i, dataSet] of dataSets.entries()) {
+      ranges.push({
+        ...this.dataSetDesign?.[i],
+        dataRange: this.getters.getRangeString(dataSet.dataRange, targetSheetId || this.sheetId),
+      });
+    }
     return {
       type: "bar",
       dataSetsHaveTitle: dataSets.length ? Boolean(dataSets[0].labelCell) : false,
       background: this.background,
-      dataSets: dataSets.map((ds: DataSet) =>
-        this.getters.getRangeString(ds.dataRange, targetSheetId || this.sheetId)
-      ),
+      dataSets: ranges,
       legendPosition: this.legendPosition,
-      verticalAxisPosition: this.verticalAxisPosition,
       labelRange: labelRange
         ? this.getters.getRangeString(labelRange, targetSheetId || this.sheetId)
         : undefined,
       title: this.title,
       stacked: this.stacked,
       aggregated: this.aggregated,
+      axesDesign: this.axesDesign,
     };
   }
 
@@ -167,18 +184,20 @@ export class BarChart extends AbstractChart {
     if (this.aggregated) return undefined;
     const dataSets: ExcelChartDataset[] = this.dataSets
       .map((ds: DataSet) => toExcelDataset(this.getters, ds))
-      .filter((ds) => ds.range !== "" && ds.range !== INCORRECT_RANGE_STRING);
+      .filter((ds) => ds.range !== "" && ds.range !== CellErrorType.InvalidReference);
     const labelRange = toExcelLabelRange(
       this.getters,
       this.labelRange,
       shouldRemoveFirstLabel(this.labelRange, this.dataSets[0], this.dataSetsHaveTitle)
     );
+    const definition = this.getDefinition();
     return {
-      ...this.getDefinition(),
+      ...definition,
       backgroundColor: toXlsxHexColor(this.background || BACKGROUND_CHART_COLOR),
       fontColor: toXlsxHexColor(chartFontColor(this.background)),
       dataSets,
       labelRange,
+      verticalAxis: getDefinedAxis(definition),
     };
   }
 
@@ -223,29 +242,50 @@ function getBarConfiguration(
         padding: 5,
         color: fontColor,
       },
+      title: getChartAxisTitleRuntime(chart.axesDesign?.x),
     },
-    y: {
-      position: chart.verticalAxisPosition,
-      beginAtZero: true, // the origin of the y axis is always zero
-      ticks: {
-        color: fontColor,
-        callback: (value) => {
-          value = Number(value);
-          if (isNaN(value)) return value;
-          const { locale, format } = localeFormat;
-          return formatValue(value, {
-            locale,
-            format: !format && Math.abs(value) >= 1000 ? "#,##" : format,
-          });
-        },
+  };
+  const yAxis = {
+    beginAtZero: true, // the origin of the y axis is always zero
+    ticks: {
+      color: fontColor,
+      callback: (value) => {
+        value = Number(value);
+        if (isNaN(value)) return value;
+        const { locale, format } = localeFormat;
+        return formatValue(value, {
+          locale,
+          format: !format && Math.abs(value) >= 1000 ? "#,##" : format,
+        });
       },
     },
   };
+  const { useLeftAxis, useRightAxis } = getDefinedAxis(chart.getDefinition());
+  if (useLeftAxis) {
+    config.options.scales.y = {
+      ...yAxis,
+      position: "left",
+      title: getChartAxisTitleRuntime(chart.axesDesign?.y),
+    };
+  }
+  if (useRightAxis) {
+    config.options.scales.y1 = {
+      ...yAxis,
+      position: "right",
+      title: getChartAxisTitleRuntime(chart.axesDesign?.y1),
+    };
+  }
   if (chart.stacked) {
     // @ts-ignore chart.js type is broken
     config.options.scales!.x!.stacked = true;
-    // @ts-ignore chart.js type is broken
-    config.options.scales!.y!.stacked = true;
+    if (useLeftAxis) {
+      // @ts-ignore chart.js type is broken
+      config.options.scales!.y!.stacked = true;
+    }
+    if (useRightAxis) {
+      // @ts-ignore chart.js type is broken
+      config.options.scales!.y1!.stacked = true;
+    }
   }
   return config;
 }
@@ -270,9 +310,10 @@ export function createBarChartRuntime(chart: BarChart, getters: Getters): BarCha
   const dataSetFormat = getChartDatasetFormat(getters, chart.dataSets);
   const locale = getters.getLocale();
   const config = getBarConfiguration(chart, labels, { format: dataSetFormat, locale });
-  const colors = new ChartColors();
+  const colors = new ColorGenerator();
 
-  for (let { label, data } of dataSetsValues) {
+  const definition = chart.getDefinition();
+  for (const { label, data } of dataSetsValues) {
     const color = colors.next();
     const dataset: ChartDataset = {
       label,
@@ -281,6 +322,21 @@ export function createBarChartRuntime(chart: BarChart, getters: Getters): BarCha
       backgroundColor: color,
     };
     config.data.datasets.push(dataset);
+  }
+
+  for (const [index, dataset] of config.data.datasets.entries()) {
+    if (definition.dataSets?.[index]?.backgroundColor) {
+      const color = definition.dataSets[index].backgroundColor;
+      dataset.backgroundColor = color;
+      dataset.borderColor = color;
+    }
+    if (definition.dataSets?.[index]?.label) {
+      const label = definition.dataSets[index].label;
+      dataset.label = label;
+    }
+    if (definition.dataSets?.[index]?.yAxisId) {
+      dataset["yAxisID"] = definition.dataSets[index].yAxisId;
+    }
   }
 
   return { chartJsConfig: config, background: chart.background || BACKGROUND_CHART_COLOR };

@@ -1,31 +1,51 @@
+import { SpreadsheetPivotTable } from "../../src";
 import { BACKGROUND_CHART_COLOR, DEFAULT_BORDER_DESC } from "../../src/constants";
-import { CoreCommand, CoreCommandTypes, DEFAULT_LOCALE, Locale } from "../../src/types";
+import { toZone } from "../../src/helpers";
+import { CoreCommand, CoreCommandTypes, DEFAULT_LOCALE, Locale, TableStyle } from "../../src/types";
+import { PivotCoreDefinition } from "../../src/types/pivot";
 import { target, toRangesData } from "./helpers";
 
 export const TEST_CHART_DATA = {
   basicChart: {
     type: "bar" as const,
-    dataSets: ["B1:B4"],
+    dataSets: [
+      {
+        dataRange: "B1:B4",
+        yAxisId: "y",
+      },
+    ],
     labelRange: "A2:A4",
     dataSetsHaveTitle: true,
-    title: "hello",
+    title: { text: "hello" },
     background: BACKGROUND_CHART_COLOR,
-    verticalAxisPosition: "left" as const,
     stacked: false,
+    legendPosition: "top" as const,
+  },
+  combo: {
+    type: "combo" as const,
+    dataSets: [
+      {
+        dataRange: "B1:B4",
+      },
+    ],
+    labelRange: "A2:A4",
+    dataSetsHaveTitle: true,
+    title: { text: "hello" },
+    background: BACKGROUND_CHART_COLOR,
     legendPosition: "top" as const,
   },
   scorecard: {
     type: "scorecard" as const,
     keyValue: "B1:B4",
     baseline: "A2:A4",
-    title: "hello",
+    title: { text: "hello" },
     baselineDescr: "description",
     baselineMode: "difference" as const,
   },
   gauge: {
     type: "gauge" as const,
     dataRange: "B1:B4",
-    title: "hello",
+    title: { text: "hello" },
     sectionRule: {
       rangeMin: "0",
       rangeMax: "100",
@@ -44,6 +64,18 @@ export const TEST_CHART_DATA = {
       },
     },
   },
+};
+
+const PIVOT: PivotCoreDefinition = {
+  dataSet: {
+    zone: toZone("A1:B1"),
+    sheetId: "Sheet1",
+  },
+  columns: [],
+  rows: [],
+  measures: [],
+  name: "pivot",
+  type: "SPREADSHEET",
 };
 
 type CommandMapping = {
@@ -104,15 +136,32 @@ export const TEST_COMMANDS: CommandMapping = {
     border: { top: DEFAULT_BORDER_DESC },
     sheetId: "sheetId",
   },
-  CREATE_FILTER_TABLE: {
-    type: "CREATE_FILTER_TABLE",
+  CREATE_TABLE: {
+    type: "CREATE_TABLE",
+    ranges: toRangesData("sheetId", "A1"),
+    sheetId: "sheetId",
+    tableType: "static",
+  },
+  REMOVE_TABLE: {
+    type: "REMOVE_TABLE",
     target: target("A1"),
     sheetId: "sheetId",
   },
-  REMOVE_FILTER_TABLE: {
-    type: "REMOVE_FILTER_TABLE",
-    target: target("A1"),
+  UPDATE_TABLE: {
+    type: "UPDATE_TABLE",
     sheetId: "sheetId",
+    zone: { top: 0, left: 0, bottom: 1, right: 1 },
+  },
+  CREATE_TABLE_STYLE: {
+    type: "CREATE_TABLE_STYLE",
+    tableStyleId: "MyStyle",
+    tableStyleName: "MyStyle",
+    templateName: "lightWithHeader",
+    primaryColor: "#0f0",
+  },
+  REMOVE_TABLE_STYLE: {
+    type: "REMOVE_TABLE_STYLE",
+    tableStyleId: "MyStyle",
   },
   HIDE_SHEET: {
     type: "HIDE_SHEET",
@@ -361,6 +410,38 @@ export const TEST_COMMANDS: CommandMapping = {
     sheetId: "sheetId",
     id: "dvId",
   },
+  ADD_PIVOT: {
+    type: "ADD_PIVOT",
+    pivotId: "1",
+    pivot: PIVOT,
+  },
+  INSERT_PIVOT: {
+    type: "INSERT_PIVOT",
+    pivotId: "1",
+    sheetId: "sheetId",
+    col: 0,
+    row: 0,
+    table: new SpreadsheetPivotTable([[]], [], []).export(),
+  },
+  REMOVE_PIVOT: {
+    type: "REMOVE_PIVOT",
+    pivotId: "1",
+  },
+  UPDATE_PIVOT: {
+    type: "UPDATE_PIVOT",
+    pivotId: "1",
+    pivot: PIVOT,
+  },
+  DUPLICATE_PIVOT: {
+    type: "DUPLICATE_PIVOT",
+    pivotId: "1",
+    newPivotId: "2",
+  },
+  RENAME_PIVOT: {
+    type: "RENAME_PIVOT",
+    pivotId: "1",
+    name: "newName",
+  },
 };
 
 export const OT_TESTS_SINGLE_CELL_COMMANDS = [
@@ -374,13 +455,13 @@ export const OT_TESTS_TARGET_DEPENDANT_COMMANDS = [
   TEST_COMMANDS.DELETE_CONTENT,
   TEST_COMMANDS.SET_FORMATTING,
   TEST_COMMANDS.CLEAR_FORMATTING,
-  TEST_COMMANDS.CREATE_FILTER_TABLE,
-  TEST_COMMANDS.REMOVE_FILTER_TABLE,
+  TEST_COMMANDS.REMOVE_TABLE,
 ];
 
 export const OT_TESTS_ZONE_DEPENDANT_COMMANDS = [
   TEST_COMMANDS.UNFOLD_HEADER_GROUPS_IN_ZONE,
   TEST_COMMANDS.FOLD_HEADER_GROUPS_IN_ZONE,
+  TEST_COMMANDS.UPDATE_TABLE,
 ];
 
 export const OT_TESTS_HEADER_GROUP_COMMANDS = [
@@ -393,6 +474,7 @@ export const OT_TESTS_HEADER_GROUP_COMMANDS = [
 export const OT_TESTS_RANGE_DEPENDANT_COMMANDS = [
   TEST_COMMANDS.ADD_CONDITIONAL_FORMAT,
   TEST_COMMANDS.ADD_DATA_VALIDATION_RULE,
+  TEST_COMMANDS.CREATE_TABLE,
 ];
 
 export const EN_LOCALE = DEFAULT_LOCALE;
@@ -415,4 +497,12 @@ export const CUSTOM_LOCALE: Locale = {
   dateFormat: "dd/mm/yyyy",
   timeFormat: "hh:mm:ss a",
   formulaArgSeparator: ";",
+};
+
+export const TABLE_STYLE_ALL_RED: TableStyle = {
+  category: "dark",
+  displayName: "AllRed",
+  wholeTable: { style: { fillColor: "#FF0000" }, border: { top: DEFAULT_BORDER_DESC } },
+  templateName: "dark",
+  primaryColor: "#FF0000",
 };

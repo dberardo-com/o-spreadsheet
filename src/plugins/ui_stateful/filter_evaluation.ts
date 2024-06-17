@@ -1,33 +1,29 @@
-import { DEFAULT_FILTER_BORDER_DESC } from "../../constants";
 import {
-  isInside,
-  isObjectEmptyRecursive,
+  deepCopy,
   positions,
   range,
-  removeFalsyAttributes,
   toLowerCase,
   toXC,
   toZone,
   zoneToDimension,
 } from "../../helpers";
 import {
-  Border,
   CellPosition,
   Command,
   CommandResult,
   ExcelFilterData,
   ExcelWorkbookData,
   FilterId,
+  Table,
   UID,
-  Zone,
 } from "../../types";
 import { LocalCommand, UpdateFilterCommand } from "../../types/commands";
 import { UIPlugin } from "../ui_plugin";
 
 export class FilterEvaluationPlugin extends UIPlugin {
   static getters = [
-    "getCellBorderWithFilterBorder",
-    "getFilterValues",
+    "getFilterHiddenValues",
+    "getFirstTableInSelection",
     "isRowFiltered",
     "isFilterActive",
   ] as const;
@@ -55,17 +51,15 @@ export class FilterEvaluationPlugin extends UIPlugin {
       case "UPDATE_CELL":
       case "EVALUATE_CELLS":
       case "ACTIVATE_SHEET":
-      case "REMOVE_FILTER_TABLE":
+      case "REMOVE_TABLE":
       case "ADD_COLUMNS_ROWS":
       case "REMOVE_COLUMNS_ROWS":
+      case "UPDATE_TABLE":
         this.isEvaluationDirty = true;
         break;
       case "START":
         for (const sheetId of this.getters.getSheetIds()) {
           this.filterValues[sheetId] = {};
-          for (const filter of this.getters.getFilters(sheetId)) {
-            this.filterValues[sheetId][filter.id] = [];
-          }
         }
         break;
       case "CREATE_SHEET":
@@ -86,16 +80,7 @@ export class FilterEvaluationPlugin extends UIPlugin {
         this.updateHiddenRows(cmd.sheetId);
         break;
       case "DUPLICATE_SHEET":
-        const filterValues: Record<FilterId, string[]> = {};
-        for (const newFilter of this.getters.getFilters(cmd.sheetIdTo)) {
-          const zone = newFilter.zoneWithHeaders;
-          filterValues[newFilter.id] = this.getFilterValues({
-            sheetId: cmd.sheetId,
-            col: zone.left,
-            row: zone.top,
-          });
-        }
-        this.filterValues[cmd.sheetIdTo] = filterValues;
+        this.filterValues[cmd.sheetIdTo] = deepCopy(this.filterValues[cmd.sheetId]);
         break;
       // If we don't handle DELETE_SHEET, on one hand we will have some residual data, on the other hand we keep the data
       // on DELETE_SHEET followed by undo
@@ -115,32 +100,7 @@ export class FilterEvaluationPlugin extends UIPlugin {
     return !!this.hiddenRows[sheetId]?.has(row);
   }
 
-  getCellBorderWithFilterBorder(position: CellPosition): Border | null {
-    const { sheetId, col, row } = position;
-    let filterBorder: Border | undefined = undefined;
-    for (let filters of this.getters.getFilterTables(sheetId)) {
-      const zone = filters.zone;
-      if (isInside(col, row, zone)) {
-        // The borders should be at the edges of the visible zone of the filter
-        const visibleZone = this.intersectZoneWithViewport(sheetId, zone);
-        filterBorder = {
-          top: row === visibleZone.top ? DEFAULT_FILTER_BORDER_DESC : undefined,
-          bottom: row === visibleZone.bottom ? DEFAULT_FILTER_BORDER_DESC : undefined,
-          left: col === visibleZone.left ? DEFAULT_FILTER_BORDER_DESC : undefined,
-          right: col === visibleZone.right ? DEFAULT_FILTER_BORDER_DESC : undefined,
-        };
-      }
-    }
-
-    const cellBorder = this.getters.getCellBorder(position);
-
-    // Use removeFalsyAttributes to avoid overwriting filter borders with undefined values
-    const border = { ...filterBorder, ...removeFalsyAttributes(cellBorder || {}) };
-
-    return isObjectEmptyRecursive(border) ? null : border;
-  }
-
-  getFilterValues(position: CellPosition): string[] {
+  getFilterHiddenValues(position: CellPosition): string[] {
     const id = this.getters.getFilterId(position);
     const sheetId = position.sheetId;
     if (!id || !this.filterValues[sheetId]) return [];
@@ -153,13 +113,10 @@ export class FilterEvaluationPlugin extends UIPlugin {
     return Boolean(id && this.filterValues[sheetId]?.[id]?.length);
   }
 
-  private intersectZoneWithViewport(sheetId: UID, zone: Zone) {
-    return {
-      left: this.getters.findVisibleHeader(sheetId, "COL", zone.left, zone.right),
-      right: this.getters.findVisibleHeader(sheetId, "COL", zone.right, zone.left),
-      top: this.getters.findVisibleHeader(sheetId, "ROW", zone.top, zone.bottom),
-      bottom: this.getters.findVisibleHeader(sheetId, "ROW", zone.bottom, zone.top),
-    };
+  getFirstTableInSelection(): Table | undefined {
+    const sheetId = this.getters.getActiveSheetId();
+    const selection = this.getters.getSelectedZones();
+    return this.getters.getTablesOverlappingZones(sheetId, selection)[0];
   }
 
   private updateFilter({ col, row, hiddenValues, sheetId }: UpdateFilterCommand) {
@@ -172,20 +129,23 @@ export class FilterEvaluationPlugin extends UIPlugin {
   private updateHiddenRows(sheetId: UID) {
     const filters = this.getters
       .getFilters(sheetId)
-      .sort((filter1, filter2) => filter1.zoneWithHeaders.top - filter2.zoneWithHeaders.top);
+      .sort(
+        (filter1, filter2) => filter1.rangeWithHeaders.zone.top - filter2.rangeWithHeaders.zone.top
+      );
 
     const hiddenRows = new Set<number>();
     for (let filter of filters) {
       // Disable filters whose header are hidden
       if (
-        hiddenRows.has(filter.zoneWithHeaders.top) ||
-        this.getters.isRowHiddenByUser(sheetId, filter.zoneWithHeaders.top)
+        hiddenRows.has(filter.rangeWithHeaders.zone.top) ||
+        this.getters.isRowHiddenByUser(sheetId, filter.rangeWithHeaders.zone.top)
       ) {
         continue;
       }
       const filteredValues = this.filterValues[sheetId]?.[filter.id]?.map(toLowerCase);
-      if (!filteredValues || !filter.filteredZone) continue;
-      for (let row = filter.filteredZone.top; row <= filter.filteredZone.bottom; row++) {
+      const filteredZone = filter.filteredRange?.zone;
+      if (!filteredValues || !filteredZone) continue;
+      for (let row = filteredZone.top; row <= filteredZone.bottom; row++) {
         const value = this.getCellValueAsString(sheetId, filter.col, row);
         if (filteredValues.includes(value)) {
           hiddenRows.add(row);
@@ -203,7 +163,7 @@ export class FilterEvaluationPlugin extends UIPlugin {
   exportForExcel(data: ExcelWorkbookData) {
     for (const sheetData of data.sheets) {
       const sheetId = sheetData.id;
-      for (const tableData of sheetData.filterTables) {
+      for (const tableData of sheetData.tables) {
         const tableZone = toZone(tableData.range);
         const filters: ExcelFilterData[] = [];
         const headerNames: string[] = [];
@@ -213,13 +173,12 @@ export class FilterEvaluationPlugin extends UIPlugin {
             col: tableZone.left + i,
             row: tableZone.top,
           };
-          const filteredValues: string[] = this.getFilterValues(position);
+          const filteredValues: string[] = this.getFilterHiddenValues(position);
 
           const filter = this.getters.getFilter(position);
-          if (!filter) continue;
 
-          const valuesInFilterZone = filter.filteredZone
-            ? positions(filter.filteredZone).map(
+          const valuesInFilterZone = filter?.filteredRange
+            ? positions(filter.filteredRange.zone).map(
                 (position) => this.getters.getEvaluatedCell({ sheetId, ...position }).formattedValue
               )
             : [];
@@ -235,13 +194,12 @@ export class FilterEvaluationPlugin extends UIPlugin {
             });
           }
 
-          // In xlsx, filter header should ALWAYS be a string and should be unique in the table
-          const headerPosition = { col: filter.col, row: filter.zoneWithHeaders.top, sheetId };
-          const headerString = this.getters.getEvaluatedCell(headerPosition).formattedValue;
+          // In xlsx, column header should ALWAYS be a string and should be unique in the table
+          const headerString = this.getters.getEvaluatedCell(position).formattedValue;
           const headerName = this.getUniqueColNameForExcel(i, headerString, headerNames);
           headerNames.push(headerName);
-          sheetData.cells[toXC(headerPosition.col, headerPosition.row)] = {
-            ...sheetData.cells[toXC(headerPosition.col, headerPosition.row)],
+          sheetData.cells[toXC(position.col, position.row)] = {
+            ...sheetData.cells[toXC(position.col, position.row)],
             content: headerName,
             value: headerName,
             isFormula: false,

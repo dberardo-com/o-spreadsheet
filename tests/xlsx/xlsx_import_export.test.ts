@@ -22,9 +22,11 @@ import {
   resizeColumns,
   resizeRows,
   setCellContent,
+  setFormat,
+  setStyle,
 } from "../test_helpers/commands_helpers";
 import { getBorder, getCell, getEvaluatedCell } from "../test_helpers/getters_helpers";
-import { target, toRangesData } from "../test_helpers/helpers";
+import { toRangesData } from "../test_helpers/helpers";
 
 /**
  * Testing to export a model to xlsx then import this xlsx
@@ -120,7 +122,7 @@ describe("Export data to xlsx then import it", () => {
     { fillColor: "#151515" },
     { wrapping: "wrap" as Wrapping },
   ])("Cell style %s", (style: Style) => {
-    model.dispatch("SET_FORMATTING", { sheetId, target: target("A1"), style });
+    setStyle(model, "A1", style);
     const importedModel = exportToXlsxThenImport(model);
     expect(getCell(importedModel, "A1")!.style).toMatchObject(style);
   });
@@ -141,7 +143,7 @@ describe("Export data to xlsx then import it", () => {
   test.each(["0.00%", "#,##0.00", "m/d/yyyy", "m/d/yyyy hh:mm:ss", "#,##0.00 [$€]"])(
     "Cell format %s",
     (format: string) => {
-      model.dispatch("SET_FORMATTING", { sheetId, target: target("A1"), format });
+      setFormat(model, "A1", format);
       const importedModel = exportToXlsxThenImport(model);
       expect(importedModel.getters.getEvaluatedCell({ sheetId, col: 0, row: 0 }).format).toEqual(
         format
@@ -161,7 +163,7 @@ describe("Export data to xlsx then import it", () => {
       operator: "Equal" as const,
       type: "CellIsRule" as const,
       style: {
-        fillColor: "#FFA500",
+        fillColor: "#FF9900",
       },
     },
     {
@@ -213,7 +215,7 @@ describe("Export data to xlsx then import it", () => {
     createChart(
       model,
       {
-        dataSets: ["Sheet1!B1:B4", "Sheet1!C1:C4"],
+        dataSets: [{ dataRange: "Sheet1!B1:B4" }, { dataRange: "Sheet1!C1:C4" }],
         labelRange: "Sheet1!A2:A4",
         type: "line",
       },
@@ -231,50 +233,56 @@ describe("Export data to xlsx then import it", () => {
 
   test.each([
     {
-      title: "demo chart",
-      dataSets: ["Sheet1!B26:B35", "Sheet1!C26:C35"],
+      title: { text: "demo chart" },
+      dataSets: [{ dataRange: "Sheet1!B26:B35" }, { dataRange: "Sheet1!C26:C35" }],
       labelRange: "Sheet1!A27:A35",
       type: "line" as const,
       dataSetsHaveTitle: false,
       background: "#FFFFFF",
-      verticalAxisPosition: "left" as const,
       legendPosition: "top" as const,
       stacked: false,
       labelsAsText: false,
     },
     {
-      title: "demo chart 2",
-      dataSets: ["Sheet1!B27:B35", "Sheet1!C27:C35"],
+      title: { text: "demo chart 2" },
+      dataSets: [{ dataRange: "Sheet1!B27:B35" }, { dataRange: "Sheet1!C27:C35" }],
       labelRange: "Sheet1!A27:A35",
       type: "bar" as const,
       dataSetsHaveTitle: false,
       background: "#AAAAAA",
-      verticalAxisPosition: "right" as const,
       legendPosition: "bottom" as const,
       stacked: true,
     },
     {
-      title: "pie demo chart",
-      dataSets: ["Sheet1!B26:B35", "Sheet1!C26:C35"],
+      title: { text: "pie demo chart" },
+      dataSets: [{ dataRange: "Sheet1!B26:B35" }, { dataRange: "Sheet1!C26:C35" }],
       labelRange: "Sheet1!A27:A35",
       type: "pie" as const,
       dataSetsHaveTitle: false,
       background: "#FFFFFF",
-      verticalAxisPosition: "left" as const,
       legendPosition: "right" as const,
       stacked: false,
     },
     {
-      title: "demo chart4",
-      dataSets: ["Sheet1!B26:B35", "Sheet1!C26:C35"],
+      title: { text: "demo chart4" },
+      dataSets: [{ dataRange: "Sheet1!B26:B35" }, { dataRange: "Sheet1!C26:C35" }],
       labelRange: "Sheet1!A27:A35",
       type: "line" as const,
       dataSetsHaveTitle: false,
       background: "#FFFFFF",
-      verticalAxisPosition: "right" as const,
       legendPosition: "top" as const,
       stacked: true,
       labelsAsText: false,
+    },
+    {
+      title: { text: "demo chart 5" },
+      dataSets: [{ dataRange: "Sheet1!B27:B35" }, { dataRange: "Sheet1!C27:C35" }],
+      labelRange: "Sheet1!A27:A35",
+      type: "combo" as const,
+      dataSetsHaveTitle: false,
+      background: "#AAAAAA",
+      legendPosition: "bottom" as const,
+      stacked: true,
     },
   ])("Charts %s", (chartDef: any) => {
     createChart(model, chartDef, "1");

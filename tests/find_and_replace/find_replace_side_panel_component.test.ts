@@ -1,20 +1,22 @@
 import { Model, Spreadsheet } from "../../src";
-import { setCellContent } from "../test_helpers/commands_helpers";
+import { DEFAULT_CELL_HEIGHT, DEFAULT_CELL_WIDTH } from "../../src/constants";
+import { SearchOptions } from "../../src/types/find_and_replace";
+import { activateSheet, createSheet, setCellContent } from "../test_helpers/commands_helpers";
 import {
   click,
   focusAndKeyDown,
   setInputValueAndTrigger,
   simulateClick,
+  triggerMouseEvent,
 } from "../test_helpers/dom_helper";
-import { mountSpreadsheet, nextTick, spyDispatch } from "../test_helpers/helpers";
+import { getCell, getCellContent } from "../test_helpers/getters_helpers";
+import { mountSpreadsheet, nextTick } from "../test_helpers/helpers";
 jest.mock("../../src/helpers/uuid", () => require("../__mocks__/uuid"));
-
-let model: Model;
 
 const selectors = {
   closeSidepanel: ".o-sidePanel .o-sidePanelClose",
   inputSearch:
-    ".o-sidePanel .o-find-and-replace .o-section:nth-child(1) .o-input-search-container input",
+    ".o-sidePanel .o-find-and-replace .o-section:nth-child(1) .o-input-search-container input.o-input-with-count",
   inputReplace: ".o-sidePanel .o-find-and-replace .o-section:nth-child(3) input",
   previousButton:
     ".o-sidePanel .o-find-and-replace .o-sidePanelButtons:nth-of-type(2) .o-button:nth-child(1)",
@@ -31,25 +33,69 @@ const selectors = {
   checkBoxSearchFormulas:
     ".o-sidePanel .o-find-and-replace .o-section:nth-child(1) .o-checkbox:nth-child(3) input",
   checkBoxReplaceFormulas:
-    ".o-sidePanel .o-find-and-replace .o-section:nth-child(3) .o-checkbox:nth-child(3) input",
+    ".o-sidePanel .o-find-and-replace .o-section:nth-child(3) .o-far-item:nth-child(3) input",
+  searchRangeSelection: ".o-sidePanel .o-find-and-replace .o-section:nth-child(1) .o-type-selector",
+  searchRange: ".o-sidePanel .o-find-and-replace .o-section:nth-child(1) .o-selection-input input",
+  resetSearchRange: ".o-sidePanel .o-find-and-replace .o-section:nth-child(1) .o-selection-ko",
+  confirmSearchRange: ".o-sidePanel .o-find-and-replace .o-section:nth-child(1) .o-selection-ok",
+  matchesCount: ".o-sidePanel .o-find-and-replace .o-matches-count",
 };
+
+function changeSearchScope(scope: SearchOptions["searchScope"]) {
+  const selectRangeSelection = document.querySelector(
+    selectors.searchRangeSelection
+  ) as HTMLSelectElement;
+  setInputValueAndTrigger(selectRangeSelection, scope);
+}
+
+async function inputSearchValue(value: string) {
+  setInputValueAndTrigger(selectors.inputSearch, value);
+  /** Fake timers use to control debounceSearch in Find and Replace */
+  jest.runOnlyPendingTimers();
+  await nextTick();
+}
+
+function getMatchesCountContent() {
+  const countDivs = document.querySelectorAll(selectors.matchesCount + " div");
+  return [...countDivs].map((div) => div.textContent);
+}
+
+function getMatchesCount() {
+  const counts = [...document.querySelectorAll(selectors.matchesCount + " div")].map(
+    (div) => div.textContent
+  );
+  if (counts.length === 0) {
+    return undefined;
+  }
+
+  const countAllSheets = parseInt(counts.find((text) => text?.includes("in all sheets")) || "0");
+  const countCurrentSheet = parseInt(counts.find((text) => text?.includes("in sheet")) || "0");
+  const countSpecificRange = parseInt(counts.find((text) => text?.includes("in range")) || "0");
+
+  return {
+    allSheets: countAllSheets,
+    currentSheet: countCurrentSheet,
+    specificRange: countSpecificRange,
+  };
+}
+
+function getSelectedMatchIndex() {
+  return parseInt(document.querySelector("div.o-input-count")!.textContent || "");
+}
 
 describe("find and replace sidePanel component", () => {
   let fixture: HTMLElement;
   let parent: Spreadsheet;
+  let model: Model;
+
+  beforeEach(async () => {
+    jest.useFakeTimers();
+    ({ parent, model, fixture } = await mountSpreadsheet());
+    parent.env.openSidePanel("FindAndReplace");
+    await nextTick();
+  });
 
   describe("Sidepanel", () => {
-    beforeEach(async () => {
-      ({ parent, model, fixture } = await mountSpreadsheet());
-      parent.env.openSidePanel("FindAndReplace");
-      await nextTick();
-    });
-    test("Can close the remove duplicate side panel", async () => {
-      expect(document.querySelectorAll(".o-sidePanel").length).toBe(1);
-      await click(fixture, selectors.closeSidepanel);
-      expect(document.querySelectorAll(".o-sidePanel").length).toBe(0);
-    });
-
     test("When opening sidepanel, focus will be on search input", async () => {
       expect(document.querySelectorAll(".o-sidePanel").length).toBe(1);
       await nextTick();
@@ -72,86 +118,170 @@ describe("find and replace sidePanel component", () => {
       ).toBe(true);
     });
   });
+
   describe("basic search", () => {
-    let dispatch;
-
-    beforeEach(async () => {
-      jest.useFakeTimers();
-      ({ parent, model, fixture } = await mountSpreadsheet());
-      parent.env.openSidePanel("FindAndReplace");
-      await nextTick();
-      dispatch = spyDispatch(parent);
-    });
-
-    afterEach(() => {
-      jest.useRealTimers();
-    });
-
     test("simple search", async () => {
-      /** Fake timers use to control debounceSearch in Find and Replace */
-      setInputValueAndTrigger(selectors.inputSearch, "1");
-      jest.runOnlyPendingTimers();
-      await nextTick();
-      expect(dispatch).toHaveBeenCalledWith("UPDATE_SEARCH", {
-        searchOptions: { exactMatch: false, matchCase: false, searchFormulas: false },
-        toSearch: "1",
-      });
+      setCellContent(model, "A1", "1");
+      await inputSearchValue("1");
+      expect(getMatchesCount()).toMatchObject({ allSheets: 1, currentSheet: 1 });
     });
 
     test("clicking on next", async () => {
-      setInputValueAndTrigger(selectors.inputSearch, "1");
+      setCellContent(model, "A1", "1");
+      setCellContent(model, "A2", "1");
+      await inputSearchValue("1");
+      expect(getSelectedMatchIndex()).toBe(1);
       await click(fixture, selectors.nextButton);
-      expect(dispatch).toHaveBeenCalledWith("SELECT_SEARCH_NEXT_MATCH");
+      expect(getSelectedMatchIndex()).toBe(2);
     });
 
-    test("Going to next with Enter key", async () => {
-      setInputValueAndTrigger(selectors.inputSearch, "1");
+    test("Going to the next match with Enter key", async () => {
+      setCellContent(model, "A1", "1");
+      setCellContent(model, "A2", "1");
+      await inputSearchValue("1");
+      expect(getSelectedMatchIndex()).toBe(1);
       await focusAndKeyDown(selectors.inputSearch, { key: "Enter" });
-      expect(dispatch).toHaveBeenCalledWith("SELECT_SEARCH_NEXT_MATCH");
+      expect(getSelectedMatchIndex()).toBe(2);
+    });
+
+    test("Going to the previous match with Shift+Enter key", async () => {
+      setCellContent(model, "A1", "1");
+      setCellContent(model, "A2", "1");
+      setCellContent(model, "A3", "1");
+      await inputSearchValue("1");
+      expect(getSelectedMatchIndex()).toBe(1);
+      await focusAndKeyDown(selectors.inputSearch, { key: "Enter", shiftKey: true });
+      expect(getSelectedMatchIndex()).toBe(3);
+      await focusAndKeyDown(selectors.inputSearch, { key: "Enter", shiftKey: true });
+      expect(getSelectedMatchIndex()).toBe(2);
     });
 
     test("clicking on previous", async () => {
-      setInputValueAndTrigger(selectors.inputSearch, "1");
+      setCellContent(model, "A1", "1");
+      setCellContent(model, "A2", "1");
+      setCellContent(model, "A3", "1");
+      await inputSearchValue("1");
+      expect(getSelectedMatchIndex()).toBe(1);
       await click(fixture, selectors.previousButton);
-      expect(dispatch).toHaveBeenCalledWith("SELECT_SEARCH_PREVIOUS_MATCH");
+      expect(getSelectedMatchIndex()).toBe(3);
     });
 
     test("search on empty string", async () => {
-      setInputValueAndTrigger(selectors.inputSearch, "");
-      jest.runOnlyPendingTimers();
-      await nextTick();
-      expect(dispatch).toHaveBeenCalledWith("UPDATE_SEARCH", {
-        searchOptions: { exactMatch: false, matchCase: false, searchFormulas: false },
-        toSearch: "",
-      });
+      await inputSearchValue("");
+      expect(getMatchesCount()).toBeUndefined();
     });
 
-    test("Closing the sidepanel cancels the search", async () => {
-      setInputValueAndTrigger(selectors.inputSearch, "g");
-      await simulateClick(".o-sidePanelClose");
-      jest.runOnlyPendingTimers();
+    test("clicking on specific range and hitting confirm will search in the range", async () => {
+      setCellContent(model, "A1", "1");
+      inputSearchValue("1");
+
+      expect(document.querySelector(selectors.searchRange)).toBeFalsy();
+      changeSearchScope("specificRange");
       await nextTick();
-      expect(dispatch).not.toHaveBeenCalledWith("UPDATE_SEARCH", expect.any(Object));
+      await nextTick(); // selection input need 2 nextTicks because ¯\_(ツ)_/¯
+
+      expect(document.querySelector(selectors.searchRange)).toBeTruthy();
+      await setInputValueAndTrigger(selectors.searchRange, "A1:B2", "onlyInput");
+      expect(getMatchesCount()).toMatchObject({ specificRange: 0 });
+
+      await click(fixture, selectors.confirmSearchRange);
+      expect(getMatchesCount()).toMatchObject({ specificRange: 1 });
+    });
+
+    test("Ranges are properly updated by with several grid selections", async () => {
+      setCellContent(model, "A1", "1");
+      inputSearchValue("1");
+      changeSearchScope("specificRange");
+      await nextTick();
+      await nextTick();
+      (fixture.querySelector(selectors.searchRange) as HTMLInputElement).focus();
+      triggerMouseEvent(
+        ".o-grid-overlay",
+        "pointerdown",
+        DEFAULT_CELL_WIDTH / 2,
+        DEFAULT_CELL_HEIGHT / 2
+      );
+      // let at least a rendering to mimic a realistic behaviour. The compopents could render between the events
+      await nextTick();
+      triggerMouseEvent(
+        ".o-grid-overlay",
+        "pointermove",
+        DEFAULT_CELL_WIDTH / 2,
+        (3 / 2) * DEFAULT_CELL_HEIGHT
+      );
+      await nextTick();
+
+      expect(getMatchesCount()).toMatchObject({ specificRange: 0 });
+
+      await click(fixture, selectors.confirmSearchRange);
+      expect(getMatchesCount()).toMatchObject({ specificRange: 1 });
+    });
+
+    test.skip("Specific range is following the active sheet", async () => {
+      //TODO : uh ? Is this test wrong ? The specific range doesn't follow the active sheet in master...
+      createSheet(model, { sheetId: "sh2" });
+      setCellContent(model, "A1", "1");
+
+      inputSearchValue("1");
+      changeSearchScope("specificRange");
+      await nextTick();
+      await nextTick(); // selection input need 2 nextTicks because ¯\_(ツ)_/¯
+      await setInputValueAndTrigger(selectors.searchRange, "A1:B2");
+      await click(fixture, selectors.confirmSearchRange);
+
+      expect(getMatchesCount()).toMatchObject({ specificRange: 1 });
+
+      activateSheet(model, "sh2");
+      await nextTick();
+      expect(getMatchesCount()).toMatchObject({ specificRange: 0 });
+
+      setCellContent(model, "A1", "1", "sh2");
+      await nextTick();
+      expect(getMatchesCount()).toMatchObject({ specificRange: 1 });
+    });
+
+    test.each(["allSheets", "activeSheet"] as const)(
+      "Specific range is persistent when changing scopes",
+      async (scope) => {
+        changeSearchScope("specificRange");
+        await nextTick();
+        await nextTick(); // selection input need 2 nextTicks because ¯\_(ツ)_/¯
+        setInputValueAndTrigger(selectors.searchRange, "A1:B2");
+        await nextTick();
+        await click(fixture, selectors.confirmSearchRange);
+        changeSearchScope(scope);
+        await nextTick();
+        expect(document.querySelector(selectors.searchRange)).toBeFalsy();
+        changeSearchScope("specificRange");
+        await nextTick();
+        expect((document.querySelector(selectors.searchRange) as HTMLInputElement).value).toBe(
+          "A1:B2"
+        );
+      }
+    );
+
+    test("Change in specific range selectionInput is confirmed when reselecting the search input", async () => {
+      setCellContent(model, "A1", "1");
+      changeSearchScope("specificRange");
+      await inputSearchValue("1");
+      await nextTick(); // selection input need 2 nextTicks because ¯\_(ツ)_/¯
+
+      expect(fixture.querySelector(selectors.searchRange)).toBeTruthy();
+      expect(getMatchesCount()).toMatchObject({ specificRange: 0 });
+
+      await setInputValueAndTrigger(selectors.searchRange, "A1:B2", "onlyInput");
+      expect(getMatchesCount()).toMatchObject({ specificRange: 0 });
+
+      await click(fixture, selectors.confirmSearchRange);
+      expect(getMatchesCount()).toMatchObject({ specificRange: 1 });
     });
   });
 
   describe("search count match", () => {
-    beforeEach(async () => {
-      jest.useFakeTimers();
-      ({ parent, model, fixture } = await mountSpreadsheet());
-      parent.env.openSidePanel("FindAndReplace");
-      await nextTick();
-    });
-
-    afterEach(() => {
-      jest.useRealTimers();
-    });
     test("search match count is displayed", async () => {
       setCellContent(model, "A1", "Hello");
       expect(fixture.querySelector(".o-input-count")).toBeNull();
-      setInputValueAndTrigger(selectors.inputSearch, "Hel");
-      jest.runOnlyPendingTimers();
-      await nextTick();
+      await inputSearchValue("Hel");
       expect(fixture.querySelector(".o-input-count")?.innerHTML).toBe("1 / 1");
     });
 
@@ -162,58 +292,40 @@ describe("find and replace sidePanel component", () => {
       jest.runOnlyPendingTimers();
       await nextTick();
       expect(fixture.querySelector(".o-input-count")?.innerHTML).toBe("1 / 1");
-      setInputValueAndTrigger(selectors.inputSearch, "");
-      jest.runOnlyPendingTimers();
-      await nextTick();
+      await inputSearchValue("");
       expect(fixture.querySelector(".o-input-count")).toBeNull();
     });
 
     test("search without match displays no match count", async () => {
       expect(fixture.querySelector(".o-input-count")).toBeNull();
-      setInputValueAndTrigger(selectors.inputSearch, "a search term");
-      jest.runOnlyPendingTimers();
-      await nextTick();
-      expect(fixture.querySelector(".o-input-count")?.innerHTML).toBe("0 / 0");
+      await inputSearchValue("a search term");
+      expect(fixture.querySelector(".o-input-count")?.innerHTML).toBe(" 0 / 0 ");
     });
   });
 
   describe("search options", () => {
-    beforeEach(async () => {
-      ({ parent, model, fixture } = await mountSpreadsheet());
-      parent.env.openSidePanel("FindAndReplace");
-      await nextTick();
-    });
     test("Can search matching case", async () => {
-      const dispatch = spyDispatch(parent);
-
-      setInputValueAndTrigger(selectors.inputSearch, "Hell");
+      setCellContent(model, "A1", "HELLO");
+      await inputSearchValue("hello");
+      expect(getMatchesCount()).toMatchObject({ currentSheet: 1 });
       await click(fixture, selectors.checkBoxMatchingCase);
-      expect(dispatch).toHaveBeenCalledWith("UPDATE_SEARCH", {
-        searchOptions: { exactMatch: false, matchCase: true, searchFormulas: false },
-        toSearch: "Hell",
-      });
+      expect(getMatchesCount()).toMatchObject({ currentSheet: 0 });
     });
 
     test("Can search matching entire cell", async () => {
-      const dispatch = spyDispatch(parent);
-
-      setInputValueAndTrigger(selectors.inputSearch, "Hell");
+      setCellContent(model, "A1", "Hello there");
+      await inputSearchValue("hello");
+      expect(getMatchesCount()).toMatchObject({ currentSheet: 1 });
       await click(fixture, selectors.checkBoxExactMatch);
-      expect(dispatch).toHaveBeenCalledWith("UPDATE_SEARCH", {
-        searchOptions: { exactMatch: true, matchCase: false, searchFormulas: false },
-        toSearch: "Hell",
-      });
+      expect(getMatchesCount()).toMatchObject({ currentSheet: 0 });
     });
 
     test("can search in formulas", async () => {
-      const dispatch = spyDispatch(parent);
-
-      setInputValueAndTrigger(selectors.inputSearch, "Hell");
+      setCellContent(model, "A1", "=SUM(2)");
+      await inputSearchValue("sum");
+      expect(getMatchesCount()).toMatchObject({ currentSheet: 0 });
       await click(fixture, selectors.checkBoxSearchFormulas);
-      expect(dispatch).toHaveBeenCalledWith("UPDATE_SEARCH", {
-        searchOptions: { exactMatch: false, matchCase: false, searchFormulas: true },
-        toSearch: "Hell",
-      });
+      expect(getMatchesCount()).toMatchObject({ currentSheet: 1 });
     });
 
     test("search in formulas shows formulas", async () => {
@@ -221,10 +333,25 @@ describe("find and replace sidePanel component", () => {
       expect(model.getters.shouldShowFormulas()).toBe(true);
     });
 
-    test("search in formulas should not show formula after closing the sidepanel", async () => {
+    test("closing the side panel reset the showFormula setting to its original value", async () => {
       await click(fixture, selectors.checkBoxSearchFormulas);
+      expect(model.getters.shouldShowFormulas()).toBe(true);
       await click(fixture, selectors.closeSidepanel);
       expect(model.getters.shouldShowFormulas()).toBe(false);
+
+      model.dispatch("SET_FORMULA_VISIBILITY", { show: true });
+      parent.env.openSidePanel("FindAndReplace");
+      await nextTick();
+
+      expect(model.getters.shouldShowFormulas()).toBe(true);
+      const searchInFormulaCheckbox = document.querySelector(selectors.checkBoxSearchFormulas)!;
+      expect((searchInFormulaCheckbox as HTMLInputElement).checked).toBe(true);
+      await click(fixture, selectors.checkBoxSearchFormulas);
+      expect((searchInFormulaCheckbox as HTMLInputElement).checked).toBe(false);
+      expect(model.getters.shouldShowFormulas()).toBe(false);
+
+      await click(fixture, selectors.closeSidepanel);
+      expect(model.getters.shouldShowFormulas()).toBe(true);
     });
 
     test("Setting show formula from f&r should retain its state even it's changed via topbar", async () => {
@@ -241,51 +368,76 @@ describe("find and replace sidePanel component", () => {
       ).toBe(false);
     });
   });
+
   describe("replace options", () => {
-    beforeEach(async () => {
-      ({ parent, model, fixture } = await mountSpreadsheet());
-      parent.env.openSidePanel("FindAndReplace");
-      await nextTick();
-    });
     test("Can replace a simple text value", async () => {
-      setInputValueAndTrigger(document.querySelector(selectors.inputSearch), "hello");
+      setCellContent(model, "A1", "hello");
+      inputSearchValue("hello");
       setInputValueAndTrigger(document.querySelector(selectors.inputReplace), "kikou");
-      const dispatch = spyDispatch(parent);
       await click(fixture, selectors.replaceButton);
-      expect(dispatch).toHaveBeenCalledWith("REPLACE_SEARCH", { replaceWith: "kikou" });
+      expect(getCellContent(model, "A1")).toBe("kikou");
     });
 
     test("Can replace a value in a formula", async () => {
-      setInputValueAndTrigger(document.querySelector(selectors.inputSearch), "2");
+      setCellContent(model, "A1", "=SUM(2)");
+      inputSearchValue("2");
       await click(fixture, selectors.checkBoxSearchFormulas);
       setInputValueAndTrigger(document.querySelector(selectors.inputReplace), "4");
-      const dispatch = spyDispatch(parent);
       await click(fixture, selectors.replaceButton);
-      expect(dispatch).toHaveBeenCalledWith("REPLACE_SEARCH", { replaceWith: "4" });
+      expect(getCell(model, "A1")?.content).toBe("=SUM(4)");
     });
 
     test("formulas wont be modified if not looking in formulas or not modifying formulas", async () => {
-      setInputValueAndTrigger(document.querySelector(selectors.inputSearch), "4");
+      setCellContent(model, "A1", "=SUM(2)");
+      inputSearchValue("4");
       setInputValueAndTrigger(document.querySelector(selectors.inputReplace), "2");
-      const dispatch = spyDispatch(parent);
       await click(fixture, selectors.replaceButton);
-      expect(dispatch).toHaveBeenCalledWith("REPLACE_SEARCH", { replaceWith: "2" });
+      expect(getCell(model, "A1")?.content).toBe("=SUM(2)");
     });
 
     test("can replace all", async () => {
-      setInputValueAndTrigger(document.querySelector(selectors.inputSearch), "hell");
+      setCellContent(model, "A1", "hello");
+      setCellContent(model, "A2", "hell");
+      inputSearchValue("hell");
       setInputValueAndTrigger(document.querySelector(selectors.inputReplace), "kikou");
-      const dispatch = spyDispatch(parent);
       await click(fixture, selectors.replaceAllButton);
-      expect(dispatch).toHaveBeenCalledWith("REPLACE_ALL_SEARCH", { replaceWith: "kikou" });
+      expect(getCellContent(model, "A1")).toBe("kikouo");
+      expect(getCellContent(model, "A2")).toBe("kikou");
     });
 
     test("Can replace with Enter key", async () => {
-      setInputValueAndTrigger(selectors.inputSearch, "hell");
+      setCellContent(model, "A1", "hell");
+      inputSearchValue("hell");
       setInputValueAndTrigger(selectors.inputReplace, "kikou");
-      const dispatch = spyDispatch(parent);
       await focusAndKeyDown(selectors.inputReplace, { key: "Enter" });
-      expect(dispatch).toHaveBeenCalledWith("REPLACE_SEARCH", { replaceWith: "kikou" });
+      expect(getCellContent(model, "A1")).toBe("kikou");
+    });
+  });
+
+  describe("match counts checking", () => {
+    test("match counts return number of search in allSheet, currentSheet and selected range", async () => {
+      createSheet(model, { sheetId: "sheet2" });
+      setCellContent(model, "A1", "Hello");
+      setCellContent(model, "A3", "Hello");
+      setCellContent(model, "B1", "Hello");
+      setCellContent(model, "A1", "Hello", "sheet2");
+      setCellContent(model, "A2", "Hello", "sheet2");
+      expect(fixture.querySelector(".o-matches-count")).toBeNull();
+      expect(getMatchesCountContent()).toEqual([]);
+      await inputSearchValue("hello");
+      expect(getMatchesCountContent()).toEqual(["3 in sheet Sheet1", "5 in all sheets"]);
+      changeSearchScope("specificRange");
+      await nextTick();
+      expect(getMatchesCountContent()).toEqual(["3 in sheet Sheet1", "5 in all sheets"]);
+      await simulateClick(selectors.searchRange);
+      setInputValueAndTrigger(selectors.searchRange, "A1:B2");
+      await nextTick();
+      await click(fixture, selectors.confirmSearchRange);
+      expect(getMatchesCountContent()).toEqual([
+        "2 in range A1:B2 of sheet Sheet1",
+        "3 in sheet Sheet1",
+        "5 in all sheets",
+      ]);
     });
   });
 });

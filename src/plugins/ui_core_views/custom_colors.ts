@@ -10,8 +10,8 @@ import {
   toHex,
 } from "../../helpers";
 import { GaugeChart, ScorecardChart } from "../../helpers/figures/charts";
-import { Color, CoreViewCommand, Immutable, RGBA, UID } from "../../types";
-import { UIPlugin } from "../ui_plugin";
+import { Color, CoreViewCommand, Immutable, RGBA, TableElementStyle, UID } from "../../types";
+import { UIPlugin, UIPluginConfig } from "../ui_plugin";
 
 /**
  * https://tomekdev.com/posts/sorting-colors-in-js
@@ -71,8 +71,15 @@ interface CustomColorState {
  */
 export class CustomColorsPlugin extends UIPlugin<CustomColorState> {
   private readonly customColors: Immutable<Record<Color, true>> = {};
-  private readonly shouldUpdateColors = false;
+  private readonly shouldUpdateColors = true;
   static getters = ["getCustomColors"] as const;
+
+  constructor(config: UIPluginConfig) {
+    super(config);
+    for (const color of config.customColors ?? []) {
+      this.tryToAddColor(color);
+    }
+  }
 
   handle(cmd: CoreViewCommand) {
     switch (cmd.type) {
@@ -83,38 +90,37 @@ export class CustomColorsPlugin extends UIPlugin<CustomColorState> {
       case "SET_BORDER":
       case "SET_ZONE_BORDERS":
       case "SET_FORMATTING":
+      case "CREATE_TABLE":
+      case "UPDATE_TABLE":
         this.history.update("shouldUpdateColors", true);
+        break;
     }
   }
 
   finalize() {
     if (this.shouldUpdateColors) {
       this.history.update("shouldUpdateColors", false);
-      for (const color of this.getCustomColors()) {
+      for (const color of this.computeCustomColors()) {
         this.tryToAddColor(color);
       }
     }
   }
 
-  getCustomColors(): Color[] {
+  getCustomColors() {
+    return sortWithClusters(Object.keys(this.customColors));
+  }
+
+  private computeCustomColors(): Color[] {
     let usedColors: Color[] = [];
     for (const sheetId of this.getters.getSheetIds()) {
       usedColors = usedColors.concat(
         this.getColorsFromCells(sheetId),
         this.getFormattingColors(sheetId),
-        this.getChartColors(sheetId)
+        this.getChartColors(sheetId),
+        this.getTableColors(sheetId)
       );
     }
-    return sortWithClusters([
-      ...new Set(
-        // remove duplicates first to check validity on a reduced
-        // set of colors, then normalize to HEX and remove duplicates
-        // again
-        [...new Set([...usedColors, ...Object.keys(this.customColors)])]
-          .filter(isColorValid)
-          .map(toHex)
-      ),
-    ]).filter((color) => !COLOR_PICKER_DEFAULTS.includes(color));
+    return [...new Set([...usedColors])];
   }
 
   private getColorsFromCells(sheetId: UID): Color[] {
@@ -179,7 +185,45 @@ export class CustomColorsPlugin extends UIPlugin<CustomColorState> {
     return [...chartsColors];
   }
 
+  private getTableColors(sheetId: UID): Color[] {
+    const tables = this.getters.getTables(sheetId);
+    return tables.flatMap((table) => {
+      const config = table.config;
+      const style = this.getters.getTableStyle(config.styleId);
+      return [
+        this.getTableStyleElementColors(style.wholeTable),
+        config.numberOfHeaders > 0 ? this.getTableStyleElementColors(style.headerRow) : [],
+        config.totalRow ? this.getTableStyleElementColors(style.totalRow) : [],
+        config.bandedColumns ? this.getTableStyleElementColors(style.firstColumnStripe) : [],
+        config.bandedColumns ? this.getTableStyleElementColors(style.secondColumnStripe) : [],
+        config.bandedRows ? this.getTableStyleElementColors(style.firstRowStripe) : [],
+        config.bandedRows ? this.getTableStyleElementColors(style.secondRowStripe) : [],
+        config.firstColumn ? this.getTableStyleElementColors(style.firstColumn) : [],
+        config.lastColumn ? this.getTableStyleElementColors(style.lastColumn) : [],
+      ].flat();
+    });
+  }
+
+  private getTableStyleElementColors(element: TableElementStyle | undefined): Color[] {
+    if (!element) {
+      return [];
+    }
+    return [
+      element.style?.fillColor,
+      element.style?.textColor,
+      element.border?.bottom?.color,
+      element.border?.top?.color,
+      element.border?.left?.color,
+      element.border?.right?.color,
+      element.border?.horizontal?.color,
+      element.border?.vertical?.color,
+    ].filter(isDefined);
+  }
+
   private tryToAddColor(color: Color) {
+    if (!isColorValid(color)) {
+      return;
+    }
     const formattedColor = toHex(color);
     if (color && !COLOR_PICKER_DEFAULTS.includes(formattedColor)) {
       this.history.update("customColors", formattedColor, true);

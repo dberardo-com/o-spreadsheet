@@ -6,7 +6,7 @@ exports[`BottomBar component Can open the list of statistics 1`] = `
 >
   
   <div
-    class="o-menu-item"
+    class="o-menu-item d-flex justify-content-between align-items-center"
     data-name="Sum"
     title="Sum: 24"
   >
@@ -21,11 +21,12 @@ exports[`BottomBar component Can open the list of statistics 1`] = `
       </div>
       
       
+      
     </div>
   </div>
   
   <div
-    class="o-menu-item"
+    class="o-menu-item d-flex justify-content-between align-items-center"
     data-name="Avg"
     title="Avg: 24"
   >
@@ -40,11 +41,12 @@ exports[`BottomBar component Can open the list of statistics 1`] = `
       </div>
       
       
+      
     </div>
   </div>
   
   <div
-    class="o-menu-item"
+    class="o-menu-item d-flex justify-content-between align-items-center"
     data-name="Min"
     title="Min: 24"
   >
@@ -59,11 +61,12 @@ exports[`BottomBar component Can open the list of statistics 1`] = `
       </div>
       
       
+      
     </div>
   </div>
   
   <div
-    class="o-menu-item"
+    class="o-menu-item d-flex justify-content-between align-items-center"
     data-name="Max"
     title="Max: 24"
   >
@@ -78,11 +81,12 @@ exports[`BottomBar component Can open the list of statistics 1`] = `
       </div>
       
       
+      
     </div>
   </div>
   
   <div
-    class="o-menu-item"
+    class="o-menu-item d-flex justify-content-between align-items-center"
     data-name="Count"
     title="Count: 1"
   >
@@ -97,11 +101,12 @@ exports[`BottomBar component Can open the list of statistics 1`] = `
       </div>
       
       
+      
     </div>
   </div>
   
   <div
-    class="o-menu-item"
+    class="o-menu-item d-flex justify-content-between align-items-center"
     data-name="Count Numbers"
     title="Count Numbers: 1"
   >
@@ -114,6 +119,7 @@ exports[`BottomBar component Can open the list of statistics 1`] = `
       >
         Count Numbers: 1
       </div>
+      
       
       
     </div>
@@ -232,16 +238,13 @@ exports[`BottomBar component simple rendering 1`] = `
             <span
               class="o-sheet-icon ms-1"
             >
-              <svg
-                class="o-icon"
-                xmlns="http://www.w3.org/2000/svg"
+              <div
+                class="o-icon fa-small"
               >
-                <polygon
-                  fill="currentColor"
-                  points="0 0 4 4 8 0"
-                  transform="translate(5 7)"
+                <i
+                  class="fa fa-caret-down"
                 />
-              </svg>
+              </div>
             </span>
           </div>
         </div>

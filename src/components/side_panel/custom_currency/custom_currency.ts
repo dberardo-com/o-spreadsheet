@@ -5,6 +5,7 @@ import { _t } from "../../../translation";
 import { Currency, Format, SpreadsheetChildEnv } from "../../../types";
 import { css } from "../../helpers/css";
 import { CustomCurrencyTerms } from "../../translations_terms";
+import { Section } from "../components/section/section";
 
 css/* scss */ `
   .o-custom-currency {
@@ -32,6 +33,9 @@ interface State {
 
 export class CustomCurrencyPanel extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-CustomCurrencyPanel";
+  static components = { Section };
+  static props = { onCloseSidePanel: Function };
+
   private availableCurrencies!: Currency[];
   private state!: State;
 
@@ -171,7 +175,3 @@ export class CustomCurrencyPanel extends Component<Props, SpreadsheetChildEnv> {
     return currency.name + (currency.code ? ` (${currency.code})` : "");
   }
 }
-
-CustomCurrencyPanel.props = {
-  onCloseSidePanel: Function,
-};

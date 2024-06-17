@@ -1,6 +1,5 @@
-import { EvaluationError } from "./errors";
 import { Format, FormattedValue } from "./format";
-import { Link, RangeCompiledFormula, Style, UID } from "./misc";
+import { FPayload, Link, RangeCompiledFormula, Style, UID } from "./misc";
 
 interface CellAttributes {
   readonly id: UID;
@@ -23,7 +22,7 @@ export interface FormulaCell extends CellAttributes {
 
 export type Cell = LiteralCell | FormulaCell;
 
-interface EvaluatedCellProperties {
+interface EvaluatedCellProperties extends FPayload {
   readonly format?: Format;
   /**
    * Cell value formatted based on the format
@@ -58,13 +57,13 @@ export interface BooleanCell extends EvaluatedCellProperties {
 
 export interface EmptyCell extends EvaluatedCellProperties {
   readonly type: CellValueType.empty;
-  readonly value: "";
+  readonly value: null;
 }
 
 export interface ErrorCell extends EvaluatedCellProperties {
   readonly type: CellValueType.error;
   readonly value: string;
-  readonly error: EvaluationError;
+  readonly message?: string;
 }
 
 export enum CellValueType {

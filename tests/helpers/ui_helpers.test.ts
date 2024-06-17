@@ -1,10 +1,7 @@
+import { TableTerms } from "../../src/components/translations_terms";
 import { toCartesian, toXC, toZone, zoneToXc } from "../../src/helpers/index";
 import { interactiveSortSelection } from "../../src/helpers/sort";
 import { interactiveCut } from "../../src/helpers/ui/cut_interactive";
-import {
-  AddFilterInteractiveContent,
-  interactiveAddFilter,
-} from "../../src/helpers/ui/filter_interactive";
 import { interactiveFreezeColumnsRows } from "../../src/helpers/ui/freeze_interactive";
 import {
   AddMergeInteractiveContent,
@@ -16,6 +13,7 @@ import {
   interactivePasteFromOS,
 } from "../../src/helpers/ui/paste_interactive";
 import { interactiveRenameSheet } from "../../src/helpers/ui/sheet_interactive";
+import { interactiveCreateTable } from "../../src/helpers/ui/table_interactive";
 import {
   ToggleGroupInteractiveContent,
   interactiveToggleGroup,
@@ -26,8 +24,8 @@ import {
   addCellToSelection,
   copy,
   createChart,
-  createFilter,
   createSheet,
+  createTable,
   cut,
   freezeColumns,
   freezeRows,
@@ -137,32 +135,36 @@ describe("UI Helpers", () => {
     env = makeTestEnv({ model, raiseError, askConfirmation });
   });
 
-  describe("Interactive Create Filter", () => {
-    test("Successfully create a filter", () => {
-      interactiveAddFilter(env, sheetId, target("A1:B5"));
+  describe("Interactive Create table", () => {
+    test("Successfully create a table", () => {
+      setSelection(model, ["A1:B5"]);
+      interactiveCreateTable(env, sheetId);
       expect(notifyUserTextSpy).toHaveBeenCalledTimes(0);
     });
 
-    test("Create a filter across a merge", () => {
-      merge(model, "A1:A2");
-      interactiveAddFilter(env, sheetId, target("A1:B1"));
-      expect(notifyUserTextSpy).toHaveBeenCalledWith(
-        AddFilterInteractiveContent.mergeInFilter.toString()
-      );
+    test("Create a table across a merge", () => {
+      merge(model, "A1:B1");
+      setSelection(model, ["A1:B1"]);
+      interactiveCreateTable(env, sheetId);
+      expect(notifyUserTextSpy).not.toHaveBeenCalled();
+      expect(model.getters.getMerges(sheetId)).toEqual([]);
+      expect(model.getters.getTables(sheetId)).toMatchObject([
+        { range: { zone: toZone("A1:B1") } },
+      ]);
     });
 
-    test("Create a filter across another filter", () => {
-      createFilter(model, "A1:A2");
-      interactiveAddFilter(env, sheetId, target("A1:B5"));
-      expect(notifyUserTextSpy).toHaveBeenCalledWith(
-        AddFilterInteractiveContent.filterOverlap.toString()
-      );
+    test("Create a table across another table", () => {
+      createTable(model, "A1:A2");
+      setSelection(model, ["A1:B5"]);
+      interactiveCreateTable(env, sheetId);
+      expect(notifyUserTextSpy).toHaveBeenCalledWith(TableTerms.Errors.TableOverlap.toString());
     });
 
-    test("Create filters with non-continuous zones", () => {
-      interactiveAddFilter(env, sheetId, target("A1:A2,C3"));
+    test("Create table with non-continuous zones", () => {
+      setSelection(model, ["A1:A2", "C3"]);
+      interactiveCreateTable(env, sheetId);
       expect(notifyUserTextSpy).toHaveBeenCalledWith(
-        AddFilterInteractiveContent.nonContinuousTargets.toString()
+        TableTerms.Errors.NonContinuousTargets.toString()
       );
     });
   });
@@ -181,7 +183,7 @@ describe("UI Helpers", () => {
       copy(model, "A1");
       const env = makeTestEnv({ model });
       interactivePaste(env, target("B1"), "onlyFormat");
-      interactivePaste(env, target("B2"), "onlyValue");
+      interactivePaste(env, target("B2"), "asValue");
       interactivePaste(env, target("B3"));
 
       expect(getCellText(model, "B1")).toBe("");
@@ -227,7 +229,7 @@ describe("UI Helpers", () => {
     });
 
     test("paste special with a figure will warn the user", async () => {
-      createChart(model, {}, "chartId");
+      createChart(model, { type: "bar" }, "chartId");
       model.dispatch("SELECT_FIGURE", { id: "chartId" });
       copy(model);
       interactivePaste(env, target("A1"), "onlyFormat");
@@ -317,16 +319,16 @@ describe("UI Helpers", () => {
       );
     });
 
-    test("Create a merge inside a filter", () => {
-      createFilter(model, "A1:A2");
+    test("Create a merge inside a table", () => {
+      createTable(model, "A1:A2");
       interactiveAddMerge(env, sheetId, target("A1:B5"));
       expect(notifyUserTextSpy).toHaveBeenCalledWith(
         AddMergeInteractiveContent.MergeInFilter.toString()
       );
     });
 
-    test("Destructive merge inside a filter", () => {
-      createFilter(model, "A1:A2");
+    test("Destructive merge inside a table", () => {
+      createTable(model, "A1:A2");
       setCellContent(model, "A2", ":)");
       interactiveAddMerge(env, sheetId, target("A1:B5"));
       expect(notifyUserTextSpy).toHaveBeenCalledWith(

@@ -26,7 +26,7 @@ import { getXLSXFilesOfType } from "./helpers/xlsx_helper";
 import { XLSXImportWarningManager } from "./helpers/xlsx_parser_error_manager";
 import { escapeTagNamespaces, parseXML } from "./helpers/xml_helpers";
 
-const EXCEL_IMPORT_VERSION = 12;
+const EXCEL_IMPORT_VERSION = 16;
 
 export class XlsxReader {
   warningManager: XLSXImportWarningManager;
@@ -152,7 +152,6 @@ export class XlsxReader {
       styles: convertStyles(data, this.warningManager),
       formats: convertFormats(data, this.warningManager),
       borders: convertBorders(data, this.warningManager),
-      entities: {},
       revisionId: DEFAULT_REVISION_ID,
     } as WorkbookData;
 

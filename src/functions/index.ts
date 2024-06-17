@@ -3,18 +3,17 @@ import { _t } from "../translation";
 import {
   AddFunctionDescription,
   Arg,
-  ArgValue,
+  CellValue,
   ComputeFunction,
-  ComputeFunctionArg,
   EvalContext,
+  FPayload,
   FunctionDescription,
-  isMatrix,
   Matrix,
-  ValueAndFormat,
+  isMatrix,
 } from "../types";
-import { CellErrorType, EvaluationError } from "../types/errors";
+import { BadExpressionError, EvaluationError } from "../types/errors";
 import { addMetaInfoFromArg, validateArguments } from "./arguments";
-import { matrixMap } from "./helpers";
+import { isEvaluationError, matrixForEach, matrixMap } from "./helpers";
 import * as array from "./module_array";
 import * as misc from "./module_custom";
 import * as database from "./module_database";
@@ -58,9 +57,18 @@ const functionNameRegex = /^[A-Z0-9\_\.]+$/;
 //------------------------------------------------------------------------------
 // Function registry
 //------------------------------------------------------------------------------
-class FunctionRegistry extends Registry<FunctionDescription> {
+
+export interface FunctionRegistry extends Registry<FunctionDescription> {
+  add(functionName: string, addDescr: AddFunctionDescription): FunctionRegistry;
+  get(functionName: string): FunctionDescription;
   mapping: {
-    [key: string]: ComputeFunction<Arg, Matrix<ValueAndFormat> | ValueAndFormat>;
+    [functionName: string]: ComputeFunction<Matrix<FPayload> | FPayload>;
+  };
+}
+
+export class FunctionRegistry extends Registry<FunctionDescription> {
+  mapping: {
+    [key: string]: ComputeFunction<Matrix<FPayload> | FPayload>;
   } = {};
 
   add(name: string, addDescr: AddFunctionDescription) {
@@ -75,24 +83,26 @@ class FunctionRegistry extends Registry<FunctionDescription> {
     }
     const descr = addMetaInfoFromArg(addDescr);
     validateArguments(descr.args);
-    this.mapping[name] = addInputHandling(descr, createComputeFunctionFromDescription(descr));
+    this.mapping[name] = addErrorHandling(addResultHandling(addInputHandling(descr), name), name);
     super.add(name, descr);
     return this;
   }
 }
 
 function addInputHandling(
-  descr: FunctionDescription,
-  computeFunction: ComputeFunction<Arg, Matrix<ValueAndFormat> | ValueAndFormat>
-) {
-  function computeWithInputHandling(this: EvalContext, ...args: Arg[]) {
+  descr: FunctionDescription
+): ComputeFunction<FPayload | Matrix<FPayload> | CellValue | Matrix<CellValue>> {
+  function computeWithInputHandling(
+    this: EvalContext,
+    ...args: Arg[]
+  ): FPayload | Matrix<FPayload> | CellValue | Matrix<CellValue> {
     for (let i = 0; i < args.length; i++) {
       const argDefinition = descr.args[descr.getArgToFocus(i + 1) - 1];
       const arg = args[i];
+
       if (isMatrix(arg) && !argDefinition.acceptMatrix) {
         if (arg.length !== 1 || arg[0].length !== 1) {
           throw new EvaluationError(
-            CellErrorType.GenericError,
             _t(
               "Function [[FUNCTION_NAME]] expects the parameter '%s' to be a single value or a single cell reference, not a range.",
               argDefinition.name
@@ -101,82 +111,107 @@ function addInputHandling(
         }
         args[i] = arg[0][0];
       }
+
+      if (!isMatrix(arg) && argDefinition.acceptMatrixOnly) {
+        throw new BadExpressionError(
+          _t(
+            "Function [[FUNCTION_NAME]] expects the parameter '%s' to be reference to a cell or range.",
+            (i + 1).toString()
+          )
+        );
+      }
     }
-    return computeFunction.apply(this, args);
+    return descr.compute.apply(this, args);
   }
+
   return computeWithInputHandling;
 }
 
-function createComputeFunctionFromDescription(
-  descr: FunctionDescription
-): ComputeFunction<Arg, Matrix<ValueAndFormat> | ValueAndFormat> {
-  const computeValueAndFormat = "computeValueAndFormat" in descr;
-  const computeValue = "compute" in descr;
-  const computeFormat = "computeFormat" in descr;
-
-  if (!computeValueAndFormat && !computeValue) {
-    throw new Error(
-      "Invalid function description, need at least one 'compute' or 'computeValueAndFormat' function"
-    );
-  }
-
-  if (computeValueAndFormat && (computeValue || computeFormat)) {
-    throw new Error(
-      "Invalid function description, cannot have both 'computeValueAndFormat' and 'compute'/'computeFormat' functions"
-    );
-  }
-
-  if (computeValueAndFormat) {
-    return descr.computeValueAndFormat;
-  }
-
-  // case computeValue
-  return buildComputeFunctionFromDescription(descr);
-}
-
-function buildComputeFunctionFromDescription(descr) {
-  return function (
-    this: EvalContext,
-    ...args: ComputeFunctionArg<Arg>[]
-  ): Matrix<ValueAndFormat> | ValueAndFormat {
-    const value = descr.compute.apply(this, extractArgValuesFromArgs(args));
-    const format = descr.computeFormat?.apply(this, args);
-
-    if (isMatrix(value)) {
-      if (format === undefined || isMatrix(format)) {
-        return value.map((col, i) =>
-          col.map((row, j) => ({ value: row, format: format?.[i]?.[j] }))
-        );
-      }
-    } else {
-      if (format === undefined || !isMatrix(format)) {
-        return { value, format };
-      }
+function addErrorHandling(
+  compute: ComputeFunction<Matrix<FPayload> | FPayload>,
+  functionName: string
+): ComputeFunction<Matrix<FPayload> | FPayload> {
+  return function (this: EvalContext, ...args: Arg[]): Matrix<FPayload> | FPayload {
+    try {
+      return compute.apply(this, args);
+    } catch (e) {
+      return handleError(e, functionName);
     }
-    throw new Error("A format matrix should never be associated with a scalar value");
   };
 }
 
-function extractArgValuesFromArgs(args: ComputeFunctionArg<Arg>[]): ComputeFunctionArg<ArgValue>[] {
-  return args.map((arg) => {
-    if (arg === undefined) {
-      return undefined;
-    }
-    if (typeof arg === "function") {
-      return () => extractArgValueFromArg(arg());
-    }
-    return extractArgValueFromArg(arg);
-  });
-}
+export const implementationErrorMessage = _t(
+  "An unexpected error occurred. Submit a support ticket at odoo.com/help."
+);
 
-function extractArgValueFromArg(arg: Arg) {
-  if (isMatrix(arg)) {
-    return matrixMap(arg, (data) => data.value);
+function handleError(e: unknown, functionName: string): FPayload {
+  // the error could be an user error (instance of EvaluationError)
+  // or a javascript error (instance of Error)
+  // we don't want block the user with an implementation error
+  // so we fallback to a generic error
+  if (hasStringValue(e) && isEvaluationError(e.value)) {
+    if (hasStringMessage(e)) {
+      replaceFunctionNamePlaceholder(e, functionName);
+    }
+    return e;
   }
-  return arg?.value;
+  console.error(e);
+  return new EvaluationError(
+    implementationErrorMessage + (hasStringMessage(e) ? " " + e.message : "")
+  );
 }
 
-export const functionRegistry = new FunctionRegistry();
+function hasStringValue(obj: unknown): obj is { value: string } {
+  return (
+    (obj as { value: string })?.value !== undefined &&
+    typeof (obj as { value: string }).value === "string"
+  );
+}
+
+function hasStringMessage(obj: unknown): obj is { message: string } {
+  return (
+    (obj as { message: string })?.message !== undefined &&
+    typeof (obj as { message: string }).message === "string"
+  );
+}
+
+function addResultHandling(
+  compute: ComputeFunction<FPayload | Matrix<FPayload> | CellValue | Matrix<CellValue>>,
+  functionName: string
+): ComputeFunction<FPayload | Matrix<FPayload>> {
+  return function computeWithResultHandling(
+    this: EvalContext,
+    ...args: Arg[]
+  ): FPayload | Matrix<FPayload> {
+    const result = compute.apply(this, args);
+
+    if (!isMatrix(result)) {
+      if (typeof result === "object" && result !== null && "value" in result) {
+        replaceFunctionNamePlaceholder(result, functionName);
+        return result;
+      }
+      return { value: result };
+    }
+
+    if (typeof result[0][0] === "object" && result[0][0] !== null && "value" in result[0][0]) {
+      matrixForEach(result as Matrix<FPayload>, (result) =>
+        replaceFunctionNamePlaceholder(result, functionName)
+      );
+      return result as Matrix<FPayload>;
+    }
+
+    return matrixMap(result as Matrix<CellValue>, (row) => ({ value: row }));
+  };
+}
+
+function replaceFunctionNamePlaceholder(fPayload: FPayload, functionName: string) {
+  // for performance reasons: change in place and only if needed
+  if (fPayload.message?.includes("[[FUNCTION_NAME]]")) {
+    fPayload.message = fPayload.message.replace("[[FUNCTION_NAME]]", functionName);
+  }
+}
+
+export const functionRegistry: FunctionRegistry = new FunctionRegistry();
 
 for (let category of categories) {
   const fns = category.functions;

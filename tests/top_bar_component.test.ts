@@ -1,6 +1,6 @@
-import { Component, onMounted, onWillUnmount, useState, xml } from "@odoo/owl";
+import { Component, xml } from "@odoo/owl";
 import { Model } from "../src";
-import { ComposerFocusType } from "../src/components/spreadsheet/spreadsheet";
+import { ComposerStore } from "../src/components/composer/composer/composer_store";
 import { TopBar } from "../src/components/top_bar/top_bar";
 import { DEFAULT_FONT_SIZE } from "../src/constants";
 import { toZone, zoneToXc } from "../src/helpers";
@@ -9,7 +9,7 @@ import { ConditionalFormat, Currency, Pixel, SpreadsheetChildEnv, Style } from "
 import { FileStore } from "./__mocks__/mock_file_store";
 import {
   addCellToSelection,
-  createFilter,
+  createTable,
   selectCell,
   setAnchorCorner,
   setCellContent,
@@ -24,11 +24,10 @@ import {
   simulateClick,
   triggerMouseEvent,
 } from "./test_helpers/dom_helper";
-import { getBorder, getCell, getFilterTable, getStyle } from "./test_helpers/getters_helpers";
+import { getBorder, getCell, getStyle, getTable } from "./test_helpers/getters_helpers";
 import {
   getFigureIds,
   getNode,
-  makeTestEnv,
   mountComponent,
   mountSpreadsheet,
   nextTick,
@@ -52,51 +51,48 @@ mockGetBoundingClientRect({
 });
 
 let fixture: HTMLElement;
+let parent: Parent;
 
-type Props = {
-  focusComposer: ComposerFocusType;
-};
-
-class Parent extends Component<Props, SpreadsheetChildEnv> {
+class Parent extends Component<any, SpreadsheetChildEnv> {
   static template = xml/* xml */ `
     <div class="o-spreadsheet">
       <TopBar
-        focusComposer="state.focusComposer"
         onClick="() => {}"
-        onComposerContentFocused="() => this.setFocusComposer('contentFocus')"
         dropdownMaxHeight="gridHeight"/>
     </div>
   `;
   static components = { TopBar };
-
-  state = useState({ focusComposer: <ComposerFocusType>"inactive" });
-
-  setup() {
-    this.state.focusComposer = this.props.focusComposer;
-    onMounted(() => this.env.model.on("update", this, () => this.render(true)));
-    onWillUnmount(() => this.env.model.off("update", this));
-  }
+  static props = {};
 
   get gridHeight(): Pixel {
     const { height } = this.env.model.getters.getSheetViewDimension();
     return height;
   }
+}
 
-  setFocusComposer(type: ComposerFocusType) {
-    this.state.focusComposer = type;
-  }
+class Comp extends Component {
+  static template = xml`<div class="o-topbar-test">Test</div>`;
+  static props = {};
+}
+
+class Comp1 extends Comp {
+  static template = xml`<div class="o-topbar-test1">Test1</div>`;
+}
+class Comp2 extends Comp {
+  static template = xml`<div class="o-topbar-test2">Test2</div>`;
 }
 
 async function mountParent(
   model: Model = new Model(),
-  focusComposer: ComposerFocusType = "inactive"
+  testEnv?: Partial<SpreadsheetChildEnv>
 ): Promise<{ parent: Parent; model: Model; fixture: HTMLElement }> {
-  const env = makeTestEnv({
+  const env = {
+    ...testEnv,
     model,
     isDashboard: () => model.getters.isDashboard(),
-  });
+  };
   let parent: Component;
-  ({ parent, fixture } = await mountComponent(Parent, { props: { focusComposer }, env }));
+  ({ parent, fixture } = await mountComponent(Parent, { env }));
   return { parent: parent as Parent, model, fixture };
 }
 
@@ -250,7 +246,7 @@ describe("TopBar component", () => {
 
   describe("Filter Tool", () => {
     let model: Model;
-    const createFilterTool = '.o-menu-item-button[title="Create filter"]';
+    const createFilterTool = '.o-menu-item-button[title="Add filters"]';
     const removeFilterTool = '.o-menu-item-button[title="Remove selected filters"]';
 
     beforeEach(async () => {
@@ -279,7 +275,7 @@ describe("TopBar component", () => {
     });
 
     test("Filter tool change from create filter to remove filter when a filter is selected", async () => {
-      createFilter(model, "A2:B3");
+      createTable(model, "A2:B3");
       await nextTick();
       expect(fixture.querySelectorAll(removeFilterTool).length).toEqual(0);
       expect(fixture.querySelectorAll(createFilterTool).length).toEqual(1);
@@ -290,7 +286,7 @@ describe("TopBar component", () => {
       expect(fixture.querySelectorAll(createFilterTool).length).toEqual(0);
     });
 
-    test("Adjacent cells selection while applying filter on single cell", async () => {
+    test("Adjacent cells selection while creating table on single cell", async () => {
       setCellContent(model, "A1", "A");
       setCellContent(model, "A2", "A3");
       setCellContent(model, "B2", "B");
@@ -303,7 +299,7 @@ describe("TopBar component", () => {
       await nextTick();
       const selection = model.getters.getSelectedZone();
       expect(zoneToXc(selection)).toEqual("A1:D4");
-      expect(getFilterTable(model, "A1")!.zone).toEqual(toZone("A1:D4"));
+      expect(getTable(model, "A1")!.range.zone).toEqual(toZone("A1:D4"));
     });
   });
 
@@ -462,24 +458,24 @@ describe("TopBar component", () => {
     expect(fixture.querySelectorAll(".o-topbar-menu")).toHaveLength(number);
     await click(fixture, ".o-topbar-menu[data-id='edit']");
     expect(fixture.querySelectorAll(".o-menu")).toHaveLength(1);
-    const edit = getNode(["edit"], topbarMenuRegistry);
+    const edit = getNode(["edit"], env, topbarMenuRegistry);
     const numberChild = edit.children(parent.env).filter((item) => item.isVisible(env)).length;
     expect(fixture.querySelectorAll(".o-menu-item")).toHaveLength(numberChild);
     await click(fixture, ".o-spreadsheet-topbar");
     expect(fixture.querySelectorAll(".o-menu")).toHaveLength(0);
   });
 
-  test("Can open a Topbar menu with mousemove", async () => {
+  test("Can open a Topbar menu with pointermove", async () => {
     const { parent } = await mountParent();
-    await click(fixture, ".o-topbar-menu[data-id='edit']");
-    const edit = getNode(["edit"], topbarMenuRegistry);
     const env = parent.env;
+    await click(fixture, ".o-topbar-menu[data-id='edit']");
+    const edit = getNode(["edit"], env, topbarMenuRegistry);
     let numberChild = edit.children(env).filter((item) => item.isVisible(env)).length;
     expect(fixture.querySelectorAll(".o-menu-item")).toHaveLength(numberChild);
     expect(fixture.querySelectorAll(".o-menu")).toHaveLength(1);
     triggerMouseEvent(".o-topbar-menu[data-id='insert']", "mouseover");
     await nextTick();
-    const insert = getNode(["insert"], topbarMenuRegistry);
+    const insert = getNode(["insert"], env, topbarMenuRegistry);
     numberChild = insert?.children(parent.env).filter((item) => item.isVisible(parent.env)).length;
     expect(fixture.querySelectorAll(".o-menu-item")).toHaveLength(numberChild);
     expect(fixture.querySelectorAll(".o-menu")).toHaveLength(1);
@@ -520,9 +516,6 @@ describe("TopBar component", () => {
 
   test("Can add a custom component to topbar", async () => {
     const compDefinitions = Object.assign({}, topbarComponentRegistry.content);
-    class Comp extends Component {
-      static template = xml`<div class="o-topbar-test">Test</div>`;
-    }
     topbarComponentRegistry.add("1", { component: Comp });
     await mountParent();
     expect(fixture.querySelectorAll(".o-topbar-test")).toHaveLength(1);
@@ -531,12 +524,6 @@ describe("TopBar component", () => {
 
   test("Can add multiple components to topbar with different visibilities", async () => {
     const compDefinitions = Object.assign({}, topbarComponentRegistry.content);
-    class Comp1 extends Component {
-      static template = xml`<div class="o-topbar-test1">Test1</div>`;
-    }
-    class Comp2 extends Component {
-      static template = xml`<div class="o-topbar-test2">Test2</div>`;
-    }
     let comp1Visibility = false;
     topbarComponentRegistry.add("first", {
       component: Comp1,
@@ -573,17 +560,18 @@ describe("TopBar component", () => {
 
   test("Cannot edit cell in a readonly spreadsheet", async () => {
     const model = new Model({}, { mode: "readonly" });
-    ({ fixture } = await mountParent(model));
+    ({ fixture, parent } = await mountParent(model));
+    const composerStore = parent.env.getStore(ComposerStore);
 
     let composerEl = fixture.querySelector(".o-spreadsheet-topbar div.o-composer")!;
     expect(composerEl.attributes.getNamedItem("contentEditable")!.value).toBe("false");
     await simulateClick(composerEl);
 
     // Won't update the current content
-    const content = model.getters.getCurrentContent();
+    const content = composerStore.currentContent;
     expect(content).toBe("");
     composerEl = await typeInComposerTopBar("tabouret", false);
-    expect(model.getters.getCurrentContent()).toBe(content);
+    expect(composerStore.currentContent).toBe(content);
   });
 
   test("Keep focus on the composer when clicked in readonly mode", async () => {
@@ -650,12 +638,6 @@ describe("TopBar component", () => {
 
 test("Can show/hide a TopBarComponent based on condition", async () => {
   const compDefinitions = Object.assign({}, topbarComponentRegistry.content);
-  class Comp1 extends Component {
-    static template = xml`<div class="o-topbar-test1">Test1</div>`;
-  }
-  class Comp2 extends Component {
-    static template = xml`<div class="o-topbar-test2">Test2</div>`;
-  }
   topbarComponentRegistry.add("1", {
     component: Comp1,
     isVisible: (env) => true,
@@ -829,25 +811,6 @@ describe("TopBar - CF", () => {
     ).toBeFalsy();
   });
 });
-describe("Topbar - View", () => {
-  test("Setting show formula from topbar should retain its state even it's changed via f&r side panel upon closing", async () => {
-    const { model, fixture, env } = await mountSpreadsheet();
-    await click(fixture, ".o-topbar-menu[data-id='view']");
-    await click(fixture, ".o-menu-item[data-name='view_formulas']");
-    expect(model.getters.shouldShowFormulas()).toBe(true);
-    env.openSidePanel("FindAndReplace");
-    await nextTick();
-    expect(model.getters.shouldShowFormulas()).toBe(true);
-    await nextTick();
-    await click(
-      fixture,
-      ".o-sidePanel .o-sidePanelBody .o-find-and-replace .o-section:nth-child(1) .o-checkbox:nth-child(3) input"
-    );
-    expect(model.getters.shouldShowFormulas()).toBe(false);
-    await click(fixture, ".o-sidePanel .o-sidePanelHeader .o-sidePanelClose");
-    expect(model.getters.shouldShowFormulas()).toBe(true);
-  });
-});
 
 describe("Topbar - menu item resizing with viewport", () => {
   test("color picker of fill color in top bar is resized with screen size change", async () => {
@@ -882,12 +845,13 @@ describe("Topbar - menu item resizing with viewport", () => {
 });
 
 test("The composer helper should be closed on toggle topbar context menu", async () => {
-  const { model, fixture } = await mountSpreadsheet();
+  const { parent, fixture } = await mountSpreadsheet();
+  const composerStore = parent.env.getStore(ComposerStore);
   await typeInComposerTopBar("=sum(");
-  expect(model.getters.getEditionMode()).not.toBe("inactive");
+  expect(composerStore.editionMode).not.toBe("inactive");
   expect(fixture.querySelectorAll(".o-composer-assistant")).toHaveLength(1);
   await simulateClick(".o-topbar-topleft .o-topbar-menu");
-  expect(model.getters.getEditionMode()).toBe("inactive");
+  expect(composerStore.editionMode).toBe("inactive");
   expect(fixture.querySelectorAll(".o-composer-assistant")).toHaveLength(0);
 });
 

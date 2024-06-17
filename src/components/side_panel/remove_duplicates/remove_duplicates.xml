@@ -1,38 +1,35 @@
 <templates>
   <t t-name="o-spreadsheet-RemoveDuplicatesPanel">
     <div class="o-remove-duplicates">
-      <div class="o-section">
+      <Section>
         <div class="o-section-subtitle" t-esc="selectionStatisticalInformation"/>
-        <label class="o-checkbox">
-          <input type="checkbox" t-att-checked="state.hasHeader" t-on-change="toggleHasHeader"/>
-          Data has header row
-        </label>
-      </div>
+        <t t-set="dataHasHeaderLabel">Data has header row</t>
+        <Checkbox
+          value="state.hasHeader"
+          label="dataHasHeaderLabel"
+          onChange.bind="toggleHasHeader"
+        />
+      </Section>
 
-      <div class="o-section">
-        <div class="o-section-title">Columns to analyze</div>
+      <Section>
+        <t t-set-slot="title">Columns to analyze</t>
         <div class="o-checkbox-selection overflow-auto p-3 vh-50 border rounded">
-          <label class="o-checkbox">
-            <input
-              t-att-checked="isEveryColumnSelected"
-              t-on-change="toggleAllColumns"
-              type="checkbox"
-            />
-            Select all
-          </label>
+          <t t-set="selectAllLabel">Select all</t>
+          <Checkbox
+            value="isEveryColumnSelected"
+            label="selectAllLabel"
+            onChange.bind="toggleAllColumns"
+          />
 
           <t t-foreach="Object.keys(state.columns)" t-as="colIndex" t-key="colIndex">
-            <label class="o-checkbox">
-              <input
-                type="checkbox"
-                t-att-checked="state.columns[colIndex]"
-                t-on-change="() => this.toggleColumn(colIndex)"
-              />
-              <t t-esc="getColLabel(colIndex)"/>
-            </label>
+            <Checkbox
+              value="state.columns[colIndex]"
+              label="getColLabel(colIndex)"
+              onChange="() => this.toggleColumn(colIndex)"
+            />
           </t>
         </div>
-      </div>
+      </Section>
 
       <div class="o-sidePanelButtons">
         <button

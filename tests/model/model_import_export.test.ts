@@ -6,7 +6,7 @@ import {
   DEFAULT_REVISION_ID,
   FORBIDDEN_SHEET_CHARS,
 } from "../../src/constants";
-import { toCartesian } from "../../src/helpers";
+import { toCartesian, toZone } from "../../src/helpers";
 import { CURRENT_VERSION } from "../../src/migrations/data";
 import { BorderDescr, ColorScaleRule, DEFAULT_LOCALE, IconSetRule } from "../../src/types";
 import {
@@ -165,45 +165,41 @@ describe("Migrations", () => {
     const data = model.exportData();
     expect(data.sheets[0].figures[0].data).toEqual({
       type: "line",
-      title: "demo chart",
+      title: { text: "demo chart" },
       labelRange: "'My sheet'!A27:A35",
-      dataSets: ["B26:B35", "C26:C35"],
+      dataSets: [{ dataRange: "B26:B35" }, { dataRange: "C26:C35" }],
       dataSetsHaveTitle: true,
       background: BACKGROUND_CHART_COLOR,
-      verticalAxisPosition: "left",
       legendPosition: "top",
       stacked: false,
     });
     expect(data.sheets[0].figures[1].data).toEqual({
       type: "bar",
-      title: "demo chart 2",
+      title: { text: "demo chart 2" },
       labelRange: "'My sheet'!A27:A35",
-      dataSets: ["B27:B35", "C27:C35"],
+      dataSets: [{ dataRange: "B27:B35" }, { dataRange: "C27:C35" }],
       dataSetsHaveTitle: false,
       background: BACKGROUND_CHART_COLOR,
-      verticalAxisPosition: "left",
       legendPosition: "top",
       stacked: false,
     });
     expect(data.sheets[0].figures[2].data).toEqual({
       type: "bar",
-      title: "demo chart 3",
+      title: { text: "demo chart 3" },
       labelRange: "'My sheet'!A27",
-      dataSets: ["B26:B27"],
+      dataSets: [{ dataRange: "B26:B27" }],
       dataSetsHaveTitle: true,
       background: BACKGROUND_CHART_COLOR,
-      verticalAxisPosition: "left",
       legendPosition: "top",
       stacked: false,
     });
     expect(data.sheets[0].figures[3].data).toEqual({
       type: "bar",
-      title: "demo chart 4",
+      title: { text: "demo chart 4" },
       labelRange: "'My sheet'!A27",
-      dataSets: ["B27"],
+      dataSets: [{ dataRange: "B27" }],
       dataSetsHaveTitle: false,
       background: BACKGROUND_CHART_COLOR,
-      verticalAxisPosition: "left",
       legendPosition: "top",
       stacked: false,
     });
@@ -283,7 +279,10 @@ describe("Migrations", () => {
     expect(cells.A1!.content).toBe("=sheetName_!A2");
 
     const figures = data.sheets[1].figures;
-    expect(figures[0].data?.dataSets).toEqual(["=sheetName_!A1:A2", "My sheet!A1:A2"]);
+    expect(figures[0].data?.dataSets).toEqual([
+      { dataRange: "=sheetName_!A1:A2" },
+      { dataRange: "My sheet!A1:A2" },
+    ]);
     expect(figures[0].data?.labelRange).toBe("=sheetName_!B1:B2");
 
     const cfs = data.sheets[1].conditionalFormats;
@@ -389,7 +388,7 @@ describe("Migrations", () => {
       ],
     });
     const data = model.exportData();
-    expect(data.sheets[0].filterTables).toEqual([{ range: "A1:C2" }]);
+    expect(data.sheets[0].tables).toEqual([{ range: "A1:C2", type: "static" }]);
   });
 
   test("migrate version 12.5: update border description structure", () => {
@@ -439,7 +438,23 @@ describe("Migrations", () => {
       ],
     });
     const data = model.exportData();
-    expect(data.sheets[0].filterTables).toEqual([{ range: "A1:C2" }]);
+    expect(data.sheets[0].tables).toEqual([{ range: "A1:C2", type: "static" }]);
+  });
+
+  test("migrate version 15: filterTables are renamed into tables", () => {
+    const model = new Model({
+      version: 14.5,
+      sheets: [
+        {
+          id: "1",
+          filterTables: [{ range: "A1:B2" }],
+        },
+      ],
+    });
+    expect(model.getters.getTables("1")).toMatchObject([{ range: { zone: toZone("A1:B2") } }]);
+    let data = model.exportData();
+    expect(data.version).toBe(CURRENT_VERSION);
+    expect(data.sheets[0].tables).toEqual([{ range: "A1:B2", type: "static" }]);
   });
 });
 
@@ -470,7 +485,7 @@ describe("Import", () => {
     expect(Object.keys(getMerges(model))).toHaveLength(0);
     activateSheet(model, sheet1);
     expect(Object.keys(getMerges(model))).toHaveLength(1);
-    expect(Object.values(getMerges(model))[0].topLeft).toEqual(toCartesian("A2"));
+    expect(getMerges(model)[1]).toMatchObject(toZone("A2:B2"));
   });
 
   test("can import cell without content", () => {
@@ -539,7 +554,7 @@ describe("Export", () => {
                 type: "line",
                 title: "demo chart",
                 labelRange: "A1:A4",
-                dataSets: ["B1:B4", "C1:C4"],
+                dataSets: [{ dataRange: "B1:B4" }, { dataRange: "C1:C4" }],
               },
             },
             { id: "id2", x: 100, y: 100, width: 100, height: 100 },
@@ -598,7 +613,7 @@ test("complete import, then export", () => {
         conditionalFormats: [],
         dataValidationRules: [],
         figures: [],
-        filterTables: [],
+        tables: [],
         areGridLinesVisible: true,
         isVisible: true,
         panes: { ySplit: 1, xSplit: 5 },
@@ -618,16 +633,18 @@ test("complete import, then export", () => {
         conditionalFormats: [],
         dataValidationRules: [],
         figures: [],
-        filterTables: [],
+        tables: [],
         areGridLinesVisible: false,
         isVisible: true,
         headerGroups: { COL: [], ROW: [] },
       },
     ],
+    pivots: {},
+    pivotNextId: 1,
     settings: { locale: DEFAULT_LOCALE },
-    entities: {},
+    customTableStyles: {},
     styles: {
-      1: { bold: true, textColor: "#3A3791", fontSize: 12 },
+      1: { bold: true, textColor: "#674EA7", fontSize: 12 },
     },
     formats: {
       1: "0.00%",
@@ -703,18 +720,20 @@ test("import then export (figures)", () => {
         conditionalFormats: [],
         dataValidationRules: [],
         figures: [{ id: "otheruuid", x: 100, y: 100, width: 100, height: 100 }],
-        filterTables: [],
+        tables: [],
         areGridLinesVisible: true,
         isVisible: true,
         headerGroups: { COL: [], ROW: [] },
       },
     ],
-    entities: {},
+    pivots: {},
+    pivotNextId: 1,
     styles: {},
     formats: {},
     borders: {},
     uniqueFigureIds: true,
     settings: { locale: DEFAULT_LOCALE },
+    customTableStyles: {},
   };
   const model = new Model(modelData);
   expect(model).toExport(modelData);

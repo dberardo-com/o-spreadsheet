@@ -1,6 +1,8 @@
 import { Component, onMounted, onWillUnmount, useExternalListener, useRef } from "@odoo/owl";
+import { Store, useStore } from "../../store_engine";
 import {
   DOMCoordinates,
+  GridClickModifiers,
   HeaderIndex,
   Pixel,
   Position,
@@ -10,12 +12,14 @@ import {
 } from "../../types";
 import { DataValidationOverlay } from "../data_validation_overlay/data_validation_overlay";
 import { FiguresContainer } from "../figures/figure_container/figure_container";
+import { FilterIconsOverlay } from "../filters/filter_icons_overlay/filter_icons_overlay";
 import { GridAddRowsFooter } from "../grid_add_rows_footer/grid_add_rows_footer";
 import { css } from "../helpers";
 import { getBoundingRectAsPOJO, isCtrlKey } from "../helpers/dom_helpers";
 import { useRefListener } from "../helpers/listener_hook";
 import { useAbsoluteBoundingRect } from "../helpers/position_hook";
 import { useInterval } from "../helpers/time_hooks";
+import { CellPopoverStore } from "../popover";
 
 const CURSOR_SVG = /*xml*/ `
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="14" height="16"><path d="M6.5.4c1.3-.8 2.9-.1 3.8 1.4l2.9 5.1c.2.4.9 1.6-.4 2.3l-1.6.9 1.8 3.1c.2.4.1 1-.2 1.2l-1.6 1c-.3.1-.9 0-1.1-.4l-1.8-3.1-1.6 1c-.6.4-1.7 0-2.2-.8L0 4.3"/><path fill="#fff" d="M9.1 2a1.4 1.1 60 0 0-1.7-.6L5.5 2.5l.9 1.6-1 .6-.9-1.6-.6.4 1.8 3.1-1.3.7-1.8-3.1-1 .6 3.8 6.6 6.8-3.98M3.9 8.8 10.82 5l.795 1.4-6.81 3.96"/></svg>
@@ -89,10 +93,10 @@ function useCellHovered(
     }
   }
 
-  useRefListener(gridRef, "mousemove", updateMousePosition);
+  useRefListener(gridRef, "pointermove", updateMousePosition);
   useRefListener(gridRef, "mouseleave", onMouseLeave);
   useRefListener(gridRef, "mouseenter", resume);
-  useRefListener(gridRef, "mousedown", recompute);
+  useRefListener(gridRef, "pointerdown", recompute);
 
   useExternalListener(window, "click", handleGlobalClick);
   function handleGlobalClick(e: MouseEvent) {
@@ -156,11 +160,7 @@ function useTouchMove(
 interface Props {
   onCellHovered: (position: Partial<Position>) => void;
   onCellDoubleClicked: (col: HeaderIndex, row: HeaderIndex) => void;
-  onCellClicked: (
-    col: HeaderIndex,
-    row: HeaderIndex,
-    modifiers: { addZone: boolean; expandZone: boolean }
-  ) => void;
+  onCellClicked: (col: HeaderIndex, row: HeaderIndex, modifiers: GridClickModifiers) => void;
   onCellRightClicked: (col: HeaderIndex, row: HeaderIndex, coordinates: DOMCoordinates) => void;
   onGridResized: (dimension: Rect) => void;
   onGridMoved: (deltaX: Pixel, deltaY: Pixel) => void;
@@ -170,7 +170,22 @@ interface Props {
 
 export class GridOverlay extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-GridOverlay";
-  static components = { FiguresContainer, DataValidationOverlay, GridAddRowsFooter };
+  static props = {
+    onCellHovered: { type: Function, optional: true },
+    onCellDoubleClicked: { type: Function, optional: true },
+    onCellClicked: { type: Function, optional: true },
+    onCellRightClicked: { type: Function, optional: true },
+    onGridResized: { type: Function, optional: true },
+    onFigureDeleted: { type: Function, optional: true },
+    onGridMoved: Function,
+    gridOverlayDimensions: String,
+  };
+  static components = {
+    FiguresContainer,
+    DataValidationOverlay,
+    GridAddRowsFooter,
+    FilterIconsOverlay,
+  };
   static defaultProps = {
     onCellHovered: () => {},
     onCellDoubleClicked: () => {},
@@ -181,6 +196,7 @@ export class GridOverlay extends Component<Props, SpreadsheetChildEnv> {
   };
   private gridOverlay: Ref<HTMLElement> = useRef("gridOverlay");
   private gridOverlayRect = useAbsoluteBoundingRect(this.gridOverlay);
+  private cellPopovers!: Store<CellPopoverStore>;
 
   setup() {
     useCellHovered(this.env, this.gridOverlay, this.props.onCellHovered);
@@ -203,6 +219,7 @@ export class GridOverlay extends Component<Props, SpreadsheetChildEnv> {
       const { scrollY } = this.env.model.getters.getActiveSheetDOMScrollInfo();
       return scrollY > 0;
     });
+    this.cellPopovers = useStore(CellPopoverStore);
   }
 
   get gridOverlayEl(): HTMLElement {
@@ -224,6 +241,9 @@ export class GridOverlay extends Component<Props, SpreadsheetChildEnv> {
     if (ev.button > 0) {
       // not main button, probably a context menu
       return;
+    }
+    if (ev.target === this.gridOverlay.el && this.cellPopovers.isOpen) {
+      this.cellPopovers.close();
     }
     const [col, row] = this.getCartesianCoordinates(ev);
     this.props.onCellClicked(col, row, {
@@ -251,14 +271,3 @@ export class GridOverlay extends Component<Props, SpreadsheetChildEnv> {
     return [colIndex, rowIndex];
   }
 }
-
-GridOverlay.props = {
-  onCellHovered: { type: Function, optional: true },
-  onCellDoubleClicked: { type: Function, optional: true },
-  onCellClicked: { type: Function, optional: true },
-  onCellRightClicked: { type: Function, optional: true },
-  onGridResized: { type: Function, optional: true },
-  onFigureDeleted: { type: Function, optional: true },
-  onGridMoved: Function,
-  gridOverlayDimensions: String,
-};

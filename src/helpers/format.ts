@@ -1,5 +1,17 @@
+import { toNumber, toString } from "../functions/helpers";
 import { _t } from "../translation";
-import { CellValue, Currency, Format, FormattedValue, Locale, LocaleFormat } from "../types";
+import {
+  CellValue,
+  Currency,
+  FPayload,
+  Format,
+  FormattedValue,
+  Locale,
+  LocaleFormat,
+  Maybe,
+  PLAIN_TEXT_FORMAT,
+} from "../types";
+import { EvaluationError } from "../types/errors";
 import { DEFAULT_LOCALE } from "./../types/locale";
 import { DateTime, INITIAL_1900_DAY, isDateTime, numberToJsDate, parseDateTime } from "./dates";
 import { escapeRegExp, memoize } from "./misc";
@@ -51,7 +63,7 @@ type InternalFormat = (
 
 // TODO in the future : remove these constants MONTHS/DAYS, and use a library such as luxon to handle it
 // + possibly handle automatic translation of day/month
-const MONTHS: Readonly<Record<number, string>> = {
+export const MONTHS: Readonly<Record<number, string>> = {
   0: _t("January"),
   1: _t("February"),
   2: _t("March"),
@@ -112,6 +124,9 @@ function parseFormat(formatString: Format): InternalFormat {
  * Formats a cell value with its format.
  */
 export function formatValue(value: CellValue, { format, locale }: LocaleFormat): FormattedValue {
+  if (format === PLAIN_TEXT_FORMAT) {
+    return toString(value) || "";
+  }
   switch (typeof value) {
     case "string":
       if (value.includes('\\"')) {
@@ -127,8 +142,8 @@ export function formatValue(value: CellValue, { format, locale }: LocaleFormat):
       }
       const internalFormat = parseFormat(format);
       return applyInternalFormat(value, internalFormat, locale);
-    case "object":
-      return "0";
+    case "object": // case value === null
+      return "";
   }
 }
 
@@ -156,6 +171,9 @@ function applyInternalFormat(
 }
 
 function applyInternalNumberFormat(value: number, format: InternalNumberFormat, locale: Locale) {
+  if (value === Infinity) {
+    return "∞" + (format.isPercent ? "%" : "");
+  }
   if (format.isPercent) {
     value = value * 100;
   }
@@ -370,7 +388,7 @@ export function isDateTimeFormat(format: Format) {
     return false;
   }
 }
-const allowedDateTimeFormatFirstChar = new Set(["h", "m", "y", "d"]);
+const allowedDateTimeFormatFirstChar = new Set(["h", "m", "y", "d", "q"]);
 
 export function applyDateTimeFormat(value: number, format: Format): FormattedValue {
   // TODO: unify the format functions for date and datetime
@@ -417,6 +435,10 @@ function formatJSDate(jsDate: DateTime, format: Format): FormattedValue {
           return MONTHS[jsDate.getMonth()];
         case "mmmmm":
           return MONTHS[jsDate.getMonth()].slice(0, 1);
+        case "qq":
+          return _t("Q%(quarter)s", { quarter: jsDate.getQuarter() });
+        case "qqqq":
+          return _t("Quarter %(quarter)s", { quarter: jsDate.getQuarter() });
         case "yy":
           const fullYear = String(jsDate.getFullYear()).replace("-", "").padStart(2, "0");
           return fullYear.slice(fullYear.length - 2);
@@ -566,6 +588,53 @@ export function roundFormat(format: Format): Format {
   return convertInternalFormatToFormat(roundedFormat);
 }
 
+export function humanizeNumber({ value, format }: FPayload, locale: Locale): string {
+  const numberFormat = formatLargeNumber(
+    {
+      value,
+      format,
+    },
+    undefined,
+    locale
+  );
+  return formatValue(value, { format: numberFormat, locale });
+}
+
+export function formatLargeNumber(
+  arg: Maybe<FPayload>,
+  unit: Maybe<FPayload>,
+  locale: Locale
+): string {
+  let value = 0;
+  try {
+    value = Math.abs(toNumber(arg?.value, locale));
+  } catch (e) {
+    return "";
+  }
+  const format = arg?.format;
+  if (unit !== undefined) {
+    const postFix = unit?.value;
+    switch (postFix) {
+      case "k":
+        return createLargeNumberFormat(format, 1e3, "k", locale);
+      case "m":
+        return createLargeNumberFormat(format, 1e6, "m", locale);
+      case "b":
+        return createLargeNumberFormat(format, 1e9, "b", locale);
+      default:
+        throw new EvaluationError(_t("The formatting unit should be 'k', 'm' or 'b'."));
+    }
+  }
+  if (value < 1e5) {
+    return createLargeNumberFormat(format, 0, "", locale);
+  } else if (value < 1e8) {
+    return createLargeNumberFormat(format, 1e3, "k", locale);
+  } else if (value < 1e11) {
+    return createLargeNumberFormat(format, 1e6, "m", locale);
+  }
+  return createLargeNumberFormat(format, 1e9, "b", locale);
+}
+
 export function createLargeNumberFormat(
   format: Format | undefined,
   magnitude: number,
@@ -616,6 +685,16 @@ export function changeDecimalPlaces(format: Format, step: number, locale: Locale
   return newFormat;
 }
 
+export function isExcelCompatible(format: Format): boolean {
+  const internalFormat = parseFormat(format);
+  for (let part of internalFormat) {
+    if (part.type === "DATE" && part.format.includes("q")) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function changeInternalNumberFormatDecimalPlaces(
   format: Readonly<InternalNumberFormat>,
   step: number
@@ -655,6 +734,7 @@ function convertFormatToInternalFormat(format: Format): InternalFormat {
       if (closingIndex === 0) {
         throw new Error(`Invalid currency brackets format: ${format}`);
       }
+      // remove leading "[$"" and ending "]".
       const str = format.substring(currentIndex + 2, closingIndex - 1);
       if (str.includes("[")) {
         throw new Error(`Invalid currency format: ${format}`);
@@ -662,7 +742,7 @@ function convertFormatToInternalFormat(format: Format): InternalFormat {
       result.push({
         type: "STRING",
         format: str,
-      }); // remove leading "[$"" and ending "]".
+      });
     } else {
       // rest of the time
       const nextPartIndex = format.substring(currentIndex).indexOf("[");
@@ -728,7 +808,7 @@ function convertToInternalNumberFormat(format: Format): InternalNumberFormat {
   }
 }
 
-const validNumberChars = /[,#0.%]/g;
+const validNumberChars = /[,#0.%@]/g;
 
 function containsInvalidNumberChars(format: Format): boolean {
   return Boolean(format.replace(validNumberChars, ""));

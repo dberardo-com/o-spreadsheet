@@ -1,13 +1,12 @@
 import { Model } from "../../src";
 import {
   addDataValidation,
-  createFilter,
+  createTable,
   setCellContent,
   setStyle,
 } from "../test_helpers/commands_helpers";
 import { getStyle } from "../test_helpers/getters_helpers";
 import { mountSpreadsheet, nextTick } from "../test_helpers/helpers";
-import { MockGridRenderingContext } from "../test_helpers/renderer_helpers";
 
 describe("Checkbox in model", () => {
   let model: Model;
@@ -33,35 +32,38 @@ describe("Checkbox in model", () => {
       verticalAlign: "middle",
     });
   });
+});
 
-  describe("renderer", () => {
-    let renderedTexts: string[];
-    let ctx: MockGridRenderingContext;
+describe("Checkbox component", () => {
+  test("Data validation checkbox on formula is disabled", async () => {
+    const model = new Model();
+    addDataValidation(model, "A1", "id", { type: "isBoolean", values: [] });
+    const { fixture } = await mountSpreadsheet({ model });
+    await nextTick();
 
-    beforeEach(() => {
-      renderedTexts = [];
-      ctx = new MockGridRenderingContext(model, 1000, 1000, {
-        onFunctionCall: (fn, args) => {
-          if (fn === "fillText") {
-            renderedTexts.push(args[0]);
-          }
-        },
-      });
-    });
+    expect(fixture.querySelector(".o-dv-checkbox")?.classList).not.toContain("pe-none");
+    setCellContent(model, "A1", "=TRUE");
+    await nextTick();
+    expect(fixture.querySelector(".o-dv-checkbox")?.classList).toContain("pe-none");
+  });
 
-    test("Valid checkbox value is not rendered", () => {
-      addDataValidation(model, "B2", "id", { type: "isBoolean", values: [] });
-      setCellContent(model, "B2", "TRUE");
-      model.drawGrid(ctx);
-      expect(renderedTexts).not.toContain("TRUE");
-    });
+  test("Data validation checkbox is disabled in readonly mode", async () => {
+    const model = new Model();
+    addDataValidation(model, "A1", "id", { type: "isBoolean", values: [] });
+    model.updateMode("readonly");
+    const { fixture } = await mountSpreadsheet({ model });
 
-    test("Invalid checkbox value is rendered", () => {
-      addDataValidation(model, "B2", "id", { type: "isBoolean", values: [] });
-      setCellContent(model, "B2", "hello");
-      model.drawGrid(ctx);
-      expect(renderedTexts).toContain("hello");
-    });
+    expect(fixture.querySelector(".o-dv-checkbox")?.classList).toContain("pe-none");
+  });
+
+  test("Icon is not displayed if there is a filter icon", async () => {
+    const model = new Model();
+    addDataValidation(model, "A1", "id", { type: "isBoolean", values: [] });
+    createTable(model, "A1:A4");
+
+    const { fixture } = await mountSpreadsheet({ model });
+    expect(fixture.querySelector(".o-dv-checkbox")).toBeNull();
+    expect(fixture.querySelector(".o-filter-icon")).not.toBeNull();
   });
 });
 

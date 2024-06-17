@@ -4,8 +4,9 @@ import {
   onPatched,
   onWillUnmount,
   onWillUpdateProps,
+  useEffect,
   useExternalListener,
-  useState,
+  useRef,
   useSubEnv,
 } from "@odoo/owl";
 import {
@@ -20,7 +21,6 @@ import {
   GROUP_LAYER_WIDTH,
   HEADER_GROUPING_BACKGROUND_COLOR,
   ICONS_COLOR,
-  ICON_EDGE_LENGTH,
   MAXIMAL_FREEZABLE_RATIO,
   MENU_SEPARATOR_BORDER_WIDTH,
   MENU_SEPARATOR_PADDING,
@@ -28,27 +28,30 @@ import {
   SEPARATOR_COLOR,
   TOPBAR_HEIGHT,
 } from "../../constants";
+import { batched } from "../../helpers";
 import { ImageProvider } from "../../helpers/figures/images/image_provider";
 import { FocusableElement } from "../../helpers/focus_manager";
 import { Model } from "../../model";
-import { ComposerSelection } from "../../plugins/ui_stateful/edition";
+import { Store, useStore, useStoreProvider } from "../../store_engine";
+import { ModelStore } from "../../stores";
+import { NotificationStore, NotificationStoreMethods } from "../../stores/notification_store";
 import { _t } from "../../translation";
 import { HeaderGroup, InformationNotification, Pixel, SpreadsheetChildEnv } from "../../types";
 import { BottomBar } from "../bottom_bar/bottom_bar";
+import { ComposerFocusStore } from "../composer/composer_focus_store";
 import { SpreadsheetDashboard } from "../dashboard/dashboard";
 import { Grid } from "../grid/grid";
 import { HeaderGroupContainer } from "../header_group/header_group_container";
 import { css, cssPropertiesToCss } from "../helpers/css";
 import { isCtrlKey } from "../helpers/dom_helpers";
 import { SidePanel } from "../side_panel/side_panel/side_panel";
+import { SidePanelStore } from "../side_panel/side_panel/side_panel_store";
 import { TopBar } from "../top_bar/top_bar";
 import { instantiateClipboard } from "./../../helpers/clipboard/navigator_clipboard_wrapper";
 
 // -----------------------------------------------------------------------------
 // SpreadSheet
 // -----------------------------------------------------------------------------
-
-export type ComposerFocusType = "inactive" | "cellFocus" | "contentFocus";
 
 // If we ever change these colors, make sure the filter tool stays green to match the icon in the grid
 const ACTIVE_BG_COLOR = BACKGROUND_HEADER_FILTER_COLOR;
@@ -62,6 +65,8 @@ css/* scss */ `
     display: grid;
     grid-template-columns: auto 350px;
     color: #333;
+    font-size: 14px;
+
     input {
       background-color: white;
     }
@@ -70,7 +75,7 @@ css/* scss */ `
     }
     .o-disabled {
       opacity: 0.4;
-      pointer: default;
+      cursor: default;
       pointer-events: none;
     }
 
@@ -137,12 +142,6 @@ css/* scss */ `
 
   .o-two-columns {
     grid-column: 1 / 3;
-  }
-
-  .o-icon {
-    width: ${ICON_EDGE_LENGTH}px;
-    height: ${ICON_EDGE_LENGTH}px;
-    vertical-align: middle;
   }
 
   .o-cf-icon {
@@ -235,25 +234,30 @@ css/* scss */ `
     width: 100%;
     height: 28px;
   }
+
+  .o-number-input {
+    /* Remove number input arrows */
+    appearance: textfield;
+    &::-webkit-outer-spin-button,
+    &::-webkit-inner-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+  }
 `;
 
-export interface SpreadsheetProps {
+export interface SpreadsheetProps extends Partial<NotificationStoreMethods> {
   model: Model;
-}
-
-interface SidePanelState {
-  isOpen: boolean;
-  component?: string;
-  panelProps: any;
-}
-
-interface ComposerState {
-  topBarFocus: Exclude<ComposerFocusType, "cellFocus">;
-  gridFocusMode: ComposerFocusType;
 }
 
 export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-Spreadsheet";
+  static props = {
+    model: Object,
+    notifyUser: { type: Function, optional: true },
+    raiseError: { type: Function, optional: true },
+    askConfirmation: { type: Function, optional: true },
+  };
   static components = {
     TopBar,
     Grid,
@@ -263,14 +267,16 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
     HeaderGroupContainer,
   };
 
-  sidePanel!: SidePanelState;
-  composer!: ComposerState;
+  sidePanel!: Store<SidePanelStore>;
+  spreadsheetRef = useRef("spreadsheet");
 
   private _focusGrid?: () => void;
 
   private keyDownMapping!: { [key: string]: Function };
 
   private isViewportTooSmall: boolean = false;
+  private notificationStore!: Store<NotificationStore>;
+  private composerFocusStore!: Store<ComposerFocusStore>;
 
   get model(): Model {
     return this.props.model;
@@ -330,14 +336,14 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
   }
 
   setup() {
-    this.sidePanel = useState({ isOpen: false, panelProps: {} });
-    this.composer = useState({
-      topBarFocus: "inactive",
-      gridFocusMode: "inactive",
-    });
+    const stores = useStoreProvider();
+    stores.inject(ModelStore, this.model);
+    this.notificationStore = useStore(NotificationStore);
+    this.composerFocusStore = useStore(ComposerFocusStore);
+    this.sidePanel = useStore(SidePanelStore);
     this.keyDownMapping = {
-      "CTRL+H": () => this.toggleSidePanel("FindAndReplace", {}),
-      "CTRL+F": () => this.toggleSidePanel("FindAndReplace", {}),
+      "CTRL+H": () => this.sidePanel.toggle("FindAndReplace", {}),
+      "CTRL+F": () => this.sidePanel.toggle("FindAndReplace", {}),
     };
     const fileStore = this.model.config.external.fileStore;
     useSubEnv({
@@ -350,15 +356,38 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
       loadCurrencies: this.model.config.external.loadCurrencies,
       loadLocales: this.model.config.external.loadLocales,
       isDashboard: () => this.model.getters.isDashboard(),
-      openSidePanel: this.openSidePanel.bind(this),
-      toggleSidePanel: this.toggleSidePanel.bind(this),
+      openSidePanel: this.sidePanel.open.bind(this.sidePanel),
+      toggleSidePanel: this.sidePanel.toggle.bind(this.sidePanel),
       clipboard: this.env.clipboard || instantiateClipboard(),
-      startCellEdition: (content?: string) => this.onGridComposerCellFocused(content),
-      focusableElement: new FocusableElement(),
-    });
+      startCellEdition: (content?: string) =>
+        this.composerFocusStore.focusGridComposerCell(content),
+      // notifyUser: (notification) => this.notificationStore.notifyUser(notification),
+      // askConfirmation: (text, confirm, cancel) =>
+      //   this.notificationStore.askConfirmation(text, confirm, cancel),
+      // raiseError: (text, cb) => this.notificationStore.raiseError(text, cb),
+    } satisfies Partial<SpreadsheetChildEnv>);
 
-    // useExternalListener(window as any, "resize", () => this.render(true));
-    // useExternalListener(window, "beforeunload", this.unbindModelEvents.bind(this));
+    this.notificationStore.updateNotificationCallbacks({ ...this.props });
+
+    useEffect(
+      () => {
+        /**
+         * Only refocus the grid if the active element is not a child of the spreadsheet
+         * (i.e. activeElement is outside of the spreadsheetRef component)
+         * and spreadsheet is a child of that element. Anything else means that the focus
+         * is on an element that needs to keep it.
+         */
+        if (
+          !this.spreadsheetRef.el!.contains(document.activeElement) &&
+          document.activeElement?.contains(this.spreadsheetRef.el!)
+        ) {
+          this.focusGrid();
+        }
+      },
+      () => [this.env.model.getters.getActiveSheetId()]
+    );
+
+    useExternalListener(window as any, "resize", () => this.render(true));
 
     // For some reason, the wheel event is not properly registered inside templates
     // in Chromium-based browsers based on chromium 125
@@ -367,39 +396,39 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
 
     this.bindModelEvents();
 
-    onWillUpdateProps((nextProps) => {
+    onWillUpdateProps((nextProps: SpreadsheetProps) => {
       if (nextProps.model !== this.props.model) {
         throw new Error("Changing the props model is not supported at the moment.");
       }
+      if (
+        nextProps.notifyUser !== this.props.notifyUser ||
+        nextProps.askConfirmation !== this.props.askConfirmation ||
+        nextProps.raiseError !== this.props.raiseError
+      ) {
+        this.notificationStore.updateNotificationCallbacks({ ...nextProps });
+      }
     });
 
+    const render = batched(this.render.bind(this, true));
     onMounted(() => {
       this.checkViewportSize();
+      stores.on("store-updated", this, render);
     });
-    onWillUnmount(() => this.unbindModelEvents());
+    onWillUnmount(() => {
+      this.unbindModelEvents();
+      stores.off("store-updated", this);
+    });
     onPatched(() => {
       this.checkViewportSize();
     });
   }
 
-  get focusTopBarComposer(): Omit<ComposerFocusType, "cellFocus"> {
-    return this.model.getters.getEditionMode() === "inactive"
-      ? "inactive"
-      : this.composer.topBarFocus;
-  }
-
-  get focusGridComposer(): ComposerFocusType {
-    return this.model.getters.getEditionMode() === "inactive"
-      ? "inactive"
-      : this.composer.gridFocusMode;
-  }
-
   private bindModelEvents() {
     this.model.on("update", this, () => this.render(true));
     this.model.on("notify-ui", this, (notification: InformationNotification) =>
-      this.env.notifyUser(notification)
+      this.notificationStore.notifyUser(notification)
     );
-    this.model.on("raise-error-ui", this, ({ text }) => this.env.raiseError(text));
+    this.model.on("raise-error-ui", this, ({ text }) => this.notificationStore.raiseError(text));
   }
 
   private unbindModelEvents() {
@@ -422,7 +451,7 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
       if (this.isViewportTooSmall) {
         return;
       }
-      this.env.notifyUser({
+      this.notificationStore.notifyUser({
         text: _t(
           "The current window is too small to display this sheet properly. Consider resizing your browser window or adjusting frozen rows and columns."
         ),
@@ -435,32 +464,9 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
     }
   }
 
-  openSidePanel(panel: string, panelProps: any) {
-    if (this.sidePanel.isOpen && panel !== this.sidePanel.component) {
-      this.sidePanel.panelProps?.onCloseSidePanel?.();
-    }
-    this.sidePanel.component = panel;
-    this.sidePanel.panelProps = panelProps;
-    this.sidePanel.isOpen = true;
-  }
-
-  closeSidePanel() {
-    this.sidePanel.isOpen = false;
-    this.focusGrid();
-    this.sidePanel.panelProps?.onCloseSidePanel?.();
-  }
-
-  toggleSidePanel(panel: string, panelProps: any) {
-    if (this.sidePanel.isOpen && panel === this.sidePanel.component) {
-      this.sidePanel.isOpen = false;
-      this.focusGrid();
-    } else {
-      this.openSidePanel(panel, panelProps);
-    }
-  }
   focusGrid() {
     if (!this._focusGrid) {
-      throw new Error("_focusGrid should be exposed by the grid component");
+      return;
     }
     this._focusGrid();
   }
@@ -478,51 +484,6 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
       ev.stopPropagation();
       handler();
       return;
-    }
-  }
-
-  onTopBarComposerFocused(selection: ComposerSelection) {
-    if (this.model.getters.isReadonly()) {
-      return;
-    }
-    this.composer.topBarFocus = "contentFocus";
-    this.composer.gridFocusMode = "inactive";
-    this.setComposerContent({ selection });
-  }
-
-  onGridComposerContentFocused(selection: ComposerSelection) {
-    if (this.model.getters.isReadonly()) {
-      return;
-    }
-    this.composer.topBarFocus = "inactive";
-    this.composer.gridFocusMode = "contentFocus";
-    this.setComposerContent({ selection });
-  }
-
-  // TODO: either both are defined or none of them. change those args to an object
-  onGridComposerCellFocused(content?: string, selection?: ComposerSelection) {
-    if (this.model.getters.isReadonly()) {
-      return;
-    }
-    this.composer.topBarFocus = "inactive";
-    this.composer.gridFocusMode = "cellFocus";
-    this.setComposerContent({ content, selection } || {});
-  }
-
-  /**
-   * Start the edition or update the content if it's already started.
-   */
-  private setComposerContent({
-    content,
-    selection,
-  }: {
-    content?: string | undefined;
-    selection?: ComposerSelection;
-  }) {
-    if (this.model.getters.getEditionMode() === "inactive") {
-      this.model.dispatch("START_EDITION", { text: content, selection });
-    } else if (content) {
-      this.model.dispatch("SET_CURRENT_CONTENT", { content, selection });
     }
   }
 
@@ -550,7 +511,3 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
     return this.env.model.getters.getVisibleGroupLayers(sheetId, "COL");
   }
 }
-
-Spreadsheet.props = {
-  model: Object,
-};

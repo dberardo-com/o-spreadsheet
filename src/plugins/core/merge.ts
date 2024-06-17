@@ -1,12 +1,12 @@
 import {
+  RangeImpl,
   clip,
   deepEquals,
-  getCanonicalSheetName,
+  getFullReference,
   isDefined,
   isEqual,
   overlap,
   positions,
-  RangeImpl,
   splitReference,
   toXC,
   toZone,
@@ -47,7 +47,6 @@ export class MergePlugin extends CorePlugin<MergeState> implements MergeState {
     "isInSameMerge",
     "isMergeHidden",
     "getMainCellPosition",
-    "getBottomLeftCell",
     "expandZone",
     "doesIntersectMerge",
     "doesColumnsHaveCommonMerges",
@@ -177,9 +176,7 @@ export class MergePlugin extends CorePlugin<MergeState> implements MergeState {
     const rangeString = this.getters.getRangeString(expandedRange, forSheetId);
     if (this.isSingleCellOrMerge(rangeImpl.sheetId, rangeImpl.zone)) {
       const { sheetName, xc } = splitReference(rangeString);
-      return `${sheetName !== undefined ? getCanonicalSheetName(sheetName) + "!" : ""}${
-        xc.split(":")[0]
-      }`;
+      return getFullReference(sheetName, xc.split(":")[0]);
     }
     return rangeString;
   }
@@ -260,19 +257,14 @@ export class MergePlugin extends CorePlugin<MergeState> implements MergeState {
   }
 
   getMainCellPosition(position: CellPosition): CellPosition {
-    if (!this.isInMerge(position)) {
-      return position;
-    }
-    const mergeTopLeftPos = this.getMerge(position)!.topLeft;
-    return { sheetId: position.sheetId, col: mergeTopLeftPos.col, row: mergeTopLeftPos.row };
-  }
-
-  getBottomLeftCell(position: CellPosition): CellPosition {
-    if (!this.isInMerge(position)) {
-      return position;
-    }
-    const { bottom, left } = this.getMerge(position)!;
-    return { sheetId: position.sheetId, col: left, row: bottom };
+    const mergeZone = this.getMerge(position);
+    return mergeZone
+      ? {
+          sheetId: position.sheetId,
+          col: mergeZone.left,
+          row: mergeZone.top,
+        }
+      : position;
   }
 
   isMergeHidden(sheetId: UID, merge: Merge): boolean {
@@ -553,7 +545,6 @@ function exportMerges(merges: Record<number, Range | undefined>): string[] {
 function rangeToMerge(mergeId: number, range: Range): Merge {
   return {
     ...range.zone,
-    topLeft: { col: range.zone.left, row: range.zone.top },
     id: mergeId,
   };
 }

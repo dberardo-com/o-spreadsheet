@@ -55,6 +55,7 @@ css/* scss */ `
         .o-icon {
           height: 18px;
           width: 18px;
+          font-size: 18px;
         }
       }
     }
@@ -76,6 +77,9 @@ interface BottomBarMenuState extends MenuState {
 
 export class BottomBar extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-BottomBar";
+  static props = {
+    onClick: Function,
+  };
   static components = { Menu, Ripple, BottomBarSheet, BottomBarStatistic };
 
   private bottomBarRef = useRef("bottomBar");
@@ -138,10 +142,14 @@ export class BottomBar extends Component<Props, SpreadsheetChildEnv> {
         name: sheet.name,
         sequence: i,
         isReadonlyAllowed: true,
-        textColor: sheet.isVisible ? undefined : "grey",
+        textColor: sheet.isVisible ? undefined : "#808080",
         execute: (env) => {
+          if (!this.env.model.getters.isSheetVisible(sheetId)) {
+            this.env.model.dispatch("SHOW_SHEET", { sheetId });
+          }
           env.model.dispatch("ACTIVATE_SHEET", { sheetIdFrom: from, sheetIdTo: sheetId });
         },
+        isEnabled: (env) => (env.model.getters.isReadonly() ? sheet.isVisible : true),
       });
       i++;
     }
@@ -281,7 +289,3 @@ export class BottomBar extends Component<Props, SpreadsheetChildEnv> {
     return this.sheetListRef.el.scrollWidth - this.sheetListRef.el.clientWidth;
   }
 }
-
-BottomBar.props = {
-  onClick: Function,
-};

@@ -7,6 +7,7 @@ import { setTranslationMethod } from "../../src/translation";
 import { getCompiledTemplates } from "../../tools/owl_templates/compile_templates.cjs";
 import "./canvas.mock";
 import "./jest_extend";
+import "./polyfill";
 import "./resize_observer.mock";
 
 function registerOwlTemplates() {
@@ -32,6 +33,10 @@ beforeAll(() => {
       this.innerHTML = value;
     },
   });
+
+  console.info = () => {};
+  console.group = () => {};
+  console.groupEnd = () => {};
 });
 
 beforeEach(() => {
@@ -72,3 +77,21 @@ function executeCleanups() {
     cleanupFn();
   }
 }
+
+let error = null;
+
+beforeEach(() => {
+  error = null;
+  jest.spyOn(console, "error").mockImplementation((e) => {
+    error = e;
+  });
+  jest.spyOn(console, "warn").mockImplementation((e) => {
+    error = e;
+  });
+});
+
+afterEach(() => {
+  if (error) {
+    throw error;
+  }
+});

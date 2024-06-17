@@ -2,7 +2,7 @@ import { Token } from ".";
 import { functionRegistry } from "../functions/index";
 import { concat, parseNumber, removeStringQuotes } from "../helpers";
 import { _t } from "../translation";
-import { CompiledFormula, DEFAULT_LOCALE } from "../types";
+import { CompiledFormula, DEFAULT_LOCALE, FormulaToExecute } from "../types";
 import { BadExpressionError, UnknownFunctionError } from "../types/errors";
 import { FunctionCode, FunctionCodeBuilder, Scope } from "./code_builder";
 import { AST, ASTFuncall, parseTokens } from "./parser";
@@ -44,8 +44,7 @@ type InternalCompiledFormula = CompiledFormula & {
 // example, "=2*sum(A1:A4)" and "=2*sum(B1:B4)" are compiled into the same
 // structural function.
 // It is only exported for testing purposes
-export const functionCache: { [key: string]: Omit<CompiledFormula, "dependencies" | "tokens"> } =
-  {};
+export const functionCache: { [key: string]: FormulaToExecute } = {};
 
 // -----------------------------------------------------------------------------
 // COMPILER
@@ -82,10 +81,9 @@ export function compileTokens(tokens: Token[]): CompiledFormula {
       code.toString()
     );
 
-    functionCache[cacheKey] = {
-      // @ts-ignore
-      execute: baseFunction,
-    };
+    // @ts-ignore
+    functionCache[cacheKey] = baseFunction;
+
     /**
      * This function compile the function arguments. It is mostly straightforward,
      * except that there is a non trivial transformation in one situation:
@@ -100,7 +98,7 @@ export function compileTokens(tokens: Token[]): CompiledFormula {
       const functionDefinition = functions[functionName];
 
       if (!functionDefinition) {
-        throw new UnknownFunctionError(ast.value);
+        throw new UnknownFunctionError(_t('Unknown function: "%s"', ast.value));
       }
 
       assertEnoughArgs(ast);
@@ -115,30 +113,9 @@ export function compileTokens(tokens: Token[]): CompiledFormula {
 
         // detect when an argument need to be evaluated as a meta argument
         const isMeta = argTypes.includes("META");
-        // detect when an argument need to be evaluated as a lazy argument
-        const isLazy = argDefinition.lazy;
-
         const hasRange = argTypes.some((t) => isRangeType(t));
-        const isRangeOnly = argTypes.every((t) => isRangeType(t));
 
-        if (isRangeOnly) {
-          if (!isRangeInput(currentArg)) {
-            throw new BadExpressionError(
-              _t(
-                "Function %s expects the parameter %s to be reference to a cell or range, not a %s.",
-                functionName,
-                (i + 1).toString(),
-                currentArg.type.toLowerCase()
-              )
-            );
-          }
-        }
-
-        const compiledAST = compileAST(currentArg, isMeta, hasRange, {
-          functionName,
-          paramIndex: i + 1,
-        });
-        compiledArgs.push(isLazy ? compiledAST.wrapInClosure() : compiledAST);
+        compiledArgs.push(compileAST(currentArg, isMeta, hasRange));
       }
 
       return compiledArgs;
@@ -156,15 +133,7 @@ export function compileTokens(tokens: Token[]): CompiledFormula {
      * function needs to receive as argument the coordinates of a cell rather
      * than its value. For this we have meta arguments.
      */
-    function compileAST(
-      ast: AST,
-      isMeta = false,
-      hasRange = false,
-      referenceVerification: {
-        functionName?: string;
-        paramIndex?: number;
-      } = {}
-    ): FunctionCode {
+    function compileAST(ast: AST, isMeta = false, hasRange = false): FunctionCode {
       const code = new FunctionCodeBuilder(scope);
       if (ast.type !== "REFERENCE" && !(ast.type === "BIN_OPERATION" && ast.value === ":")) {
         if (isMeta) {
@@ -187,41 +156,28 @@ export function compileTokens(tokens: Token[]): CompiledFormula {
           );
         case "REFERENCE":
           const referenceIndex = dependencies.indexOf(ast.value);
-          if (hasRange) {
+          if ((!isMeta && ast.value.includes(":")) || hasRange) {
             return code.return(`range(deps[${referenceIndex}])`);
           } else {
-            return code.return(
-              `ref(deps[${referenceIndex}], ${isMeta ? "true" : "false"}, "${
-                referenceVerification.functionName || OPERATOR_MAP["="]
-              }",  ${referenceVerification.paramIndex})`
-            );
+            return code.return(`ref(deps[${referenceIndex}], ${isMeta ? "true" : "false"})`);
           }
         case "FUNCALL":
           const args = compileFunctionArgs(ast).map((arg) => arg.assignResultToVariable());
           code.append(...args);
           const fnName = ast.value.toUpperCase();
-          code.append(`ctx.__lastFnCalled = '${fnName}';`);
           return code.return(`ctx['${fnName}'](${args.map((arg) => arg.returnExpression)})`);
         case "UNARY_OPERATION": {
           const fnName = UNARY_OPERATOR_MAP[ast.value];
-          const operand = compileAST(ast.operand, false, false, {
-            functionName: fnName,
-          }).assignResultToVariable();
+          const operand = compileAST(ast.operand, false, false).assignResultToVariable();
           code.append(operand);
-          code.append(`ctx.__lastFnCalled = '${fnName}';`);
           return code.return(`ctx['${fnName}'](${operand.returnExpression})`);
         }
         case "BIN_OPERATION": {
           const fnName = OPERATOR_MAP[ast.value];
-          const left = compileAST(ast.left, false, false, {
-            functionName: fnName,
-          }).assignResultToVariable();
-          const right = compileAST(ast.right, false, false, {
-            functionName: fnName,
-          }).assignResultToVariable();
+          const left = compileAST(ast.left, false, false).assignResultToVariable();
+          const right = compileAST(ast.right, false, false).assignResultToVariable();
           code.append(left);
           code.append(right);
-          code.append(`ctx.__lastFnCalled = '${fnName}';`);
           return code.return(
             `ctx['${fnName}'](${left.returnExpression}, ${right.returnExpression})`
           );
@@ -232,7 +188,7 @@ export function compileTokens(tokens: Token[]): CompiledFormula {
     }
   }
   const compiledFormula: InternalCompiledFormula = {
-    execute: functionCache[cacheKey].execute,
+    execute: functionCache[cacheKey],
     dependencies,
     constantValues,
     tokens,
@@ -265,7 +221,10 @@ function compilationCacheKey(
           return `|N${constantValues.numbers.indexOf(parseNumber(token.value, DEFAULT_LOCALE))}|`;
         case "REFERENCE":
         case "INVALID_REFERENCE":
-          return `|${dependencies.indexOf(token.value)}|`;
+          if (token.value.includes(":")) {
+            return `R|${dependencies.indexOf(token.value)}|`;
+          }
+          return `C|${dependencies.indexOf(token.value)}|`;
         case "SPACE":
           return "";
         default:
@@ -360,16 +319,4 @@ function assertEnoughArgs(ast: ASTFuncall) {
 
 function isRangeType(type: string) {
   return type.startsWith("RANGE");
-}
-
-function isRangeInput(arg: AST) {
-  if (arg.type === "REFERENCE") {
-    return true;
-  }
-  if (arg.type === "FUNCALL") {
-    const fnDef = functions[arg.value.toUpperCase()];
-    return fnDef && isRangeType(fnDef.returns[0]);
-  }
-
-  return false;
 }

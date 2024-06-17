@@ -3,12 +3,12 @@ import {
   ComponentsImportance,
   HEADER_HEIGHT,
   HEADER_WIDTH,
-  ICON_EDGE_LENGTH,
+  ICONS_COLOR,
   MIN_COL_WIDTH,
   MIN_ROW_HEIGHT,
   SELECTION_BORDER_COLOR,
-  UNHIDE_ICON_EDGE_LENGTH,
 } from "../../constants";
+import { Store, useStore } from "../../store_engine";
 import {
   CommandResult,
   EdgeScrollInfo,
@@ -18,8 +18,9 @@ import {
   Ref,
   SpreadsheetChildEnv,
 } from "../../types/index";
+import { ComposerStore } from "../composer/composer/composer_store";
 import { ContextMenuType } from "../grid/grid";
-import { css } from "../helpers/css";
+import { css, cssPropertiesToCss } from "../helpers/css";
 import { isCtrlKey } from "../helpers/dom_helpers";
 import { dragAndDropBeyondTheViewport, startDnd } from "../helpers/drag_and_drop";
 import { MergeErrorMessage } from "../translations_terms";
@@ -48,6 +49,11 @@ interface ResizerProps {
 }
 
 abstract class AbstractResizer extends Component<ResizerProps, SpreadsheetChildEnv> {
+  static props = {
+    onOpenContextMenu: Function,
+  };
+  private composerStore!: Store<ComposerStore>;
+
   PADDING: number = 0;
   MAX_SIZE_MARGIN: number = 0;
   MIN_ELEMENT_SIZE: number = 0;
@@ -103,6 +109,10 @@ abstract class AbstractResizer extends Component<ResizerProps, SpreadsheetChildE
   abstract _getActiveElements(): Set<HeaderIndex>;
 
   abstract _getPreviousVisibleElement(index: HeaderIndex): HeaderIndex;
+
+  setup(): void {
+    this.composerStore = useStore(ComposerStore);
+  }
 
   _computeHandleDisplay(ev: MouseEvent) {
     const position = this._getEvOffset(ev);
@@ -209,7 +219,7 @@ abstract class AbstractResizer extends Component<ResizerProps, SpreadsheetChildE
       }
       return;
     }
-    if (this.env.model.getters.getEditionMode() === "editing") {
+    if (this.composerStore.editionMode === "editing") {
       this.env.model.selection.getBackToDefault();
     }
     this.startSelection(ev, index);
@@ -340,29 +350,20 @@ css/* scss */ `
       background-color: ${SELECTION_BORDER_COLOR};
     }
     .o-unhide {
-      width: ${UNHIDE_ICON_EDGE_LENGTH}px;
-      height: ${UNHIDE_ICON_EDGE_LENGTH}px;
-      position: absolute;
-      overflow: hidden;
-      border-radius: 2px;
-      top: calc(${HEADER_HEIGHT}px / 2 - ${UNHIDE_ICON_EDGE_LENGTH}px / 2);
+      color: ${ICONS_COLOR};
     }
     .o-unhide:hover {
       z-index: ${ComponentsImportance.Grid + 1};
       background-color: lightgrey;
     }
-    .o-unhide > svg {
-      position: relative;
-      top: calc(${UNHIDE_ICON_EDGE_LENGTH}px / 2 - ${ICON_EDGE_LENGTH}px / 2);
-    }
   }
 `;
 
-AbstractResizer.props = {
-  onOpenContextMenu: Function,
-};
-
 export class ColResizer extends AbstractResizer {
+  static props = {
+    onOpenContextMenu: Function,
+  };
+
   static template = "o-spreadsheet-ColResizer";
 
   private colResizerRef!: Ref<HTMLElement>;
@@ -495,8 +496,8 @@ export class ColResizer extends AbstractResizer {
     });
   }
 
-  unhideStyleValue(hiddenIndex: HeaderIndex): Pixel {
-    return this._getDimensionsInViewport(hiddenIndex).start;
+  getUnhideButtonStyle(hiddenIndex: HeaderIndex): string {
+    return cssPropertiesToCss({ left: this._getDimensionsInViewport(hiddenIndex).start + "px" });
   }
 }
 
@@ -544,17 +545,7 @@ css/* scss */ `
       background-color: ${SELECTION_BORDER_COLOR};
     }
     .o-unhide {
-      width: ${UNHIDE_ICON_EDGE_LENGTH}px;
-      height: ${UNHIDE_ICON_EDGE_LENGTH}px;
-      position: absolute;
-      overflow: hidden;
-      border-radius: 2px;
-      left: calc(${HEADER_WIDTH}px - ${UNHIDE_ICON_EDGE_LENGTH}px - 2px);
-    }
-    .o-unhide > svg {
-      position: relative;
-      left: calc(${UNHIDE_ICON_EDGE_LENGTH}px / 2 - ${ICON_EDGE_LENGTH}px / 2);
-      top: calc(${UNHIDE_ICON_EDGE_LENGTH}px / 2 - ${ICON_EDGE_LENGTH}px / 2);
+      color: ${ICONS_COLOR};
     }
     .o-unhide:hover {
       z-index: ${ComponentsImportance.Grid + 1};
@@ -563,11 +554,10 @@ css/* scss */ `
   }
 `;
 
-ColResizer.props = {
-  onOpenContextMenu: Function,
-};
-
 export class RowResizer extends AbstractResizer {
+  static props = {
+    onOpenContextMenu: Function,
+  };
   static template = "o-spreadsheet-RowResizer";
 
   setup() {
@@ -700,8 +690,8 @@ export class RowResizer extends AbstractResizer {
     });
   }
 
-  unhideStyleValue(hiddenIndex: HeaderIndex): Pixel {
-    return this._getDimensionsInViewport(hiddenIndex).start;
+  getUnhideButtonStyle(hiddenIndex: HeaderIndex): string {
+    return cssPropertiesToCss({ top: this._getDimensionsInViewport(hiddenIndex).start + "px" });
   }
 }
 
@@ -718,11 +708,10 @@ css/* scss */ `
   }
 `;
 
-RowResizer.props = {
-  onOpenContextMenu: Function,
-};
-
 export class HeadersOverlay extends Component<any, SpreadsheetChildEnv> {
+  static props = {
+    onOpenContextMenu: Function,
+  };
   static template = "o-spreadsheet-HeadersOverlay";
   static components = { ColResizer, RowResizer };
 
@@ -730,7 +719,3 @@ export class HeadersOverlay extends Component<any, SpreadsheetChildEnv> {
     this.env.model.selection.selectAll();
   }
 }
-
-HeadersOverlay.props = {
-  onOpenContextMenu: Function,
-};

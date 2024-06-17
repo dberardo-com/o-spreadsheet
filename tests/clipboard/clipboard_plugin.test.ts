@@ -1,6 +1,5 @@
 import { DEFAULT_BORDER_DESC } from "../../src/constants";
 import { toCartesian, toZone, zoneToXc } from "../../src/helpers";
-import { ClipboardCellsState } from "../../src/helpers/clipboard/clipboard_cells_state";
 import { Model } from "../../src/model";
 import { ClipboardMIMEType, CommandResult, DEFAULT_LOCALE } from "../../src/types/index";
 import { XMLString } from "../../src/types/xlsx";
@@ -18,9 +17,11 @@ import {
   createSheet,
   createSheetWithName,
   cut,
+  deleteCells,
   deleteColumns,
   deleteRows,
   deleteSheet,
+  insertCells,
   merge,
   paste,
   pasteFromOSClipboard,
@@ -28,6 +29,7 @@ import {
   setAnchorCorner,
   setCellContent,
   setCellFormat,
+  setFormat,
   setSelection,
   setStyle,
   setViewportOffset,
@@ -128,20 +130,6 @@ describe("clipboard", () => {
     expect(result).toBeCancelledBecause(CommandResult.EmptyClipboard);
   });
 
-  test("paste zones without copied value", () => {
-    const model = new Model();
-    const target = [toZone("A1"), toZone("B2")];
-    const state = new ClipboardCellsState(
-      [],
-      "COPY",
-      model.getters,
-      model.dispatch,
-      model.selection
-    );
-    const pasteZone = state["getPasteZones"](target);
-    expect(pasteZone).toEqual(target);
-  });
-
   test("can cut and paste a cell in different sheets", () => {
     const model = new Model();
     setCellContent(model, "A1", "a1");
@@ -181,14 +169,8 @@ describe("clipboard", () => {
 
   test("can copy a cell with style", () => {
     const model = new Model();
-    const sheet1 = model.getters.getActiveSheetId();
     setCellContent(model, "B2", "b2");
-    selectCell(model, "B2");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: sheet1,
-      target: target("B2"),
-      style: { bold: true },
-    });
+    setStyle(model, "B2", { bold: true });
     expect(getCell(model, "B2")!.style).toEqual({ bold: true });
 
     copy(model, "B2");
@@ -279,15 +261,10 @@ describe("clipboard", () => {
 
   test("can copy from an empty cell into a cell with style", () => {
     const model = new Model();
-    const sheet1 = model.getters.getActiveSheetId();
     // set value and style in B2
     setCellContent(model, "B2", "b2");
     selectCell(model, "B2");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: sheet1,
-      target: target("B2"),
-      style: { bold: true },
-    });
+    setStyle(model, "B2", { bold: true });
     expect(getCell(model, "B2")!.style).toEqual({ bold: true });
 
     // set value in A1, select and copy it
@@ -330,11 +307,7 @@ describe("clipboard", () => {
     const model = new Model();
     setCellContent(model, "B2", "0.451");
     selectCell(model, "B2");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: model.getters.getSelectedZones(),
-      format: "0.00%",
-    });
+    setFormat(model, "B2", "0.00%");
     expect(getCellContent(model, "B2")).toBe("45.10%");
 
     copy(model, "B2");
@@ -450,12 +423,7 @@ describe("clipboard", () => {
     const model = new Model();
     setCellContent(model, "B2", "b2");
     selectCell(model, "B2");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: target("B2"),
-      style: { bold: true },
-    });
-
+    setStyle(model, "B2", { bold: true });
     cut(model, "B2");
     paste(model, "C2");
 
@@ -1035,11 +1003,7 @@ describe("clipboard", () => {
     const model = new Model();
     setCellContent(model, "B2", "b2");
     selectCell(model, "B2");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: target("B2"),
-      style: { bold: true },
-    });
+    setStyle(model, "B2", { bold: true });
     expect(getCell(model, "B2")!.style).toEqual({ bold: true });
 
     copy(model, "B2");
@@ -1051,12 +1015,8 @@ describe("clipboard", () => {
   test("can copy and paste format", () => {
     const model = new Model();
     setCellContent(model, "B2", "b2");
+    setStyle(model, "B2", { bold: true });
     selectCell(model, "B2");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: target("B2"),
-      style: { bold: true },
-    });
     expect(getCell(model, "B2")!.style).toEqual({ bold: true });
 
     copy(model, "B2");
@@ -1069,12 +1029,8 @@ describe("clipboard", () => {
     const model = new Model();
     setCellContent(model, "B2", "b2");
     setCellContent(model, "C2", "c2");
+    setStyle(model, "B2", { bold: true });
     selectCell(model, "B2");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: target("B2"),
-      style: { bold: true },
-    });
     expect(getCell(model, "B2")!.style).toEqual({ bold: true });
 
     copy(model, "B2");
@@ -1087,12 +1043,8 @@ describe("clipboard", () => {
   test("can undo a paste format", () => {
     const model = new Model();
     setCellContent(model, "B2", "b2");
+    setStyle(model, "B2", { bold: true });
     selectCell(model, "B2");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: target("B2"),
-      style: { bold: true },
-    });
     copy(model, "B2");
     paste(model, "C2", "onlyFormat");
 
@@ -1103,34 +1055,30 @@ describe("clipboard", () => {
     expect(getCell(model, "C2")).toBeUndefined();
   });
 
-  test("can copy and paste value only", () => {
+  test("can copy and paste as value", () => {
     const model = new Model();
     setCellContent(model, "B2", "b2");
     selectCell(model, "B2");
     copy(model, "B2");
-    paste(model, "C2", "onlyValue");
+    paste(model, "C2", "asValue");
     expect(getCellContent(model, "C2")).toBe("b2");
   });
 
-  test("can copy a cell with a style and paste value only", () => {
+  test("can copy a cell with a style and paste as value", () => {
     const model = new Model();
     setCellContent(model, "B2", "b2");
+    setStyle(model, "B2", { bold: true });
     selectCell(model, "B2");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: target("B2"),
-      style: { bold: true },
-    });
     expect(getCell(model, "B2")!.style).toEqual({ bold: true });
 
     copy(model, "B2");
-    paste(model, "C2", "onlyValue");
+    paste(model, "C2", "asValue");
 
     expect(getEvaluatedCell(model, "C2").value).toBe("b2");
     expect(getCell(model, "C2")!.style).not.toBeDefined();
   });
 
-  test("can copy a cell with a border and paste value only", () => {
+  test("can copy a cell with a border and paste as value", () => {
     const model = new Model();
     setCellContent(model, "B2", "b2");
     selectCell(model, "B2");
@@ -1138,30 +1086,13 @@ describe("clipboard", () => {
     expect(getBorder(model, "B2")).toEqual({ bottom: DEFAULT_BORDER_DESC });
 
     copy(model, "B2");
-    paste(model, "C2", "onlyValue");
+    paste(model, "C2", "asValue");
 
     expect(getEvaluatedCell(model, "C2").value).toBe("b2");
     expect(getBorder(model, "C2")).toBeNull();
   });
 
-  test("can copy a cell with a format and paste value only", () => {
-    const model = new Model();
-    setCellContent(model, "B2", "0.451");
-    selectCell(model, "B2");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: model.getters.getSelectedZones(),
-      format: "0.00%",
-    });
-    expect(getCellContent(model, "B2")).toBe("45.10%");
-
-    copy(model, "B2");
-    paste(model, "C2", "onlyValue");
-
-    expect(getCellContent(model, "C2")).toBe("0.451");
-  });
-
-  test("can copy a cell with a conditional format and paste value only", () => {
+  test("can copy a cell with a conditional format and paste as value", () => {
     const model = new Model({ sheets: [{ colNumber: 5, rowNumber: 5 }] });
     setCellContent(model, "A1", "1");
     setCellContent(model, "A2", "2");
@@ -1176,9 +1107,9 @@ describe("clipboard", () => {
 
     expect(result).toBeSuccessfullyDispatched();
     copy(model, "A1");
-    paste(model, "C1", "onlyValue");
+    paste(model, "C1", "asValue");
     copy(model, "A2");
-    paste(model, "C2", "onlyValue");
+    paste(model, "C2", "asValue");
     expect(getStyle(model, "A1")).toEqual({
       fillColor: "#FF0000",
     });
@@ -1187,26 +1118,22 @@ describe("clipboard", () => {
     expect(getStyle(model, "C2")).toEqual({});
   });
 
-  test("paste value only does not remove style", () => {
+  test("paste as value does not remove style", () => {
     const model = new Model();
     setCellContent(model, "B2", "b2");
     setCellContent(model, "C3", "c3");
     selectCell(model, "C3");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: [{ left: 2, right: 2, top: 2, bottom: 2 }],
-      style: { bold: true },
-    });
+    setStyle(model, "C3", { bold: true });
     expect(getCell(model, "C3")!.style).toEqual({ bold: true });
 
     copy(model, "B2");
-    paste(model, "C3", "onlyValue");
+    paste(model, "C3", "asValue");
 
     expect(getCellContent(model, "C3")).toBe("b2");
     expect(getCell(model, "C3")!.style).toEqual({ bold: true });
   });
 
-  test("paste value only does not remove border", () => {
+  test("paste as value does not remove border", () => {
     const model = new Model();
     setCellContent(model, "B2", "b2");
     setCellContent(model, "C3", "c3");
@@ -1216,37 +1143,34 @@ describe("clipboard", () => {
     expect(getBorder(model, "C4")).toEqual({ top: DEFAULT_BORDER_DESC });
 
     copy(model, "B2");
-    paste(model, "C3", "onlyValue");
+    paste(model, "C3", "asValue");
 
     expect(getCellContent(model, "C3")).toBe("b2");
     expect(getBorder(model, "C3")).toEqual({ bottom: DEFAULT_BORDER_DESC });
   });
 
-  test("paste value only does not remove formating", () => {
+  test("paste as value does not remove number format", () => {
     const model = new Model();
-    setCellContent(model, "B2", "42");
-    setCellContent(model, "C3", "0.451");
-    selectCell(model, "C3");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: model.getters.getSelectedZones(),
-      format: "0.00%",
-    });
-    expect(getCellContent(model, "C3")).toBe("45.10%");
+    setCellContent(model, "B2", "0.451");
+    setFormat(model, "B2", "0.00%");
+    expect(getCellContent(model, "B2")).toBe("45.10%");
+
+    setCellContent(model, "C3", "42");
+    setFormat(model, "C3", "#,##0.00");
+    expect(getCellContent(model, "C3")).toBe("42.00");
 
     copy(model, "B2");
-    paste(model, "C3", "onlyValue");
-
-    expect(getCellContent(model, "C3")).toBe("4200.00%");
+    paste(model, "C3", "asValue");
+    expect(getCellContent(model, "C3")).toBe("45.10%");
   });
 
-  test("can copy a formula and paste value only", () => {
+  test("can copy a formula and paste as value", () => {
     const model = new Model();
     setCellContent(model, "A1", "=SUM(1+2)");
     setCellContent(model, "A2", "=EQ(42,42)");
     setCellContent(model, "A3", '=CONCAT("Ki","kou")');
     copy(model, "A1:A3");
-    paste(model, "B1", "onlyValue");
+    paste(model, "B1", "asValue");
     expect(getCellContent(model, "B1")).toBe("3");
     expect(getCellContent(model, "B2")).toBe("TRUE");
     expect(getCellContent(model, "B3")).toBe("Kikou");
@@ -1340,17 +1264,13 @@ describe("clipboard", () => {
     expect(getCellContent(model, "B8")).toBe("42$");
   });
 
-  test("can undo a paste value only", () => {
+  test("can undo a paste as value", () => {
     const model = new Model();
     setCellContent(model, "B2", "b2");
     selectCell(model, "B2");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: target("B2"),
-      style: { bold: true },
-    });
+    setStyle(model, "B2", { bold: true });
     copy(model, "B2");
-    paste(model, "C2", "onlyValue");
+    paste(model, "C2", "asValue");
 
     expect(getCellContent(model, "C2")).toBe("b2");
     expect(getCell(model, "C2")!.style).not.toBeDefined();
@@ -1359,11 +1279,11 @@ describe("clipboard", () => {
     expect(getCell(model, "C2")).toBeUndefined();
   });
 
-  test("cut and paste value only is not allowed", () => {
+  test("cut and paste as value is not allowed", () => {
     const model = new Model();
     setCellContent(model, "B2", "b2");
     cut(model, "B2");
-    const result = paste(model, "C3", "onlyValue");
+    const result = paste(model, "C3", "asValue");
     expect(result).toBeCancelledBecause(CommandResult.WrongPasteOption);
   });
 
@@ -1451,6 +1371,19 @@ describe("clipboard", () => {
     cut(model, "A1");
     paste(model, "B2");
     expect(getCellText(model, "B2")).toBe("=SUM(C1:C2)");
+  });
+
+  test("cut/paste a formula with references in another sheet updates the sheet references in the formula", () => {
+    const model = new Model();
+    createSheet(model, { sheetId: "sh2", name: "Sheet2" });
+    setCellContent(model, "A1", "=SUM(C1:C2)");
+    setCellContent(model, "B1", "=Sheet2!A1 + A2");
+    cut(model, "A1:B1");
+
+    activateSheet(model, "sh2");
+    paste(model, "A1");
+    expect(getCellText(model, "A1")).toBe("=SUM(Sheet1!C1:C2)");
+    expect(getCellText(model, "B1")).toBe("=A1 + Sheet1!A2");
   });
 
   test("copy/paste a zone present in formulas references does not update references", () => {
@@ -1554,11 +1487,7 @@ describe("clipboard", () => {
     // write something in B2 and set its format
     setCellContent(model, "B2", "b2");
     selectCell(model, "B2");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: target("B2"),
-      style: { bold: true },
-    });
+    setStyle(model, "B2", { bold: true });
     expect(getCell(model, "B2")!.style).toEqual({ bold: true });
 
     // select A1 and copy format
@@ -1741,7 +1670,7 @@ describe("clipboard", () => {
       sheetId: sheet1Id,
     });
 
-    model.dispatch("COPY", { target: target("A1") });
+    copy(model, "A1");
     activateSheet(model, sheet2Id);
     model.dispatch("PASTE", { target: target("A1") });
     expect(model.getters.getConditionalFormats(sheet2Id)).toMatchObject([
@@ -1754,7 +1683,7 @@ describe("clipboard", () => {
       sheetId: sheet1Id,
     });
     activateSheet(model, sheet1Id);
-    model.dispatch("COPY", { target: target("A1") });
+    copy(model, "A1");
     activateSheet(model, sheet2Id);
     model.dispatch("PASTE", { target: target("B2") });
     expect(model.getters.getConditionalFormats(sheet2Id)).toMatchObject([
@@ -1986,6 +1915,43 @@ describe("clipboard: pasting outside of sheet", () => {
     expect(getStyle(model, "B3")).toEqual({ bold: true, fillColor: "red" });
     expect(getCellContent(model, "C2")).toBe("c2");
     expect(getCellContent(model, "C3")).toBe("c2");
+  });
+
+  test("CopyPasteAboveCell and copyPasteCellsOnLeft do not change the clipboard state", () => {
+    const model = new Model();
+    setCellContent(model, "B3", "b3");
+    cut(model, "B3");
+    setSelection(model, ["A1:B2"]);
+    copyPasteAboveCells(model);
+
+    expect(model.getters.isCutOperation()).toBe(true);
+    paste(model, "A2");
+    expect(getCellContent(model, "A2")).toBe("b3");
+
+    setCellContent(model, "B3", "b3");
+    cut(model, "B3");
+    setSelection(model, ["A1:B2"]);
+    copyPasteCellsOnLeft(model);
+
+    expect(model.getters.isCutOperation()).toBe(true);
+    paste(model, "A2");
+    expect(getCellContent(model, "A2")).toBe("b3");
+  });
+
+  test("Delete Cell and Insert Cell do not invalidate the clipboard", () => {
+    const model = new Model();
+    setCellContent(model, "B3", "b3");
+    copy(model, "B3");
+
+    deleteCells(model, "A1", "up");
+    expect(model.getters.isCutOperation()).toBe(false);
+    paste(model, "A2");
+    expect(getCellContent(model, "A2")).toBe("b3");
+
+    insertCells(model, "A1", "down");
+    expect(model.getters.isCutOperation()).toBe(false);
+    paste(model, "A5");
+    expect(getCellContent(model, "A5")).toBe("b3");
   });
 
   test("fill right selection with multiple columns -> copies first column and pastes in each subsequent column, ", async () => {

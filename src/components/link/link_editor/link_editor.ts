@@ -83,6 +83,10 @@ interface State {
 
 export class LinkEditor extends Component<LinkEditorProps, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-LinkEditor";
+  static props = {
+    cellPosition: Object,
+    onClosed: { type: Function, optional: true },
+  };
   static components = { Menu };
   menuItems = linkMenuRegistry.getMenuItems();
   private link: State = useState(this.defaultState);
@@ -191,9 +195,4 @@ export const LinkEditorPopoverBuilder: PopoverBuilders = {
       cellCorner: "BottomLeft",
     };
   },
-};
-
-LinkEditor.props = {
-  cellPosition: Object,
-  onClosed: { type: Function, optional: true },
 };

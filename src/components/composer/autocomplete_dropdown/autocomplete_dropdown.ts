@@ -1,6 +1,6 @@
 import { Component, useEffect, useRef } from "@odoo/owl";
+import { AutoCompleteProposal } from "../../../registries";
 import { css } from "../../helpers/css";
-import { AutocompleteValue } from "../composer/composer";
 
 css/* scss */ `
   .o-autocomplete-dropdown {
@@ -24,15 +24,20 @@ css/* scss */ `
 `;
 
 interface Props {
-  values: AutocompleteValue[];
+  proposals: AutoCompleteProposal[];
   selectedIndex: number | undefined;
-  getHtmlContent: (value: string) => string;
   onValueSelected: (value: string) => void;
   onValueHovered: (index: string) => void;
 }
 
 export class TextValueProvider extends Component<Props> {
   static template = "o-spreadsheet-TextValueProvider";
+  static props = {
+    proposals: Array,
+    selectedIndex: { type: Number, optional: true },
+    onValueSelected: Function,
+    onValueHovered: Function,
+  };
   private autoCompleteListRef = useRef("autoCompleteList");
 
   setup() {
@@ -49,11 +54,3 @@ export class TextValueProvider extends Component<Props> {
     );
   }
 }
-
-TextValueProvider.props = {
-  values: Array,
-  selectedIndex: { type: Number, optional: true },
-  getHtmlContent: Function,
-  onValueSelected: Function,
-  onValueHovered: Function,
-};

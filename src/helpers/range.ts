@@ -2,6 +2,7 @@ import { _t } from "../translation";
 import {
   CellPosition,
   CoreGetters,
+  CustomizedDataSet,
   Getters,
   Range,
   RangeData,
@@ -178,7 +179,8 @@ export class RangeImpl implements Range {
           : this.parts.map((part) => {
               return { rowFixed: part.rowFixed, colFixed: part.colFixed };
             }),
-        prefixSheet: rangeParams?.prefixSheet ? rangeParams.prefixSheet : this.prefixSheet,
+        prefixSheet:
+          rangeParams?.prefixSheet !== undefined ? rangeParams.prefixSheet : this.prefixSheet,
       },
       this.getSheetSize
     );
@@ -211,11 +213,12 @@ export function createValidRange(
  * Spread multiple colrows zone to one row/col zone and add a many new input range as needed.
  * For example, A1:B4 will become [A1:A4, B1:B4]
  */
-export function spreadRange(getters: Getters, ranges: string[]): string[] {
-  const postProcessedRanges: string[] = [];
-  for (const range of ranges) {
+export function spreadRange(getters: Getters, dataSets: CustomizedDataSet[]): CustomizedDataSet[] {
+  const postProcessedRanges: CustomizedDataSet[] = [];
+  for (const dataSet of dataSets) {
+    const range = dataSet.dataRange;
     if (!getters.isRangeValid(range)) {
-      postProcessedRanges.push(range); // ignore invalid range
+      postProcessedRanges.push(dataSet); // ignore invalid range
       continue;
     }
 
@@ -225,29 +228,31 @@ export function spreadRange(getters: Getters, ranges: string[]): string[] {
     if (zone.bottom !== zone.top && zone.left != zone.right) {
       if (zone.right) {
         for (let j = zone.left; j <= zone.right; ++j) {
-          postProcessedRanges.push(
-            `${sheetPrefix}${zoneToXc({
+          postProcessedRanges.push({
+            ...dataSet,
+            dataRange: `${sheetPrefix}${zoneToXc({
               left: j,
               right: j,
               top: zone.top,
               bottom: zone.bottom,
-            })}`
-          );
+            })}`,
+          });
         }
       } else {
         for (let j = zone.top; j <= zone.bottom!; ++j) {
-          postProcessedRanges.push(
-            `${sheetPrefix}${zoneToXc({
+          postProcessedRanges.push({
+            ...dataSet,
+            dataRange: `${sheetPrefix}${zoneToXc({
               left: zone.left,
               right: zone.right,
               top: j,
               bottom: j,
-            })}`
-          );
+            })}`,
+          });
         }
       }
     } else {
-      postProcessedRanges.push(range);
+      postProcessedRanges.push(dataSet);
     }
   }
   return postProcessedRanges;

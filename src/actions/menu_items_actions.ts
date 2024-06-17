@@ -1,3 +1,4 @@
+import { CellPopoverStore } from "../components/popover";
 import { DEFAULT_FIGURE_HEIGHT, DEFAULT_FIGURE_WIDTH } from "../constants";
 import {
   getChartPositionAtCenterOfViewport,
@@ -5,6 +6,7 @@ import {
 } from "../helpers/figures/charts";
 import { centerFigurePosition, getMaxFigureSize } from "../helpers/figures/figure/figure";
 import {
+  areZonesContinuous,
   getZoneArea,
   isConsecutive,
   isEqual,
@@ -12,18 +14,20 @@ import {
   largeMin,
   numberToLetters,
 } from "../helpers/index";
+import { DEFAULT_TABLE_CONFIG } from "../helpers/table_presets";
 import { interactivePaste, interactivePasteFromOS } from "../helpers/ui/paste_interactive";
+import { interactiveCreateTable } from "../helpers/ui/table_interactive";
 import { _t } from "../translation";
 import { ClipboardMIMEType, ClipboardPasteOptions } from "../types/clipboard";
 import { Image } from "../types/image";
 import { Dimension, Format, SpreadsheetChildEnv, Style } from "../types/index";
+import { ActionSpec } from "./action";
 
 //------------------------------------------------------------------------------
 // Helpers
 //------------------------------------------------------------------------------
 
 export function setFormatter(env: SpreadsheetChildEnv, format: Format) {
-  env.model.dispatch("CANCEL_EDITION");
   env.model.dispatch("SET_FORMATTING", {
     sheetId: env.model.getters.getActiveSheetId(),
     target: env.model.getters.getSelectedZones(),
@@ -44,7 +48,7 @@ export function setStyle(env: SpreadsheetChildEnv, style: Style) {
 //------------------------------------------------------------------------------
 
 export const PASTE_ACTION = async (env: SpreadsheetChildEnv) => paste(env);
-export const PASTE_VALUE_ACTION = async (env: SpreadsheetChildEnv) => paste(env, "onlyValue");
+export const PASTE_AS_VALUE_ACTION = async (env: SpreadsheetChildEnv) => paste(env, "asValue");
 
 async function paste(env: SpreadsheetChildEnv, pasteOption?: ClipboardPasteOptions) {
   const spreadsheetClipboard = env.model.getters.getClipboardTextContent();
@@ -58,7 +62,7 @@ async function paste(env: SpreadsheetChildEnv, pasteOption?: ClipboardPasteOptio
       } else {
         interactivePaste(env, target, pasteOption);
       }
-      if (env.model.getters.isCutOperation() && pasteOption !== "onlyValue") {
+      if (env.model.getters.isCutOperation() && pasteOption !== "asValue") {
         await env.clipboard.write({ [ClipboardMIMEType.PlainText]: "" });
       }
       break;
@@ -398,6 +402,19 @@ export const CREATE_CHART = (env: SpreadsheetChildEnv) => {
 };
 
 //------------------------------------------------------------------------------
+// Pivots
+//------------------------------------------------------------------------------
+
+export const CREATE_PIVOT = (env: SpreadsheetChildEnv) => {
+  const pivotId = env.model.uuidGenerator.uuidv4();
+  const newSheetId = env.model.uuidGenerator.uuidv4();
+  const result = env.model.dispatch("INSERT_NEW_PIVOT", { pivotId, newSheetId });
+  if (result.isSuccessful) {
+    env.openSidePanel("PivotSidePanel", { pivotId });
+  }
+};
+
+//------------------------------------------------------------------------------
 // Image
 //------------------------------------------------------------------------------
 async function requestImage(env: SpreadsheetChildEnv): Promise<Image | undefined> {
@@ -444,7 +461,7 @@ export const OPEN_CF_SIDEPANEL_ACTION = (env: SpreadsheetChildEnv) => {
 
 export const INSERT_LINK = (env: SpreadsheetChildEnv) => {
   let { col, row } = env.model.getters.getActivePosition();
-  env.model.dispatch("OPEN_CELL_POPOVER", { col, row, popoverType: "LinkEditor" });
+  env.getStore(CellPopoverStore).open({ col, row }, "LinkEditor");
 };
 
 export const INSERT_LINK_NAME = (env: SpreadsheetChildEnv) => {
@@ -455,14 +472,85 @@ export const INSERT_LINK_NAME = (env: SpreadsheetChildEnv) => {
   return cell && cell.link ? _t("Edit link") : _t("Insert link");
 };
 
+// export const INSERT_LINK_NAME = (env: SpreadsheetChildEnv) => {
+//   const sheetId = env.model.getters.getActiveSheetId();
+//   const { col, row } = env.model.getters.getActivePosition();
+//   const cell = env.model.getters.getEvaluatedCell({ sheetId, col, row });
+
+//   return cell && cell.link ? _t("Edit link") : _t("Insert link");
+// };
+
 //------------------------------------------------------------------------------
 // Filters action
 //------------------------------------------------------------------------------
 
-export const SELECTION_CONTAINS_FILTER = (env: SpreadsheetChildEnv): boolean => {
+export const SELECTED_TABLE_HAS_FILTERS = (env: SpreadsheetChildEnv): boolean => {
+  const table = env.model.getters.getFirstTableInSelection();
+  return table?.config.hasFilters || false;
+};
+
+export const SELECTION_CONTAINS_SINGLE_TABLE = (env: SpreadsheetChildEnv): boolean => {
   const sheetId = env.model.getters.getActiveSheetId();
   const selectedZones = env.model.getters.getSelectedZones();
-  return env.model.getters.doesZonesContainFilter(sheetId, selectedZones);
+  return env.model.getters.getTablesOverlappingZones(sheetId, selectedZones).length === 1;
+};
+
+export const IS_SELECTION_CONTINUOUS = (env: SpreadsheetChildEnv): boolean => {
+  return areZonesContinuous(env.model.getters.getSelectedZones());
+};
+
+export const ADD_DATA_FILTER = (env: SpreadsheetChildEnv) => {
+  const sheetId = env.model.getters.getActiveSheetId();
+  const table = env.model.getters.getFirstTableInSelection();
+  if (table) {
+    env.model.dispatch("UPDATE_TABLE", {
+      sheetId,
+      zone: table.range.zone,
+      config: { hasFilters: true },
+    });
+  } else {
+    const tableConfig = {
+      ...DEFAULT_TABLE_CONFIG,
+      hasFilters: true,
+      bandedRows: false,
+      styleId: "TableStyleLight11",
+    };
+    interactiveCreateTable(env, sheetId, tableConfig);
+  }
+};
+
+export const REMOVE_DATA_FILTER = (env: SpreadsheetChildEnv) => {
+  const sheetId = env.model.getters.getActiveSheetId();
+  const table = env.model.getters.getFirstTableInSelection();
+  if (!table) {
+    return;
+  }
+  env.model.dispatch("UPDATE_TABLE", {
+    sheetId,
+    zone: table.range.zone,
+    config: { hasFilters: false },
+  });
+};
+
+export const INSERT_TABLE = (env: SpreadsheetChildEnv) => {
+  const sheetId = env.model.getters.getActiveSheetId();
+
+  const result = interactiveCreateTable(env, sheetId);
+  if (result.isSuccessful) {
+    env.openSidePanel("TableSidePanel", {});
+  }
+};
+
+export const DELETE_SELECTED_TABLE = (env: SpreadsheetChildEnv) => {
+  const position = env.model.getters.getActivePosition();
+  const table = env.model.getters.getTable(position);
+  if (!table) {
+    return;
+  }
+  env.model.dispatch("REMOVE_TABLE", {
+    sheetId: position.sheetId,
+    target: [table.range.zone],
+  });
 };
 
 //------------------------------------------------------------------------------
@@ -485,4 +573,13 @@ export const CAN_INSERT_HEADER = (env: SpreadsheetChildEnv, dimension: Dimension
   const zone = env.model.getters.getSelectedZone();
   const allSheetSelected = isEqual(zone, env.model.getters.getSheetZone(sheetId));
   return isConsecutive(activeHeaders) && (ortogonalActiveHeaders.size === 0 || allSheetSelected);
+};
+
+export const CREATE_OR_REMOVE_FILTER_ACTION: ActionSpec = {
+  name: (env) =>
+    SELECTED_TABLE_HAS_FILTERS(env) ? _t("Remove selected filters") : _t("Add filters"),
+  isEnabled: (env) => IS_SELECTION_CONTINUOUS(env),
+  execute: (env) =>
+    SELECTED_TABLE_HAS_FILTERS(env) ? REMOVE_DATA_FILTER(env) : ADD_DATA_FILTER(env),
+  icon: "o-spreadsheet-Icon.FILTER_ICON_ACTIVE",
 };

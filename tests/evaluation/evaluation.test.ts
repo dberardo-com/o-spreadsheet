@@ -1,14 +1,8 @@
 import { arg, functionRegistry } from "../../src/functions";
+import { toMatrix } from "../../src/functions/helpers";
 import { Model } from "../../src/model";
-import {
-  ArgValue,
-  CellValue,
-  CellValueType,
-  ComputeFunction,
-  ErrorCell,
-  Matrix,
-} from "../../src/types";
-import { CellErrorType } from "../../src/types/errors";
+import { CellValueType, ErrorCell } from "../../src/types";
+import { CellErrorType, EvaluationError } from "../../src/types/errors";
 import {
   activateSheet,
   addColumns,
@@ -17,6 +11,8 @@ import {
   deleteColumns,
   paste,
   setCellContent,
+  setFormat,
+  setStyle,
   updateLocale,
 } from "../test_helpers/commands_helpers";
 import { FR_LOCALE } from "../test_helpers/constants";
@@ -26,12 +22,7 @@ import {
   getCellError,
   getEvaluatedCell,
 } from "../test_helpers/getters_helpers";
-import {
-  evaluateCell,
-  evaluateGrid,
-  restoreDefaultFunctions,
-  target,
-} from "../test_helpers/helpers";
+import { evaluateCell, evaluateGrid, restoreDefaultFunctions } from "../test_helpers/helpers";
 import resetAllMocks = jest.resetAllMocks;
 
 describe("evaluateCells", () => {
@@ -252,6 +243,14 @@ describe("evaluateCells", () => {
     expect(getCellError(model, "A1")).toBe("VLOOKUP evaluates to an out of bounds range.");
   });
 
+  test("error when expecting a boolean", () => {
+    const model = new Model();
+    setCellContent(model, "A1", '=NOT("1")');
+    expect(getCellError(model, "A1")).toBe(
+      "The function NOT expects a boolean value, but '1' is a text, and cannot be coerced to a boolean."
+    );
+  });
+
   test("Unknown function error", () => {
     const model = new Model();
     setCellContent(model, "A1", "=ThisIsNotARealFunction(A2)");
@@ -276,18 +275,20 @@ describe("evaluateCells", () => {
   ])("setting a format on an error cell keeps the error", (formula) => {
     const model = new Model();
     setCellContent(model, "A1", formula);
-    let cell = getEvaluatedCell(model, "A1") as ErrorCell;
-    const error = cell.error.message;
-    const value = cell.value;
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: [{ left: 0, top: 0, right: 0, bottom: 0 }],
-      format: "#,##0",
-    });
-    cell = getEvaluatedCell(model, "A1") as ErrorCell;
-    expect(cell.type).toBe(CellValueType.error);
-    expect(cell.error.message).toBe(error);
-    expect(cell.value).toBe(value);
+    const message = getCellError(model, "A1");
+    const value = getEvaluatedCell(model, "A1").value;
+    setFormat(model, "A1", "#,##0");
+    expect(getCellError(model, "A1")).toBe(message);
+    expect(getEvaluatedCell(model, "A1").value).toBe(value);
+  });
+
+  test("string representation of an error is stored as an error", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "#ERROR");
+    expect(getCell(model, "A1")?.content).toBe("#ERROR");
+    expect(getEvaluatedCell(model, "A1").type).toBe(CellValueType.error);
+    expect(getEvaluatedCell(model, "A1").value).toBe("#ERROR");
+    expect(getCellError(model, "A1")).toBeUndefined();
   });
 
   test("range", () => {
@@ -301,10 +302,9 @@ describe("evaluateCells", () => {
   test("Evaluate only existing cells from a range partially outside of sheet", () => {
     functionRegistry.add("RANGE.COUNT.FUNCTION", {
       description: "any function",
-      compute: ((range: Matrix<CellValue>) => range.flat().length) as ComputeFunction<
-        ArgValue,
-        CellValue
-      >,
+      compute: function (range) {
+        return toMatrix(range).flat().length;
+      },
       args: [{ name: "range", description: "", type: ["RANGE"], acceptMatrix: true }],
       returns: ["NUMBER"],
     });
@@ -325,12 +325,6 @@ describe("evaluateCells", () => {
     setCellContent(model, "A1", "=sum(AB1:AZ999)");
 
     expect(getEvaluatedCell(model, "A1").value).toBe(0);
-  });
-
-  test("=Range", () => {
-    const model = new Model();
-    setCellContent(model, "A1", "=A2:A3");
-    expect(getEvaluatedCell(model, "A1").value).toBe("#ERROR");
   });
 
   test("misc math formulas", () => {
@@ -1041,15 +1035,10 @@ describe("evaluateCells", () => {
 
   test("evaluate empty colored cell", () => {
     const model = new Model();
-    const sheetId = model.getters.getActiveSheetId();
     setCellContent(model, "A2", "=A1");
     expect(getEvaluatedCell(model, "A2").value).toBe(0);
-    model.dispatch("SET_FORMATTING", {
-      sheetId,
-      target: target("A1"),
-      style: {
-        fillColor: "#a7d08c",
-      },
+    setStyle(model, "A1", {
+      fillColor: "#B6D7A8",
     });
     setCellContent(model, "A12", "this re-evaluates cells");
     expect(getCellContent(model, "A2")).toBe("0");
@@ -1071,6 +1060,14 @@ describe("evaluateCells", () => {
     expect(getEvaluatedCell(model, "A3").value).toBe("old");
     setCellContent(model, "A1", "new");
     expect(getEvaluatedCell(model, "A3").value).toBe("new");
+  });
+
+  test("wrong range input can become valid", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "=ADD(B1:C1,1)");
+    expect(getEvaluatedCell(model, "A1").value).toBe("#ERROR");
+    deleteColumns(model, ["C"]);
+    expect(getEvaluatedCell(model, "A1").value).toBe(1);
   });
 
   test("Coherent handling of #REF when it occurs following a column deletion or a copy/paste", () => {
@@ -1253,18 +1250,38 @@ describe("evaluate formula getter", () => {
     functionRegistry.add("GETVALUE", {
       description: "Get value",
       compute: () => {
-        throw new Error(`Error${value}`);
+        throw new EvaluationError("Error" + value);
       },
       args: [],
       returns: ["ANY"],
     });
     setCellContent(model, "A1", "=GETVALUE()");
     expect(getEvaluatedCell(model, "A1").type).toBe(CellValueType.error);
-    expect((getEvaluatedCell(model, "A1") as ErrorCell).error.message).toBe("Error1");
+    expect((getEvaluatedCell(model, "A1") as ErrorCell).message).toBe("Error1");
     value = 2;
     model.dispatch("EVALUATE_CELLS");
     expect(getEvaluatedCell(model, "A1").type).toBe(CellValueType.error);
-    expect((getEvaluatedCell(model, "A1") as ErrorCell).error.message).toBe("Error2");
+    expect((getEvaluatedCell(model, "A1") as ErrorCell).message).toBe("Error2");
     functionRegistry.remove("GETVALUE");
+  });
+
+  test("return error message with function name placeholder", () => {
+    functionRegistry.add("GETERR", {
+      description: "Get error",
+      compute: () => {
+        return {
+          value: "#ERROR",
+          message: "Function [[FUNCTION_NAME]] failed",
+        };
+      },
+      args: [],
+      returns: ["ANY"],
+    });
+    setCellContent(model, "A1", "=GETERR()");
+    expect(getEvaluatedCell(model, "A1").type).toBe(CellValueType.error);
+    expect((getEvaluatedCell(model, "A1") as ErrorCell).message).toBe("Function GETERR failed");
+    setCellContent(model, "A1", "=SUM(GETERR())");
+    expect((getEvaluatedCell(model, "A1") as ErrorCell).message).toBe("Function GETERR failed");
+    functionRegistry.remove("GETERR");
   });
 });

@@ -14,22 +14,22 @@ export interface Locale {
 
 export const DEFAULT_LOCALES: Locale[] = [
   {
-    name: "English (US)",
-    code: "en_US",
-    thousandsSeparator: ",",
-    decimalSeparator: ".",
-    dateFormat: "m/d/yyyy",
-    timeFormat: "hh:mm:ss a",
-    formulaArgSeparator: ",",
-  },
-  {
-    name: "French",
+    name: "European",
     code: "fr_FR",
     thousandsSeparator: " ",
     decimalSeparator: ",",
     dateFormat: "dd/mm/yyyy",
     timeFormat: "hh:mm:ss",
     formulaArgSeparator: ";",
+  },
+  {
+    name: "American",
+    code: "en_US",
+    thousandsSeparator: ",",
+    decimalSeparator: ".",
+    dateFormat: "m/d/yyyy",
+    timeFormat: "hh:mm:ss a",
+    formulaArgSeparator: ",",
   },
 ];
 export const DEFAULT_LOCALE: Locale = DEFAULT_LOCALES[0];

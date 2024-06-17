@@ -3,6 +3,7 @@ import { CancelledReason } from "../../../..";
 import { DEFAULT_COLOR_SCALE_MIDPOINT_COLOR } from "../../../../constants";
 import { colorNumberString, rangeReference } from "../../../../helpers";
 import { canonicalizeCFRule } from "../../../../helpers/locale";
+import { cycleFixedReference } from "../../../../helpers/reference_type";
 import {
   CellIsRule,
   Color,
@@ -19,6 +20,8 @@ import { IconPicker } from "../../../icon_picker/icon_picker";
 import { ICONS, ICON_SETS } from "../../../icons/icons";
 import { SelectionInput } from "../../../selection_input/selection_input";
 import { CellIsOperators, CfTerms } from "../../../translations_terms";
+import { RoundColorPicker } from "../../components/round_color_picker/round_color_picker";
+import { Section } from "../../components/section/section";
 import { ConditionalFormatPreviewList } from "../cf_preview_list/cf_preview_list";
 export const enum CommandResult {
   Success = "Success",
@@ -332,11 +335,17 @@ interface State {
 
 export class ConditionalFormattingEditor extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-ConditionalFormattingEditor";
+  static props = {
+    editedCf: { type: Object, optional: true },
+    onExitEdition: Function,
+  };
   static components = {
     SelectionInput,
     IconPicker,
     ColorPickerWidget,
     ConditionalFormatPreviewList,
+    Section,
+    RoundColorPicker,
   };
 
   icons = ICONS;
@@ -515,11 +524,11 @@ export class ConditionalFormattingEditor extends Component<Props, SpreadsheetChi
   onKeydown(event: KeyboardEvent) {
     if (event.key === "F4") {
       const target = event.target as HTMLInputElement;
-      const update = this.env.model.getters.getCycledReference(
+      const update = cycleFixedReference(
         { start: target.selectionStart ?? 0, end: target.selectionEnd ?? 0 },
-        target.value
+        target.value,
+        this.env.model.getters.getLocale()
       );
-
       if (!update) {
         return;
       }
@@ -647,8 +656,3 @@ export class ConditionalFormattingEditor extends Component<Props, SpreadsheetChi
     this.state.rules.iconSet.icons[target] = icon;
   }
 }
-
-ConditionalFormattingEditor.props = {
-  editedCf: { type: Object, optional: true },
-  onExitEdition: Function,
-};

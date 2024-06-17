@@ -1,11 +1,9 @@
 <templates>
   <t t-name="o-spreadsheet-SettingsPanel">
     <div class="o-settings-panel">
-      <div class="o-section">
-        <div class="o-section-title">Locale</div>
-        <select
-          class="o-input o-type-selector"
-          t-on-change="(ev) => this.onLocaleChange(ev.target.value)">
+      <Section>
+        <t t-set-slot="title">Locale</t>
+        <select class="o-input" t-on-change="(ev) => this.onLocaleChange(ev.target.value)">
           <option
             t-foreach="supportedLocales"
             t-as="locale"
@@ -29,7 +27,7 @@
             <span t-esc="dateTimeFormatPreview"/>
           </div>
         </div>
-      </div>
+      </Section>
     </div>
   </t>
 </templates>

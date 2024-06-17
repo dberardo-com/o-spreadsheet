@@ -38,9 +38,7 @@ export interface EnrichedToken extends Token {
   functionContext?: FunctionContext;
 }
 
-
-export { compile } from "./compiler"
-// export { EnrichedToken }
+export { compile } from "./compiler";
 export * from "./helpers";
 export { parse } from "./parser";
 export { rangeTokenize } from "./range_tokenizer";

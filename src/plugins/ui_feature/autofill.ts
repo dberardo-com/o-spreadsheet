@@ -1,4 +1,12 @@
-import { clip, deepCopy, isInside, recomputeZones, toCartesian, toXC } from "../../helpers/index";
+import {
+  clip,
+  deepCopy,
+  isInside,
+  positionToZone,
+  recomputeZones,
+  toCartesian,
+  toXC,
+} from "../../helpers/index";
 import { autofillModifiersRegistry, autofillRulesRegistry } from "../../registries/index";
 import {
   AutofillData,
@@ -12,11 +20,11 @@ import {
   Getters,
   GridRenderingContext,
   HeaderIndex,
-  LAYERS,
   LocalCommand,
   Tooltip,
   Zone,
 } from "../../types/index";
+
 import { UIPlugin } from "../ui_plugin";
 
 /**
@@ -81,7 +89,7 @@ class AutofillGenerator {
  *
  */
 export class AutofillPlugin extends UIPlugin {
-  static layers = [LAYERS.Autofill];
+  static layers = ["Autofill"] as const;
   static getters = ["getAutofillTooltip"] as const;
 
   private autofillZone: Zone | undefined;
@@ -110,11 +118,6 @@ export class AutofillPlugin extends UIPlugin {
           return CommandResult.Success;
         }
         return CommandResult.InvalidAutofillSelection;
-      case "AUTOFILL_AUTO":
-        const zone = this.getters.getSelectedZone();
-        return zone.top === zone.bottom
-          ? CommandResult.Success
-          : CommandResult.CancelledForUnknownReason;
     }
     return CommandResult.Success;
   }
@@ -274,16 +277,35 @@ export class AutofillPlugin extends UIPlugin {
    * autofiller
    */
   private autofillAuto() {
+    const activePosition = this.getters.getActivePosition();
+
+    const table = this.getters.getTable(activePosition);
+    let autofillRow = table ? table.range.zone.bottom : this.getAutofillAutoLastRow();
+
+    // Stop autofill at the next non-empty cell
+    const selection = this.getters.getSelectedZone();
+    for (let row = selection.bottom + 1; row <= autofillRow; row++) {
+      if (this.getters.getEvaluatedCell({ ...activePosition, row }).type !== CellValueType.empty) {
+        autofillRow = row - 1;
+        break;
+      }
+    }
+
+    if (autofillRow > selection.bottom) {
+      this.select(activePosition.col, autofillRow);
+      this.autofill(true);
+    }
+  }
+
+  private getAutofillAutoLastRow() {
     const zone = this.getters.getSelectedZone();
     const sheetId = this.getters.getActiveSheetId();
     let col: HeaderIndex = zone.left;
     let row: HeaderIndex = zone.bottom;
+
     if (col > 0) {
       let leftPosition = { sheetId, col: col - 1, row };
-      while (
-        this.getters.getCorrespondingFormulaCell(leftPosition) ||
-        this.getters.getCell(leftPosition)?.content
-      ) {
+      while (this.getters.getEvaluatedCell(leftPosition).type !== CellValueType.empty) {
         row += 1;
         leftPosition = { sheetId, col: col - 1, row };
       }
@@ -292,19 +314,13 @@ export class AutofillPlugin extends UIPlugin {
       col = zone.right;
       if (col <= this.getters.getNumberCols(sheetId)) {
         let rightPosition = { sheetId, col: col + 1, row };
-        while (
-          this.getters.getCorrespondingFormulaCell(rightPosition) ||
-          this.getters.getCell(rightPosition)?.content
-        ) {
+        while (this.getters.getEvaluatedCell(rightPosition).type !== CellValueType.empty) {
           row += 1;
           rightPosition = { sheetId, col: col + 1, row };
         }
       }
     }
-    if (row !== zone.bottom) {
-      this.select(zone.left, row - 1);
-      this.autofill(true);
-    }
+    return row - 1;
   }
 
   /**
@@ -426,7 +442,7 @@ export class AutofillPlugin extends UIPlugin {
       }
     }
     const originMerge = this.getters.getMerge(originPosition);
-    if (originMerge?.topLeft.col === originCol && originMerge?.topLeft.row === originRow) {
+    if (originMerge?.left === originCol && originMerge?.top === originRow) {
       this.dispatch("ADD_MERGE", {
         sheetId,
         target: [
@@ -445,11 +461,16 @@ export class AutofillPlugin extends UIPlugin {
     const sheetId = this.getters.getActiveSheetId();
     const cfOrigin = this.getters.getRulesByCell(sheetId, originCol, originRow);
     for (const cf of cfOrigin) {
-      const newCfRanges = this.getters.getAdaptedCfRanges(sheetId, cf, [toXC(col, row)], []);
+      const newCfRanges = this.getters.getAdaptedCfRanges(
+        sheetId,
+        cf,
+        [positionToZone({ col, row })],
+        []
+      );
       if (newCfRanges) {
         this.dispatch("ADD_CONDITIONAL_FORMAT", {
           cf: deepCopy(cf),
-          ranges: newCfRanges.map((xc) => this.getters.getRangeDataFromXc(sheetId, xc)),
+          ranges: newCfRanges,
           sheetId,
         });
       }
@@ -464,11 +485,11 @@ export class AutofillPlugin extends UIPlugin {
       return;
     }
 
-    const dvRangesXcs = dvOrigin.ranges.map((range) => this.getters.getRangeString(range, sheetId));
-    const newDvRanges = recomputeZones(dvRangesXcs.concat(toXC(col, row)), []);
+    const dvRangesZones = dvOrigin.ranges.map((range) => range.zone);
+    const newDvRanges = recomputeZones(dvRangesZones.concat(positionToZone({ col, row })), []);
     this.dispatch("ADD_DATA_VALIDATION_RULE", {
       rule: dvOrigin,
-      ranges: newDvRanges.map((xc) => this.getters.getRangeDataFromXc(sheetId, xc)),
+      ranges: newDvRanges.map((zone) => this.getters.getRangeDataFromZone(sheetId, zone)),
       sheetId,
     });
   }
@@ -477,7 +498,7 @@ export class AutofillPlugin extends UIPlugin {
   // Grid rendering
   // ---------------------------------------------------------------------------
 
-  drawGrid(renderingContext: GridRenderingContext) {
+  drawLayer(renderingContext: GridRenderingContext) {
     if (!this.autofillZone) {
       return;
     }

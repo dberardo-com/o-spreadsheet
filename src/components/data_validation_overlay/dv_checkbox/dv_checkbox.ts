@@ -24,6 +24,9 @@ interface Props {
 
 export class DataValidationCheckbox extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-DataValidationCheckbox";
+  static props = {
+    cellPosition: Object,
+  };
 
   onCheckboxChange(ev: Event) {
     const newValue = (ev.target as HTMLInputElement).checked;
@@ -41,7 +44,3 @@ export class DataValidationCheckbox extends Component<Props, SpreadsheetChildEnv
     return this.env.model.getters.isReadonly() || !!cell?.isFormula;
   }
 }
-
-DataValidationCheckbox.props = {
-  cellPosition: Object,
-};

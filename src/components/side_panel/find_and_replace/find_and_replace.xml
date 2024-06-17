@@ -1,87 +1,111 @@
 <templates>
   <t t-name="o-spreadsheet-FindAndReplacePanel">
     <div class="o-find-and-replace">
-      <div class="o-section">
-        <div class="o-section-title">Search</div>
+      <Section>
+        <t t-set-slot="title">Search</t>
         <div class="o-input-search-container">
           <input
             type="text"
             t-ref="searchInput"
             class="o-input o-input-with-count"
-            t-on-input="onInput"
+            t-on-input="onSearchInput"
+            t-on-focus="onFocusSearch"
             t-on-keydown="onKeydownSearch"
           />
           <div class="o-input-count" t-if="hasSearchResult">
-            <t t-esc="env.model.getters.getCurrentSelectedMatchIndex()+1"/>
+            <t t-esc="store.selectedMatchIndex+1"/>
             /
-            <t t-esc="env.model.getters.getSearchMatches().length"/>
+            <t t-esc="store.searchMatches.length"/>
           </div>
-          <div t-elif="!pendingSearch and state.toSearch !== ''" class="o-input-count">0 / 0</div>
+          <div t-elif="!store.pendingSearch and store.toSearch !== ''" class="o-input-count">
+            0 / 0
+          </div>
+        </div>
+        <select
+          class="o-input o-type-selector o-type-range-selector mt-3 mb-3"
+          t-on-change="changeSearchScope">
+          <option value="allSheets">All sheets</option>
+          <option value="activeSheet">Current sheet</option>
+          <option value="specificRange">Specific range</option>
+        </select>
+        <div t-if="searchOptions.searchScope === 'specificRange'">
+          <SelectionInput
+            ranges="[this.state.dataRange]"
+            onSelectionChanged="(ranges) => this.onSearchRangeChanged(ranges)"
+            onSelectionConfirmed.bind="updateDataRange"
+            hasSingleRange="true"
+            required="true"
+          />
         </div>
         <div>
           <!-- TODO: go through this css, the group misses a padding and could profit from BootStrap -->
-          <label class="o-checkbox mt-1">
-            <input
-              t-model="state.searchOptions.matchCase"
-              t-on-change="updateSearch"
-              type="checkbox"
-            />
-            <span>Match case</span>
-          </label>
-          <label class="o-checkbox">
-            <input
-              t-model="state.searchOptions.exactMatch"
-              t-on-change="updateSearch"
-              type="checkbox"
-            />
-            <span>Match entire cell content</span>
-          </label>
-          <label class="o-checkbox">
-            <input
-              t-model="state.searchOptions.searchFormulas"
-              t-on-change="searchFormulas"
-              type="checkbox"
-            />
-            <span>Search in formulas</span>
-          </label>
+          <t t-set="matchCaseLabel">Match case</t>
+          <Checkbox
+            value="searchOptions.matchCase"
+            label="matchCaseLabel"
+            onChange.bind="searchMatchCase"
+          />
+          <t t-set="exactMatchLabel">Match entire cell content</t>
+          <Checkbox
+            value="searchOptions.exactMatch"
+            label="exactMatchLabel"
+            onChange.bind="searchExactMatch"
+          />
+          <t t-set="searchFormulasLabel">Search in formulas</t>
+          <Checkbox
+            value="searchOptions.searchFormulas"
+            label="searchFormulasLabel"
+            onChange.bind="searchFormulas"
+          />
         </div>
-      </div>
+        <div class="o-matches-count mt-4" t-if="store.toSearch !== ''">
+          <div t-if="searchOptions.searchScope === 'specificRange' and state.dataRange != ''">
+            <t t-esc="specificRangeMatchesCount"/>
+          </div>
+          <div>
+            <t t-esc="currentSheetMatchesCount"/>
+          </div>
+          <div>
+            <t t-esc="allSheetsMatchesCount"/>
+          </div>
+        </div>
+      </Section>
       <div class="o-sidePanelButtons">
         <button
           t-att-disabled="!hasSearchResult"
-          t-on-click="onSelectPreviousCell"
+          t-on-click="() => store.selectPreviousMatch()"
           class="o-button o-button-grey">
           Previous
         </button>
         <button
           t-att-disabled="!hasSearchResult"
-          t-on-click="onSelectNextCell"
+          t-on-click="() => store.selectNextMatch()"
           class="o-button o-button-grey">
           Next
         </button>
       </div>
-      <div class="o-section" t-if="!env.model.getters.isReadonly()">
-        <div class="o-section-title">Replace</div>
+      <Section t-if="!env.model.getters.isReadonly()">
+        <t t-set-slot="title">Replace</t>
         <div class="o-input-search-container">
           <input
             type="text"
             class="o-input o-input-without-count"
-            t-model="state.replaceWith"
             t-on-keydown="onKeydownReplace"
+            t-model="store.toReplace"
           />
         </div>
-      </div>
+      </Section>
 
       <div class="o-sidePanelButtons" t-if="!env.model.getters.isReadonly()">
         <button
-          t-att-disabled="env.model.getters.getCurrentSelectedMatchIndex() === null"
-          t-on-click="replace"
+          t-att-disabled="store.selectedMatchIndex === null"
+          t-on-click="() => store.replace()"
           class="o-button o-button-grey">
           Replace
         </button>
         <button
-          t-att-disabled="env.model.getters.getCurrentSelectedMatchIndex() === null"
-          t-on-click="replaceAll"
+          t-att-disabled="store.selectedMatchIndex === null"
+          t-on-click="() => store.replaceAll()"
           class="o-button o-button-grey">
           Replace all
         </button>

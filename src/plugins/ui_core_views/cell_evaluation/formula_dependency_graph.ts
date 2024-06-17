@@ -1,7 +1,8 @@
-import { JetSet } from "../../../helpers";
-import { futureRecomputeZones } from "../../../helpers/recompute_zones";
-import { UID, Zone } from "../../../types";
-import { PositionBitsEncoder, PositionId } from "./evaluator";
+import { positions, positionToZone } from "../../../helpers";
+import { recomputeZones } from "../../../helpers/recompute_zones";
+import { CellPosition, UID, Zone } from "../../../types";
+import { PositionMap } from "./position_map";
+import { PositionSet } from "./position_set";
 import { RTreeBoundingBox, RTreeItem, SpreadsheetRTree } from "./r_tree";
 
 /**
@@ -12,27 +13,30 @@ import { RTreeBoundingBox, RTreeItem, SpreadsheetRTree } from "./r_tree";
  * It uses an R-Tree data structure to efficiently find dependent cells.
  */
 export class FormulaDependencyGraph {
-  private readonly dependencies: Map<PositionId, RTreeItem<PositionId>[]> = new Map();
-  private readonly rTree: SpreadsheetRTree<PositionId>;
+  private readonly dependencies: PositionMap<RTreeItem<CellPosition>[]> = new PositionMap();
+  private readonly rTree: SpreadsheetRTree<CellPosition>;
 
-  constructor(private readonly encoder: PositionBitsEncoder, data: RTreeItem<PositionId>[] = []) {
+  constructor(
+    private readonly createEmptyPositionSet: () => PositionSet,
+    data: RTreeItem<CellPosition>[] = []
+  ) {
     this.rTree = new SpreadsheetRTree(data);
   }
 
-  removeAllDependencies(formulaPositionId: PositionId) {
-    const ranges = this.dependencies.get(formulaPositionId);
+  removeAllDependencies(formulaPosition: CellPosition) {
+    const ranges = this.dependencies.get(formulaPosition);
     if (!ranges) {
       return;
     }
     for (const range of ranges) {
       this.rTree.remove(range);
     }
-    this.dependencies.delete(formulaPositionId);
+    this.dependencies.delete(formulaPosition);
   }
 
-  addDependencies(formulaPositionId: PositionId, dependencies: RTreeBoundingBox[]): void {
+  addDependencies(formulaPosition: CellPosition, dependencies: RTreeBoundingBox[]): void {
     const rTreeItems = dependencies.map(({ sheetId, zone }) => ({
-      data: formulaPositionId,
+      data: formulaPosition,
       boundingBox: {
         zone,
         sheetId,
@@ -41,11 +45,11 @@ export class FormulaDependencyGraph {
     for (const item of rTreeItems) {
       this.rTree.insert(item);
     }
-    const existingDependencies = this.dependencies.get(formulaPositionId);
+    const existingDependencies = this.dependencies.get(formulaPosition);
     if (existingDependencies) {
       existingDependencies.push(...rTreeItems);
     } else {
-      this.dependencies.set(formulaPositionId, rTreeItems);
+      this.dependencies.set(formulaPosition, rTreeItems);
     }
   }
 
@@ -54,31 +58,35 @@ export class FormulaDependencyGraph {
    * in the correct order they should be evaluated.
    * This is called a topological ordering (excluding cycles)
    */
-  getCellsDependingOn(ranges: RTreeBoundingBox[]): Set<PositionId> {
-    const visited: JetSet<PositionId> = new JetSet<PositionId>();
+  getCellsDependingOn(ranges: RTreeBoundingBox[]): PositionSet {
+    const visited = this.createEmptyPositionSet();
     const queue: RTreeBoundingBox[] = Array.from(ranges).reverse();
-
     while (queue.length > 0) {
       const range = queue.pop()!;
-      visited.addMany(this.encoder.encodeBoundingBox(range));
+      visited.addMany(
+        positions(range.zone).map((position) => ({ sheetId: range.sheetId, ...position }))
+      );
 
-      const impactedPositionIds = this.rTree.search(range).map((dep) => dep.data);
+      const impactedPositions = this.rTree.search(range).map((dep) => dep.data);
       const nextInQueue: Record<UID, Zone[]> = {};
-      for (const positionId of impactedPositionIds) {
-        if (!visited.has(positionId)) {
-          const { sheetId, zone } = this.encoder.decodeToBoundingBox(positionId);
-          if (!nextInQueue[sheetId]) {
-            nextInQueue[sheetId] = [];
+      for (const position of impactedPositions) {
+        if (!visited.has(position)) {
+          if (!nextInQueue[position.sheetId]) {
+            nextInQueue[position.sheetId] = [];
           }
-          nextInQueue[sheetId].push(zone);
+          nextInQueue[position.sheetId].push(positionToZone(position));
         }
       }
       for (const sheetId in nextInQueue) {
-        const zones = futureRecomputeZones(nextInQueue[sheetId]);
+        const zones = recomputeZones(nextInQueue[sheetId], []);
         queue.push(...zones.map((zone) => ({ sheetId, zone })));
       }
     }
-    visited.deleteMany(ranges.flatMap((r) => this.encoder.encodeBoundingBox(r)));
+    visited.deleteMany(
+      ranges.flatMap((r) =>
+        positions(r.zone).map((position) => ({ sheetId: r.sheetId, ...position }))
+      )
+    );
     return visited;
   }
 }

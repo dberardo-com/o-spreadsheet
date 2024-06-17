@@ -1,6 +1,7 @@
 import { DEFAULT_STYLE } from "../../constants";
 import { Token, compile, tokenize } from "../../formulas";
-import { deepEquals } from "../../helpers";
+import { isEvaluationError, toString } from "../../functions/helpers";
+import { deepEquals, isExcelCompatible, recomputeZones } from "../../helpers";
 import { parseLiteral } from "../../helpers/cells";
 import {
   concat,
@@ -28,6 +29,7 @@ import {
   FormulaCell,
   HeaderIndex,
   LiteralCell,
+  PLAIN_TEXT_FORMAT,
   PositionDependentCommand,
   Range,
   RangeCompiledFormula,
@@ -57,10 +59,10 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
   static getters = [
     "zoneToXC",
     "getCells",
-    "getFormulaCellContent",
     "getTranslatedCellFormula",
     "getCellStyle",
     "getCellById",
+    "getFormulaMovedInSheet",
   ] as const;
   readonly nextId = 1;
   public readonly cells: { [sheetId: string]: { [id: string]: Cell } } = {};
@@ -139,6 +141,28 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
           format: "",
         });
         break;
+
+      case "DELETE_CONTENT":
+        this.clearZones(cmd.sheetId, cmd.target);
+        break;
+    }
+  }
+
+  private clearZones(sheetId: UID, zones: Zone[]) {
+    for (let zone of recomputeZones(zones)) {
+      for (let col = zone.left; col <= zone.right; col++) {
+        for (let row = zone.top; row <= zone.bottom; row++) {
+          const cell = this.getters.getCell({ sheetId, col, row });
+          if (cell) {
+            this.dispatch("UPDATE_CELL", {
+              sheetId: sheetId,
+              content: "",
+              col,
+              row,
+            });
+          }
+        }
+      }
     }
   }
 
@@ -146,7 +170,7 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
    * Set a format to all the cells in a zone
    */
   private setFormatter(sheetId: UID, zones: Zone[], format: Format) {
-    for (let zone of zones) {
+    for (let zone of recomputeZones(zones)) {
       for (let row = zone.top; row <= zone.bottom; row++) {
         for (let col = zone.left; col <= zone.right; col++) {
           this.dispatch("UPDATE_CELL", {
@@ -164,7 +188,7 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
    * Clear the styles and format of zones
    */
   private clearFormatting(sheetId: UID, zones: Zone[]) {
-    for (let zone of zones) {
+    for (let zone of recomputeZones(zones)) {
       for (let col = zone.left; col <= zone.right; col++) {
         for (let row = zone.top; row <= zone.bottom; row++) {
           // commandHelpers.updateCell(sheetId, col, row, { style: undefined});
@@ -263,6 +287,24 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
 
   exportForExcel(data: ExcelWorkbookData) {
     this.export(data);
+    const incompatible: string[] = [];
+    for (const formatId in data.formats || []) {
+      if (!isExcelCompatible(data.formats[formatId])) {
+        incompatible.push(formatId);
+        delete data.formats[formatId];
+      }
+    }
+    if (incompatible.length) {
+      for (const sheet of data.sheets) {
+        for (const xc in sheet.cells) {
+          const cell = sheet.cells[xc];
+          const format = cell?.format;
+          if (format && incompatible.includes(format.toString())) {
+            delete cell.format;
+          }
+        }
+      }
+    }
   }
 
   private removeDefaultStyleValues(style: Style | undefined): Style {
@@ -296,18 +338,17 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
   /*
    * Reconstructs the original formula string based on a normalized form and its dependencies
    */
-  getFormulaCellContent(
+  private getFormulaCellContent(
     sheetId: UID,
     compiledFormula: RangeCompiledFormula,
-    dependencies?: Range[],
+    dependencies: Range[],
     useFixedReference: boolean = false
   ): string {
-    const ranges = dependencies || compiledFormula.dependencies;
     let rangeIndex = 0;
     return concat(
       compiledFormula.tokens.map((token) => {
         if (token.type === "REFERENCE") {
-          const range = ranges[rangeIndex++];
+          const range = dependencies[rangeIndex++];
           return this.getters.getRangeString(range, sheetId, { useFixedReference });
         }
         return token.value;
@@ -331,6 +372,12 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
       sheetId
     );
     return this.getFormulaCellContent(sheetId, compiledFormula, adaptedDependencies);
+  }
+
+  getFormulaMovedInSheet(targetSheetId: UID, compiledFormula: RangeCompiledFormula) {
+    const dependencies = compiledFormula.dependencies;
+    const adaptedDependencies = this.getters.removeRangesSheetPrefix(targetSheetId, dependencies);
+    return this.getFormulaCellContent(targetSheetId, compiledFormula, adaptedDependencies);
   }
 
   getCellStyle(position: CellPosition): Style {
@@ -384,7 +431,7 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
   }
 
   private setStyle(sheetId: UID, target: Zone[], style: Style | undefined) {
-    for (let zone of target) {
+    for (let zone of recomputeZones(target)) {
       for (let col = zone.left; col <= zone.right; col++) {
         for (let row = zone.top; row <= zone.bottom; row++) {
           const cell = this.getters.getCell({ sheetId, col, row });
@@ -524,6 +571,10 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
     style: Style | undefined
   ): LiteralCell {
     const locale = this.getters.getLocale();
+    format = format || detectDateFormat(content, locale) || detectNumberFormat(content);
+    if (format !== PLAIN_TEXT_FORMAT && !isEvaluationError(content)) {
+      content = toString(parseLiteral(content, locale));
+    }
     return {
       id,
       content: parseLiteral(content, locale).toString(),
@@ -588,7 +639,7 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
     content: string,
     format: Format | undefined,
     style: Style | undefined,
-    error: unknown
+    error: Error
   ): FormulaCell {
     return {
       id,
@@ -639,7 +690,7 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
   }
 }
 
-class FormulaCellWithDependencies implements FormulaCell {
+export class FormulaCellWithDependencies implements FormulaCell {
   readonly isFormula = true;
   readonly compiledFormula: RangeCompiledFormula;
   constructor(
@@ -698,12 +749,10 @@ class RangeReferenceToken implements Token {
     private rangeIndex: number,
     private sheetId,
     private getRangeString: (range: Range, sheetId: UID) => string
-  ) { }
+  ) {}
 
   get value() {
-    // @ts-ignore
     const range = this.ranges[this.rangeIndex];
-    // @ts-ignore
     return this.getRangeString(range, this.sheetId);
   }
 }

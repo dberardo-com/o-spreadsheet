@@ -4,37 +4,38 @@ import { ChartPlugin } from "../plugins/core/chart";
 import { ConditionalFormatPlugin } from "../plugins/core/conditional_format";
 import { DataValidationPlugin } from "../plugins/core/data_validation";
 import { FigurePlugin } from "../plugins/core/figures";
-import { FiltersPlugin } from "../plugins/core/filters";
 import { HeaderGroupingPlugin } from "../plugins/core/header_grouping";
 import { HeaderSizePlugin } from "../plugins/core/header_size";
 import { HeaderVisibilityPlugin } from "../plugins/core/header_visibility";
 import { ImagePlugin } from "../plugins/core/image";
 import { MergePlugin } from "../plugins/core/merge";
+import { PivotCorePlugin } from "../plugins/core/pivot";
 import { RangeAdapter } from "../plugins/core/range";
 import { SettingsPlugin } from "../plugins/core/settings";
 import { SheetPlugin } from "../plugins/core/sheet";
+import { TableStylePlugin } from "../plugins/core/table_style";
+import { TablePlugin } from "../plugins/core/tables";
 import { EvaluationDataValidationPlugin } from "../plugins/ui_core_views";
 import { EvaluationPlugin } from "../plugins/ui_core_views/cell_evaluation";
 import { CustomColorsPlugin } from "../plugins/ui_core_views/custom_colors";
+import { DynamicTablesPlugin } from "../plugins/ui_core_views/dynamic_tables";
 import { EvaluationChartPlugin } from "../plugins/ui_core_views/evaluation_chart";
 import { EvaluationConditionalFormatPlugin } from "../plugins/ui_core_views/evaluation_conditional_format";
 import { HeaderSizeUIPlugin } from "../plugins/ui_core_views/header_sizes_ui";
+import { PivotUIPlugin } from "../plugins/ui_core_views/pivot_ui";
 import { AutofillPlugin } from "../plugins/ui_feature/autofill";
 import { AutomaticSumPlugin } from "../plugins/ui_feature/automatic_sum";
-import { CellPopoverPlugin } from "../plugins/ui_feature/cell_popovers";
+import { CellComputedStylePlugin } from "../plugins/ui_feature/cell_computed_style";
 import { CollaborativePlugin } from "../plugins/ui_feature/collaborative";
 import { FindAndReplacePlugin } from "../plugins/ui_feature/find_and_replace";
 import { HeaderVisibilityUIPlugin } from "../plugins/ui_feature/header_visibility_ui";
-import { HighlightPlugin } from "../plugins/ui_feature/highlight";
 import { HistoryPlugin } from "../plugins/ui_feature/local_history";
-import { RendererPlugin } from "../plugins/ui_feature/renderer";
-import { SelectionInputsManagerPlugin } from "../plugins/ui_feature/selection_inputs_manager";
 import { SortPlugin } from "../plugins/ui_feature/sort";
 import { SplitToColumnsPlugin } from "../plugins/ui_feature/split_to_columns";
+import { TableComputedStylePlugin } from "../plugins/ui_feature/table_computed_style";
 import { UIOptionsPlugin } from "../plugins/ui_feature/ui_options";
 import { SheetUIPlugin } from "../plugins/ui_feature/ui_sheet";
 import { ClipboardPlugin } from "../plugins/ui_stateful/clipboard";
-import { EditionPlugin } from "../plugins/ui_stateful/edition";
 import { FilterEvaluationPlugin } from "../plugins/ui_stateful/filter_evaluation";
 import { HeaderPositionsUIPlugin } from "../plugins/ui_stateful/header_positions";
 import { GridSelectionPlugin } from "../plugins/ui_stateful/selection";
@@ -107,10 +108,11 @@ export type CoreGetters = PluginGetters<typeof SheetPlugin> &
   PluginGetters<typeof FigurePlugin> &
   RangeAdapterGetters &
   PluginGetters<typeof ConditionalFormatPlugin> &
-  PluginGetters<typeof FiltersPlugin> &
+  PluginGetters<typeof TablePlugin> &
   PluginGetters<typeof SettingsPlugin> &
   PluginGetters<typeof HeaderGroupingPlugin> &
-  PluginGetters<typeof DataValidationPlugin>;
+  PluginGetters<typeof DataValidationPlugin> &
+  PluginGetters<typeof PivotCorePlugin>;
 
 export type Getters = {
   isReadonly: () => boolean;
@@ -120,26 +122,26 @@ export type Getters = {
   PluginGetters<typeof AutomaticSumPlugin> &
   PluginGetters<typeof HistoryPlugin> &
   PluginGetters<typeof ClipboardPlugin> &
-  PluginGetters<typeof EditionPlugin> &
   PluginGetters<typeof EvaluationPlugin> &
   PluginGetters<typeof EvaluationChartPlugin> &
   PluginGetters<typeof EvaluationConditionalFormatPlugin> &
   PluginGetters<typeof FindAndReplacePlugin> &
   PluginGetters<typeof HeaderVisibilityUIPlugin> &
-  PluginGetters<typeof HighlightPlugin> &
   PluginGetters<typeof CustomColorsPlugin> &
   PluginGetters<typeof AutomaticSumPlugin> &
-  PluginGetters<typeof RendererPlugin> &
   PluginGetters<typeof GridSelectionPlugin> &
-  PluginGetters<typeof SelectionInputsManagerPlugin> &
   PluginGetters<typeof CollaborativePlugin> &
   PluginGetters<typeof SortPlugin> &
   PluginGetters<typeof UIOptionsPlugin> &
   PluginGetters<typeof SheetUIPlugin> &
   PluginGetters<typeof SheetViewPlugin> &
-  PluginGetters<typeof CellPopoverPlugin> &
   PluginGetters<typeof FilterEvaluationPlugin> &
   PluginGetters<typeof SplitToColumnsPlugin> &
   PluginGetters<typeof HeaderSizeUIPlugin> &
   PluginGetters<typeof EvaluationDataValidationPlugin> &
-  PluginGetters<typeof HeaderPositionsUIPlugin>;
+  PluginGetters<typeof HeaderPositionsUIPlugin> &
+  PluginGetters<typeof TableStylePlugin> &
+  PluginGetters<typeof CellComputedStylePlugin> &
+  PluginGetters<typeof DynamicTablesPlugin> &
+  PluginGetters<typeof PivotUIPlugin> &
+  PluginGetters<typeof TableComputedStylePlugin>;

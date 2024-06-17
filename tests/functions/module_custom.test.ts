@@ -133,7 +133,7 @@ describe("FORMAT.LARGE.NUMBER formula", () => {
   test("Original currency format is kept", () => {
     const model = new Model();
     setCellContent(model, "A1", "100000");
-    setFormat(model, "#,##0[$€]", target("A1"));
+    setFormat(model, "A1", "#,##0[$€]");
     setCellContent(model, "A2", "=FORMAT.LARGE.NUMBER(A1)");
     expect(getCellContent(model, "A2")).toBe("100k€");
   });
@@ -164,7 +164,7 @@ describe("FORMAT.LARGE.NUMBER formula", () => {
   test("FORMAT.LARGE.NUMBER breaks with custom currency that have the same look as the unit", () => {
     const model = new Model();
 
-    setFormat(model, "#,##0[$k]", target("A1"));
+    setFormat(model, "A1", "#,##0[$k]");
     setCellContent(model, "A1", "5000000000");
     setCellContent(model, "A2", '=FORMAT.LARGE.NUMBER(A1, "m")');
     // should be "5,000mk" in a perfect world. But we cannot tell the difference between a custom currency and a unit in a format.

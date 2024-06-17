@@ -1,7 +1,7 @@
-import { Component, onMounted, onWillUnmount, xml } from "@odoo/owl";
+import { Component } from "@odoo/owl";
 import { Model } from "../../src";
 import { ConditionalFormattingPanel } from "../../src/components/side_panel/conditional_formatting/conditional_formatting";
-import { toZone } from "../../src/helpers";
+import { toHex, toZone } from "../../src/helpers";
 import { ConditionalFormatPlugin } from "../../src/plugins/core/conditional_format";
 import { CellIsRule, CommandResult, SpreadsheetChildEnv, UID } from "../../src/types";
 import {
@@ -12,12 +12,20 @@ import {
   setSelection,
   updateLocale,
 } from "../test_helpers/commands_helpers";
-import { click, dragElement, keyDown, setInputValueAndTrigger } from "../test_helpers/dom_helper";
+import {
+  click,
+  dragElement,
+  keyDown,
+  setInputValueAndTrigger,
+  triggerMouseEvent,
+  triggerWheelEvent,
+} from "../test_helpers/dom_helper";
 import {
   createColorScale,
   createEqualCF,
+  getHighlightsFromStore,
   getPlugin,
-  mountComponent,
+  mountComponentWithPortalTarget,
   mountSpreadsheet,
   nextTick,
   spyModelDispatch,
@@ -26,23 +34,6 @@ import {
 } from "../test_helpers/helpers";
 import { mockGetBoundingClientRect } from "../test_helpers/mock_helpers";
 import { FR_LOCALE } from "./../test_helpers/constants";
-
-interface ParentProps {
-  onCloseSidePanel: () => void;
-}
-
-class Parent extends Component<ParentProps, SpreadsheetChildEnv> {
-  static components = { ConditionalFormattingPanel };
-  static template = xml/*xml*/ `
-  <div class="o-spreadsheet">
-    <ConditionalFormattingPanel onCloseSidePanel="props.onCloseSidePanel"/>
-  </div>
-  `;
-  setup() {
-    onMounted(() => this.env.model.on("update", this, () => this.render(true)));
-    onWillUnmount(() => this.env.model.off("update", this));
-  }
-}
 
 function errorMessages(): string[] {
   return textContentAll(selectors.error);
@@ -81,15 +72,15 @@ const selectors = {
     range: ".o-cf-preview-range",
   },
   colorScaleEditor: {
-    minColor: ".o-threshold-minimum .o-color-picker-widget .o-color-picker-button",
+    minColor: ".o-threshold-minimum .o-round-color-picker-button",
     minType: ".o-threshold-minimum > select",
     minValue: ".o-threshold-minimum .o-threshold-value",
 
-    midColor: ".o-threshold-midpoint .o-color-picker-widget .o-color-picker-button",
+    midColor: ".o-threshold-midpoint .o-round-color-picker-button",
     midType: ".o-threshold-midpoint > select",
     midValue: ".o-threshold-midpoint .o-threshold-value",
 
-    maxColor: ".o-threshold-maximum .o-color-picker-widget .o-color-picker-button",
+    maxColor: ".o-threshold-maximum .o-round-color-picker-button",
     maxType: ".o-threshold-maximum > select",
     maxValue: ".o-threshold-maximum .o-threshold-value",
 
@@ -112,12 +103,14 @@ describe("UI of conditional formats", () => {
   let fixture: HTMLElement;
   let model: Model;
   let sheetId: UID;
+  let env: SpreadsheetChildEnv;
 
   mockGetBoundingClientRect({
-    "o-cf-preview": (el: HTMLElement) => ({
+    "o-cf-preview-container": (el: HTMLElement) => ({
       y:
-        model.getters.getConditionalFormats(sheetId).findIndex((cf) => cf.id === el.dataset.id) *
-        100,
+        model.getters
+          .getConditionalFormats(sheetId)
+          .findIndex((cf) => cf.id === (el.firstChild as HTMLElement).dataset.id) * 100,
       height: 100,
     }),
     "o-cf-preview-list": () => ({
@@ -127,7 +120,7 @@ describe("UI of conditional formats", () => {
   });
 
   beforeEach(async () => {
-    ({ model, fixture } = await mountComponent(Parent, {
+    ({ model, fixture, env } = await mountComponentWithPortalTarget(ConditionalFormattingPanel, {
       props: { onCloseSidePanel: () => {} },
     }));
     sheetId = model.getters.getActiveSheetId();
@@ -194,6 +187,21 @@ describe("UI of conditional formats", () => {
       );
     });
 
+    test("Ranges of hovered previews are highlighted", async () => {
+      expect(getHighlightsFromStore(env)).toEqual([]);
+      triggerMouseEvent(selectors.listPreview, "mouseenter");
+      expect(getHighlightsFromStore(env)).toMatchObject([{ zone: toZone("A1:A2") }]);
+      triggerMouseEvent(selectors.listPreview, "mouseleave");
+      expect(getHighlightsFromStore(env)).toEqual([]);
+    });
+
+    test("Highlights are removed when cf preview is unmounted", async () => {
+      triggerMouseEvent(selectors.listPreview, "mouseenter");
+      expect(getHighlightsFromStore(env)).not.toEqual([]);
+      await click(fixture.querySelectorAll(selectors.listPreview)[0]);
+      expect(getHighlightsFromStore(env)).toEqual([]);
+    });
+
     test("can edit an existing CellIsRule", async () => {
       await click(fixture.querySelectorAll(selectors.listPreview)[0]);
       await nextTick();
@@ -258,7 +266,7 @@ describe("UI of conditional formats", () => {
         cf: createEqualCF(
           "2",
           {
-            fillColor: "#FFA500",
+            fillColor: "#FF9900",
             textColor: "#ffff00",
             italic: true,
             bold: true,
@@ -277,8 +285,8 @@ describe("UI of conditional formats", () => {
       const previewLine = document.querySelector(".o-cf-preview-line")! as HTMLDivElement;
       const style = window.getComputedStyle(previewLine);
       expect(previewLine.textContent).toBe("Preview text");
-      expect(style.color).toBe("rgb(255, 255, 0)");
-      expect(style.backgroundColor).toBe("rgb(255, 165, 0)");
+      expect(toHex(style.color)).toBe("#FFFF00");
+      expect(toHex(style.backgroundColor)).toBe("#FF9900");
       expect(style.fontWeight).toBe("bold");
       expect(style.fontStyle).toBe("italic");
       expect(style.textDecoration).toBe("line-through");
@@ -438,7 +446,7 @@ describe("UI of conditional formats", () => {
       const previewEl = fixture.querySelector<HTMLElement>(`.o-cf-preview[data-id="1"]`)!;
       await dragElement(previewEl, { x: 0, y: 200 });
 
-      expect(previewEl.style.transition).toBe("top 0s");
+      expect(previewEl.parentElement!.style.transition).toBe("top 0s");
       model.dispatch("ADD_CONDITIONAL_FORMAT", {
         cf: createEqualCF("2", { bold: true, fillColor: "#ff0000" }, "99"),
         ranges: toRangesData(sheetId, "C1:C5"),
@@ -447,6 +455,31 @@ describe("UI of conditional formats", () => {
       await nextTick();
 
       expect(previewEl.style.transition).toBe("");
+    });
+
+    test("Drag & drop is not canceled on wheel event", async () => {
+      const previewEl = fixture.querySelector<HTMLElement>(`.o-cf-preview[data-id="1"]`)!;
+      await dragElement(previewEl, { x: 0, y: 200 });
+
+      expect(previewEl!.classList).toContain("o-cf-dragging");
+      triggerWheelEvent(previewEl, { deltaY: 100 });
+      await nextTick();
+
+      expect(previewEl!.classList).toContain("o-cf-dragging");
+    });
+
+    test("Drag & drop is canceled on right click", async () => {
+      let previewEl = fixture.querySelector<HTMLElement>(`.o-cf-preview[data-id="1"]`)!;
+      await dragElement(previewEl, { x: 0, y: 200 });
+
+      expect(previewEl!.classList).toContain("o-cf-dragging");
+      triggerMouseEvent(previewEl.parentElement, "pointermove", 0, 0, { button: 2 });
+      await nextTick();
+      expect(previewEl!.classList).not.toContain("o-cf-dragging");
+
+      triggerMouseEvent(previewEl.parentElement, "pointermove", 0, 200);
+      await nextTick();
+      expect(previewEl!.classList).not.toContain("o-cf-dragging");
     });
   });
 
@@ -1007,6 +1040,21 @@ describe("UI of conditional formats", () => {
     await click(fixture, selectors.buttonSave);
     expect(model.getters.getConditionalFormats(model.getters.getActiveSheetId())).toHaveLength(0);
     expect(errorMessages()).toEqual(["Invalid Maxpoint formula"]);
+  });
+
+  test("If there is no midpoint in a color scale, the input and color picker are invisible", async () => {
+    await click(fixture, selectors.buttonAdd);
+    await click(fixture.querySelectorAll(selectors.cfTabSelector)[1]);
+
+    expect(fixture.querySelector<HTMLInputElement>(selectors.colorScaleEditor.midType)?.value).toBe(
+      "none"
+    );
+    expect(fixture.querySelector(selectors.colorScaleEditor.midValue)?.classList).toContain(
+      "invisible"
+    );
+    expect(
+      fixture.querySelector(selectors.colorScaleEditor.midColor)?.parentElement?.classList
+    ).toContain("invisible");
   });
 
   describe("Icon set CF", () => {

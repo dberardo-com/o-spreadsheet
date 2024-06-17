@@ -1,4 +1,5 @@
 import { CommandResult } from "../../src";
+import { ComposerStore } from "../../src/components/composer/composer/composer_store";
 import {
   DEFAULT_CELL_HEIGHT,
   DEFAULT_CELL_WIDTH,
@@ -12,8 +13,8 @@ import {
   activateSheet,
   addColumns,
   addRows,
-  createFilter,
   createSheet,
+  createTable,
   deleteColumns,
   deleteRows,
   foldHeaderGroup,
@@ -41,9 +42,11 @@ import {
   unfreezeColumns,
   unfreezeRows,
   updateFilter,
+  updateTableZone,
 } from "../test_helpers/commands_helpers";
 import { getActiveSheetFullScrollInfo } from "../test_helpers/getters_helpers";
-import { getPlugin, target } from "../test_helpers/helpers";
+import { getPlugin } from "../test_helpers/helpers";
+import { makeStore } from "../test_helpers/stores";
 
 let model: Model;
 
@@ -68,6 +71,17 @@ function getSheetViewBoundaries(model): Zone {
 describe("Viewport of Simple sheet", () => {
   beforeEach(async () => {
     model = new Model();
+  });
+
+  test("SET_VIEWPORT_OFFSET is refused if it won't scroll any viewport", () => {
+    expect(setViewportOffset(model, 0, 0)).toBeCancelledBecause(
+      CommandResult.ViewportScrollLimitsReached
+    );
+
+    expect(setViewportOffset(model, 10, 10)).toBeSuccessfullyDispatched();
+    expect(setViewportOffset(model, 10, 10)).toBeCancelledBecause(
+      CommandResult.ViewportScrollLimitsReached
+    );
   });
 
   test("Select cell correctly affects offset", () => {
@@ -833,20 +847,21 @@ describe("Viewport of Simple sheet", () => {
 
   test("Viewport is updated when updating a data filter", () => {
     model = new Model();
-    createFilter(model, "A1:A10");
+    createTable(model, "A1:A10");
     setCellContent(model, "A2", "5");
     setCellContent(model, "A2", "5");
-    setCellContent(model, "A3", "5");
-    setCellContent(model, "A4", "5");
-    setCellContent(model, "A5", "5");
-    const oldViewport = { ...model.getters.getActiveMainViewport() };
+
+    const initialViewport = { ...model.getters.getActiveMainViewport() };
     updateFilter(model, "A1", ["5"]);
-    expect(model.getters.getActiveMainViewport()).not.toEqual(oldViewport);
+    expect(model.getters.getActiveMainViewport()).not.toEqual(initialViewport);
+
+    updateTableZone(model, "A1:A10", "B3:B10");
+    expect(model.getters.getActiveMainViewport()).toEqual(initialViewport);
   });
 
   test("Viewport is updated when updating a cell that change the evaluation of filtered rows", () => {
     model = new Model();
-    createFilter(model, "A1:A10");
+    createTable(model, "A1:A10");
     setCellContent(model, "A2", "=B1");
     setCellContent(model, "A2", "=B1");
     setCellContent(model, "A3", "=B1");
@@ -857,7 +872,7 @@ describe("Viewport of Simple sheet", () => {
     setCellContent(model, "B1", "5");
     expect(model.getters.getActiveMainViewport()).not.toEqual(oldViewport);
     oldViewport = { ...model.getters.getActiveMainViewport() };
-    setFormat(model, "0.00%", target("A5"));
+    setFormat(model, "A5", "0.00%");
     expect(model.getters.getActiveMainViewport()).not.toEqual(oldViewport);
   });
 
@@ -932,6 +947,20 @@ describe("Multi Panes viewport", () => {
   beforeEach(async () => {
     model = new Model();
   });
+
+  test("SET_VIEWPORT_OFFSET is refused if it won't scroll any viewport", () => {
+    freezeColumns(model, 4);
+    freezeRows(model, 5);
+    expect(setViewportOffset(model, 0, 0)).toBeCancelledBecause(
+      CommandResult.ViewportScrollLimitsReached
+    );
+
+    expect(setViewportOffset(model, 10, 10)).toBeSuccessfullyDispatched();
+    expect(setViewportOffset(model, 10, 10)).toBeCancelledBecause(
+      CommandResult.ViewportScrollLimitsReached
+    );
+  });
+
   test("Freezing row generates 2 panes", () => {
     const getPanesEntries = () => Object.keys(getPanes());
     expect(getPanesEntries()).toEqual(["bottomRight"]);
@@ -1077,7 +1106,7 @@ describe("Multi Panes viewport", () => {
     setCellContent(model, "A1", "Hi");
     setCellContent(model, "A2", "Hello");
 
-    createFilter(model, "A1:A3");
+    createTable(model, "A1:A3");
 
     updateFilter(model, "A1", ["Hello"]);
     expect(model.getters.isRowHidden(sheetId, 1)).toEqual(true);
@@ -1101,7 +1130,7 @@ describe("Multi Panes viewport", () => {
     setCellContent(model, "A2", "2808");
     setCellContent(model, "A3", "2808");
 
-    createFilter(model, "A1:A3");
+    createTable(model, "A1:A3");
     freezeRows(model, 2, sheetId);
 
     const originalActiveMainViewport = model.getters.getActiveMainViewport();
@@ -1234,34 +1263,18 @@ describe("shift viewport up/down", () => {
     expect(model.getters.getActiveMainViewport().top).toBe(0);
   });
 
-  test("RENAME move viewport not starting from the top", () => {
+  test.each([
+    [DEFAULT_CELL_HEIGHT * 3, 3],
+    [DEFAULT_CELL_HEIGHT * 3 + 1, 3],
+    [DEFAULT_CELL_HEIGHT * 3 - 1, 2],
+  ])("Move viewport not starting from the top", (scrollValue, expectedTop) => {
     selectCell(model, "A4");
     const { bottom } = model.getters.getActiveMainViewport();
-    setViewportOffset(model, 0, DEFAULT_CELL_HEIGHT * 3);
+    setViewportOffset(model, 0, scrollValue);
     model.dispatch("SHIFT_VIEWPORT_DOWN");
-    expect(model.getters.getActiveMainViewport().top).toBe(bottom + 3);
+    expect(model.getters.getActiveMainViewport().top).toBe(bottom + expectedTop);
     model.dispatch("SHIFT_VIEWPORT_UP");
-    expect(model.getters.getActiveMainViewport().top).toBe(3);
-  });
-
-  test("RENAME move viewport not starting from the top", () => {
-    selectCell(model, "A4");
-    const { bottom } = model.getters.getActiveMainViewport();
-    setViewportOffset(model, 0, DEFAULT_CELL_HEIGHT * 3 + 1);
-    model.dispatch("SHIFT_VIEWPORT_DOWN");
-    expect(model.getters.getActiveMainViewport().top).toBe(bottom + 3);
-    model.dispatch("SHIFT_VIEWPORT_UP");
-    expect(model.getters.getActiveMainViewport().top).toBe(3);
-  });
-
-  test("RENAME move viewport not starting from the top", () => {
-    selectCell(model, "A4");
-    const { bottom } = model.getters.getActiveMainViewport();
-    setViewportOffset(model, 0, DEFAULT_CELL_HEIGHT * 3 - 1);
-    model.dispatch("SHIFT_VIEWPORT_DOWN");
-    expect(model.getters.getActiveMainViewport().top).toBe(bottom + 2);
-    model.dispatch("SHIFT_VIEWPORT_UP");
-    expect(model.getters.getActiveMainViewport().top).toBe(2);
+    expect(model.getters.getActiveMainViewport().top).toBe(expectedTop);
   });
 
   test("move all the way down and up again", () => {
@@ -1492,6 +1505,7 @@ describe("shift viewport up/down", () => {
   );
 
   test("Ensure the cell is in the viewport when starting the edition of a cell", async () => {
+    const { store: composerStore, model } = makeStore(ComposerStore);
     model.dispatch("RESIZE_SHEETVIEW", {
       width: 100,
       height: 100,
@@ -1504,7 +1518,7 @@ describe("shift viewport up/down", () => {
     const { col, row } = model.getters.getActivePosition();
     model.dispatch("SET_VIEWPORT_OFFSET", { offsetX: 0, offsetY: 200 });
     expect(model.getters.isVisibleInViewport({ sheetId, col, row })).toBeFalsy();
-    model.dispatch("START_EDITION");
+    composerStore.startEdition();
     expect(model.getters.isVisibleInViewport({ sheetId, col, row })).toBeTruthy();
   });
 });

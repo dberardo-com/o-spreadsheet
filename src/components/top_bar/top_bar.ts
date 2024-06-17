@@ -6,10 +6,10 @@ import {
   useState,
 } from "@odoo/owl";
 import { Action, ActionSpec, createAction } from "../../actions/action";
+import * as ACTION_DATA from "../../actions/data_actions";
 import * as ACTION_EDIT from "../../actions/edit_actions";
 import * as ACTION_FORMAT from "../../actions/format_actions";
 import { setStyle } from "../../actions/menu_items_actions";
-import * as ACTION_VIEW from "../../actions/view_actions";
 import {
   BACKGROUND_HEADER_COLOR,
   BG_HOVER_COLOR,
@@ -17,20 +17,20 @@ import {
   SEPARATOR_COLOR,
   TOPBAR_TOOLBAR_HEIGHT,
 } from "../../constants";
-import { interactiveStopEdition } from "../../helpers/ui/stop_edition_interactive";
-import { ComposerSelection } from "../../plugins/ui_stateful/edition";
 import { formatNumberMenuItemSpec, topbarComponentRegistry } from "../../registries/index";
 import { topbarMenuRegistry } from "../../registries/menus/topbar_menu_registry";
+import { Store, useStore } from "../../store_engine";
 import { Color, Pixel, SpreadsheetChildEnv } from "../../types/index";
 import { ActionButton } from "../action_button/action_button";
 import { BorderEditorWidget } from "../border_editor/border_editor_widget";
 import { ColorPicker } from "../color_picker/color_picker";
 import { ColorPickerWidget } from "../color_picker/color_picker_widget";
+import { ComposerStore } from "../composer/composer/composer_store";
 import { TopBarComposer } from "../composer/top_bar_composer/top_bar_composer";
 import { FontSizeEditor } from "../font_size_editor/font_size_editor";
 import { css } from "../helpers/css";
 import { Menu, MenuState } from "../menu/menu";
-import { ComposerFocusType } from "../spreadsheet/spreadsheet";
+import { TableDropdownButton } from "../tables/table_dropdown_button/table_dropdown_button";
 import { PaintFormatButton } from "./../paint_format_button/paint_format_button";
 
 interface State {
@@ -42,8 +42,6 @@ interface State {
 
 interface Props {
   onClick: () => void;
-  focusComposer: Omit<ComposerFocusType, "cellFocus">;
-  onComposerContentFocused: (selection: ComposerSelection) => void;
   dropdownMaxHeight: Pixel;
 }
 
@@ -139,6 +137,10 @@ css/* scss */ `
 
 export class TopBar extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-TopBar";
+  static props = {
+    onClick: Function,
+    dropdownMaxHeight: Number,
+  };
   get dropdownStyle() {
     return `max-height:${this.props.dropdownMaxHeight}px`;
   }
@@ -151,6 +153,7 @@ export class TopBar extends Component<Props, SpreadsheetChildEnv> {
     ActionButton,
     PaintFormatButton,
     BorderEditorWidget,
+    TableDropdownButton,
   };
 
   state: State = useState({
@@ -164,11 +167,13 @@ export class TopBar extends Component<Props, SpreadsheetChildEnv> {
   menus: Action[] = [];
   EDIT = ACTION_EDIT;
   FORMAT = ACTION_FORMAT;
-  VIEW = ACTION_VIEW;
+  DATA = ACTION_DATA;
   formatNumberMenuItemSpec = formatNumberMenuItemSpec;
   isntToolbarMenu = false;
+  composerStore!: Store<ComposerStore>;
 
   setup() {
+    this.composerStore = useStore(ComposerStore);
     useExternalListener(window, "click", this.onExternalClick);
     onWillStart(() => this.updateCellState());
     onWillUpdateProps(() => this.updateCellState());
@@ -240,7 +245,7 @@ export class TopBar extends Component<Props, SpreadsheetChildEnv> {
     this.state.menuState.parentMenu = menu;
     this.isSelectingMenu = true;
     this.openedEl = ev.target as HTMLElement;
-    interactiveStopEdition(this.env);
+    this.composerStore.stopEdition();
   }
 
   closeMenus() {
@@ -267,10 +272,3 @@ export class TopBar extends Component<Props, SpreadsheetChildEnv> {
     this.onClick();
   }
 }
-
-TopBar.props = {
-  onClick: Function,
-  focusComposer: String,
-  onComposerContentFocused: Function,
-  dropdownMaxHeight: Number,
-};

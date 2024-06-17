@@ -28,16 +28,17 @@ import {
 import { StateObserver } from "./state_observer";
 import { _t } from "./translation";
 import { StateUpdateMessage, TransportService } from "./types/collaborative/transport_service";
-import { CommandTypes } from "./types/commands";
 import { FileStore } from "./types/files";
 import {
   canExecuteInReadonly,
   Client,
   ClientPosition,
+  Color,
   Command,
   CommandDispatcher,
   CommandHandler,
   CommandResult,
+  CommandTypes,
   CoreCommand,
   CoreGetters,
   Currency,
@@ -48,7 +49,7 @@ import {
   GridRenderingContext,
   InformationNotification,
   isCoreCommand,
-  LAYERS,
+  LayerName,
   LocalCommand,
   Locale,
   UID,
@@ -106,6 +107,7 @@ export interface ModelConfig {
   readonly snapshotRequested: boolean;
   readonly notifyUI: (payload: InformationNotification) => void;
   readonly raiseBlockingErrorUI: (text: string) => void;
+  readonly customColors: Color[];
 }
 
 export interface ModelExternalConfig {
@@ -147,7 +149,7 @@ export class Model extends EventBus<any> implements CommandDispatcher {
    * This list simply keeps the renderers+layer information so the drawing code
    * can just iterate on it
    */
-  private renderers: [UIPlugin, LAYERS][] = [];
+  private renderers: Partial<Record<LayerName, UIPlugin[]>> = {};
 
   /**
    * Internal status of the model. Important for command handling coordination
@@ -191,6 +193,8 @@ export class Model extends EventBus<any> implements CommandDispatcher {
     uuidGenerator: UuidGenerator = new UuidGenerator(),
     verboseImport = true
   ) {
+    const start = performance.now();
+    console.group("Model creation");
     super();
 
     stateUpdateMessages = repairInitialMessages(data, stateUpdateMessages);
@@ -215,6 +219,11 @@ export class Model extends EventBus<any> implements CommandDispatcher {
     this.coreGetters.getRangeDataFromZone = this.range.getRangeDataFromZone.bind(this.range);
     this.coreGetters.getRangeFromRangeData = this.range.getRangeFromRangeData.bind(this.range);
     this.coreGetters.getRangeFromZone = this.range.getRangeFromZone.bind(this.range);
+    this.coreGetters.recomputeRanges = this.range.recomputeRanges.bind(this.range);
+    this.coreGetters.isRangeValid = this.range.isRangeValid.bind(this.range);
+    this.coreGetters.extendRange = this.range.extendRange.bind(this.range);
+    this.coreGetters.getRangesUnion = this.range.getRangesUnion.bind(this.range);
+    this.coreGetters.removeRangesSheetPrefix = this.range.removeRangesSheetPrefix.bind(this.range);
 
     this.getters = {
       isReadonly: () => this.config.mode === "readonly" || this.config.mode === "dashboard",
@@ -275,12 +284,17 @@ export class Model extends EventBus<any> implements CommandDispatcher {
     this.joinSession();
 
     if (config.snapshotRequested) {
+      const startSnapshot = performance.now();
+      console.info("Snapshot requested");
       this.session.snapshot(this.exportData());
       this.garbageCollectExternalResources();
+      console.info("Snapshot taken in", performance.now() - startSnapshot, "ms");
     }
     // mark all models as "raw", so they will not be turned into reactive objects
     // by owl, since we do not rely on reactivity
     markRaw(this);
+    console.info("Model created in", performance.now() - start, "ms");
+    console.groupEnd();
   }
 
   joinSession() {
@@ -302,9 +316,12 @@ export class Model extends EventBus<any> implements CommandDispatcher {
       }
       this.getters[name] = plugin[name].bind(plugin);
     }
-    const layers = Plugin.layers.map((l) => [plugin, l] as [UIPlugin, LAYERS]);
-    this.renderers.push(...layers);
-    this.renderers.sort((p1, p2) => p1[1] - p2[1]);
+    for (const layer of Plugin.layers) {
+      if (!this.renderers[layer]) {
+        this.renderers[layer] = [];
+      }
+      this.renderers[layer]!.push(plugin);
+    }
     return plugin;
   }
 
@@ -397,6 +414,7 @@ export class Model extends EventBus<any> implements CommandDispatcher {
       snapshotRequested: false,
       notifyUI: (payload) => this.trigger("notify-ui", payload),
       raiseBlockingErrorUI: (text) => this.trigger("raise-error-ui", { text }),
+      customColors: config.customColors || [],
     };
   }
 
@@ -414,6 +432,7 @@ export class Model extends EventBus<any> implements CommandDispatcher {
       stateObserver: this.state,
       range: this.range,
       dispatch: this.dispatchFromCorePlugin,
+      canDispatch: this.canDispatch,
       uuidGenerator: this.uuidGenerator,
       custom: this.config.custom,
       external: this.config.external,
@@ -425,12 +444,14 @@ export class Model extends EventBus<any> implements CommandDispatcher {
       getters: this.getters,
       stateObserver: this.state,
       dispatch: this.dispatch,
+      canDispatch: this.canDispatch,
       selection: this.selection,
       moveClient: this.session.move.bind(this.session),
       custom: this.config.custom,
       uiActions: this.config,
       session: this.session,
       defaultCurrencyFormat: this.config.defaultCurrencyFormat,
+      customColors: this.config.customColors || [],
     };
   }
 
@@ -468,13 +489,14 @@ export class Model extends EventBus<any> implements CommandDispatcher {
       h.finalize();
     }
     this.status = Status.Ready;
+    this.trigger("command-finalized");
   }
 
   /**
    * Check if a command can be dispatched, and returns a DispatchResult object with the possible
    * reasons the dispatch failed.
    */
-  canDispatch: CommandDispatcher["canDispatch"] = (type: string, payload?: any) => {
+  canDispatch: CommandDispatcher["dispatch"] = (type: string, payload?: any) => {
     return this.checkDispatchAllowed(createCommand(type, payload));
   };
 
@@ -509,11 +531,16 @@ export class Model extends EventBus<any> implements CommandDispatcher {
         }
         this.status = Status.Running;
         const { changes, commands } = this.state.recordChanges(() => {
+          const start = performance.now();
           if (isCoreCommand(command)) {
             this.state.addCommand(command);
           }
           this.dispatchToHandlers(this.handlers, command);
           this.finalize();
+          const time = performance.now() - start;
+          if (time > 5) {
+            console.info(type, time, "ms");
+          }
         });
         this.session.save(command, commands, changes);
         this.status = Status.Ready;
@@ -572,6 +599,7 @@ export class Model extends EventBus<any> implements CommandDispatcher {
       }
       handler.handle(command);
     }
+    this.trigger("command-dispatched", command);
   }
 
   // ---------------------------------------------------------------------------
@@ -588,12 +616,14 @@ export class Model extends EventBus<any> implements CommandDispatcher {
    * context. This is probably the way we should do if we want to be able to
    * freeze a part of the grid (so, we would need to render different zones)
    */
-  drawGrid(context: GridRenderingContext) {
-    // we make sure here that the viewport is properly positioned: the offsets
-    // correspond exactly to a cell
-    for (let [renderer, layer] of this.renderers) {
+  drawLayer(context: GridRenderingContext, layer: LayerName) {
+    const renderers = this.renderers[layer];
+    if (!renderers) {
+      return;
+    }
+    for (const renderer of renderers) {
       context.ctx.save();
-      renderer.drawGrid(context, layer);
+      renderer.drawLayer(context, layer);
       context.ctx.restore();
     }
   }
@@ -619,9 +649,6 @@ export class Model extends EventBus<any> implements CommandDispatcher {
   }
 
   updateMode(mode: Mode) {
-    if (mode !== "normal") {
-      this.dispatch("CANCEL_EDITION");
-    }
     // @ts-ignore For testing purposes only
     this.config.mode = mode;
     this.trigger("update");

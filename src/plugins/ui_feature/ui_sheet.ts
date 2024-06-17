@@ -2,13 +2,15 @@ import { GRID_ICON_MARGIN, ICON_EDGE_LENGTH, PADDING_AUTORESIZE_HORIZONTAL } fro
 import {
   computeIconWidth,
   computeTextWidth,
+  isEqual,
   largeMax,
   positions,
+  range,
   splitTextToWidth,
 } from "../../helpers/index";
 import { localizeFormula } from "../../helpers/locale";
-import { Command, CommandResult, LocalCommand, UID } from "../../types";
-import { CellPosition, HeaderIndex, Pixel, Style } from "../../types/misc";
+import { CellValueType, Command, CommandResult, LocalCommand, UID } from "../../types";
+import { CellPosition, HeaderIndex, Pixel, Style, Zone } from "../../types/misc";
 import { UIPlugin } from "../ui_plugin";
 
 export class SheetUIPlugin extends UIPlugin {
@@ -18,6 +20,7 @@ export class SheetUIPlugin extends UIPlugin {
     "getTextWidth",
     "getCellText",
     "getCellMultiLineText",
+    "getContiguousZone",
   ] as const;
 
   private ctx = document.createElement("canvas").getContext("2d")!;
@@ -127,9 +130,54 @@ export class SheetUIPlugin extends UIPlugin {
     return isFilterHeader || hasListIcon;
   }
 
-  // ---------------------------------------------------------------------------
-  // Grid manipulation
-  // ---------------------------------------------------------------------------
+  /**
+   * Expands the given zone until bordered by empty cells or reached the sheet boundaries.
+   */
+  getContiguousZone(sheetId: UID, zoneToExpand: Zone): Zone {
+    /** Try to expand the zone by one col/row in any direction to include a new non-empty cell */
+    const expandZone = (zone: Zone): Zone => {
+      for (const col of range(zone.left, zone.right + 1)) {
+        if (!this.isCellEmpty({ sheetId, col, row: zone.top - 1 })) {
+          return { ...zone, top: zone.top - 1 };
+        }
+        if (!this.isCellEmpty({ sheetId, col, row: zone.bottom + 1 })) {
+          return { ...zone, bottom: zone.bottom + 1 };
+        }
+      }
+      for (const row of range(zone.top, zone.bottom + 1)) {
+        if (!this.isCellEmpty({ sheetId, col: zone.left - 1, row })) {
+          return { ...zone, left: zone.left - 1 };
+        }
+        if (!this.isCellEmpty({ sheetId, col: zone.right + 1, row })) {
+          return { ...zone, right: zone.right + 1 };
+        }
+      }
+      return zone;
+    };
+
+    let hasExpanded = false;
+    let zone = zoneToExpand;
+    do {
+      hasExpanded = false;
+      const newZone = expandZone(zone);
+      if (!isEqual(zone, newZone)) {
+        hasExpanded = true;
+        zone = newZone;
+        continue;
+      }
+    } while (hasExpanded);
+
+    return zone;
+  }
+
+  /**
+   * Checks if a cell is empty (i.e. does not have a content or a formula does not spread over it).
+   * If the cell is part of a merge, the check applies to the main cell of the merge.
+   */
+  private isCellEmpty(position: CellPosition): boolean {
+    const mainPosition = this.getters.getMainCellPosition(position);
+    return this.getters.getEvaluatedCell(mainPosition).type === CellValueType.empty;
+  }
 
   private getColMaxWidth(sheetId: UID, index: HeaderIndex): number {
     const cellsPositions = positions(this.getters.getColsZone(sheetId, index, index));

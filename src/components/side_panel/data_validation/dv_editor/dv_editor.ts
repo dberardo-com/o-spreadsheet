@@ -13,6 +13,7 @@ import {
 } from "../../../../types";
 import { css } from "../../../helpers";
 import { SelectionInput } from "../../../selection_input/selection_input";
+import { Section } from "../../components/section/section";
 import { SelectMenu } from "../../select_menu/select_menu";
 import {
   dataValidationPanelCriteriaRegistry,
@@ -29,6 +30,7 @@ css/* scss */ `
 interface Props {
   rule: DataValidationRule | undefined;
   onExit: () => void;
+  onCloseSidePanel?: () => void;
 }
 
 interface State {
@@ -37,7 +39,12 @@ interface State {
 
 export class DataValidationEditor extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-DataValidationEditor";
-  static components = { SelectionInput, SelectMenu };
+  static components = { SelectionInput, SelectMenu, Section };
+  static props = {
+    rule: { type: Object, optional: true },
+    onExit: Function,
+    onCloseSidePanel: { type: Function, optional: true },
+  };
 
   state = useState<State>({ rule: this.defaultDataValidationRule });
 
@@ -132,8 +139,3 @@ export class DataValidationEditor extends Component<Props, SpreadsheetChildEnv> 
     return dataValidationPanelCriteriaRegistry.get(this.state.rule.criterion.type).component;
   }
 }
-
-DataValidationEditor.props = {
-  rule: { type: Object, optional: true },
-  onExit: Function,
-};

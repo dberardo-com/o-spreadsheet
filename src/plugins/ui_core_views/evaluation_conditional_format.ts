@@ -1,4 +1,3 @@
-import { LINK_COLOR } from "../../constants";
 import { compile } from "../../formulas";
 import { parseLiteral } from "../../helpers/cells";
 import { colorNumberString, percentile } from "../../helpers/index";
@@ -25,13 +24,13 @@ import {
   isMatrix,
 } from "../../types/index";
 import { UIPlugin } from "../ui_plugin";
-import { CoreViewCommand } from "./../../types/commands";
+import { CoreViewCommand, invalidateEvaluationCommands } from "./../../types/commands";
 
 type ComputedStyles = { [col: HeaderIndex]: (Style | undefined)[] };
 type ComputedIcons = { [col: HeaderIndex]: (string | undefined)[] };
 
 export class EvaluationConditionalFormatPlugin extends UIPlugin {
-  static getters = ["getConditionalIcon", "getCellComputedStyle"] as const;
+  static getters = ["getConditionalIcon", "getCellConditionalFormatStyle"] as const;
   private isStale: boolean = true;
   // stores the computed styles in the format of computedStyles.sheetName[col][row] = Style
   private computedStyles: { [sheet: string]: Lazy<ComputedStyles> } = {};
@@ -43,8 +42,9 @@ export class EvaluationConditionalFormatPlugin extends UIPlugin {
 
   handle(cmd: CoreViewCommand) {
     if (
+      invalidateEvaluationCommands.has(cmd.type) ||
       invalidateCFEvaluationCommands.has(cmd.type) ||
-      (cmd.type === "UPDATE_CELL" && "content" in cmd)
+      (cmd.type === "UPDATE_CELL" && ("content" in cmd || "format" in cmd))
     ) {
       this.isStale = true;
     }
@@ -64,25 +64,10 @@ export class EvaluationConditionalFormatPlugin extends UIPlugin {
   // Getters
   // ---------------------------------------------------------------------------
 
-  getCellComputedStyle(position: CellPosition): Style {
-    // TODO move this getter out of CF: it also depends on filters and link
+  getCellConditionalFormatStyle(position: CellPosition): Style | undefined {
     const { sheetId, col, row } = position;
-    const cell = this.getters.getCell(position);
     const styles = this.computedStyles[sheetId]();
-    const cfStyle = styles && styles[col]?.[row];
-    const computedStyle = {
-      ...cell?.style,
-      ...cfStyle,
-    };
-    const evaluatedCell = this.getters.getEvaluatedCell(position);
-    if (evaluatedCell.link && !computedStyle.textColor) {
-      computedStyle.textColor = LINK_COLOR;
-    }
-
-    if (this.getters.isFilterHeader(position)) {
-      computedStyle.bold = true;
-    }
-    return computedStyle;
+    return styles && styles[col]?.[row];
   }
 
   getConditionalIcon({ sheetId, col, row }: CellPosition): string | undefined {
@@ -407,7 +392,7 @@ export class EvaluationConditionalFormatPlugin extends UIPlugin {
       if (cell.type === CellValueType.error) {
         return false;
       }
-      const [value0, value1] = rule.values.map((val) => {
+      let [value0, value1] = rule.values.map((val) => {
         if (val.startsWith("=")) {
           return this.getters.evaluateFormula(target.sheetId, val) ?? "";
         }
@@ -417,47 +402,50 @@ export class EvaluationConditionalFormatPlugin extends UIPlugin {
         return false;
       }
 
+      const cellValue = cell.value ?? "";
+      value0 = value0 ?? "";
+      value1 = value1 ?? "";
       switch (rule.operator) {
         case "IsEmpty":
-          return cell.value.toString().trim() === "";
+          return cellValue.toString().trim() === "";
         case "IsNotEmpty":
-          return cell.value.toString().trim() !== "";
+          return cellValue.toString().trim() !== "";
         case "BeginsWith":
           if (value0 === "") {
             return false;
           }
-          return cell.value.toString().startsWith(value0.toString());
+          return cellValue.toString().startsWith(value0.toString());
         case "EndsWith":
           if (value0 === "") {
             return false;
           }
-          return cell.value.toString().endsWith(value0.toString());
+          return cellValue.toString().endsWith(value0.toString());
         case "Between":
-          return cell.value >= value0 && cell.value <= value1;
+          return cellValue >= value0 && cellValue <= value1;
         case "NotBetween":
-          return !(cell.value >= value0 && cell.value <= value1);
+          return !(cellValue >= value0 && cellValue <= value1);
         case "ContainsText":
-          return cell.value.toString().indexOf(value0.toString()) > -1;
+          return cellValue.toString().indexOf(value0.toString()) > -1;
         case "NotContains":
-          return !cell.value || cell.value.toString().indexOf(value0.toString()) === -1;
+          return !cellValue || cellValue.toString().indexOf(value0.toString()) === -1;
         case "GreaterThan":
-          return cell.value > value0;
+          return cellValue > value0;
         case "GreaterThanOrEqual":
-          return cell.value >= value0;
+          return cellValue >= value0;
         case "LessThan":
-          return cell.value < value0;
+          return cellValue < value0;
         case "LessThanOrEqual":
-          return cell.value <= value0;
+          return cellValue <= value0;
         case "NotEqual":
           if (value0 === "") {
             return false;
           }
-          return cell.value !== value0;
+          return cellValue !== value0;
         case "Equal":
           if (value0 === "") {
             return true;
           }
-          return cell.value === value0;
+          return cellValue === value0;
         default:
           console.warn(
             _t(

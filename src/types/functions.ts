@@ -1,7 +1,8 @@
 import { CellValue } from "./cells";
-import { Format } from "./format";
+import { Getters } from "./getters";
 import { Locale } from "./locale";
-import { Arg, ArgValue, Matrix, ValueAndFormat } from "./misc";
+import { Arg, CellPosition, FPayload, Matrix, UID } from "./misc";
+import { Range } from "./range";
 
 export type ArgType =
   | "ANY"
@@ -19,9 +20,9 @@ export type ArgType =
 
 export interface ArgDefinition {
   acceptMatrix?: boolean;
+  acceptMatrixOnly?: boolean;
   repeating?: boolean;
   optional?: boolean;
-  lazy?: boolean;
   description: string;
   name: string;
   type: ArgType[];
@@ -29,33 +30,17 @@ export interface ArgDefinition {
   defaultValue?: any;
 }
 
-export type ComputeFunctionArg<T> = T | (() => T);
-export type ComputeFunction<T, R> = (this: EvalContext, ...args: ComputeFunctionArg<T>[]) => R;
+export type ComputeFunction<R> = (this: EvalContext, ...args: Arg[]) => R;
 
-interface AddFunctionDescriptionBase {
+export interface AddFunctionDescription {
+  compute: ComputeFunction<FPayload | Matrix<FPayload> | CellValue | Matrix<CellValue>>;
   description: string;
   category?: string;
   args: ArgDefinition[];
-  returns: [ArgType];
+  returns: ArgType[];
   isExported?: boolean;
   hidden?: boolean;
 }
-
-interface ComputeValue {
-  compute: ComputeFunction<ArgValue, CellValue | Matrix<CellValue>>;
-}
-
-interface ComputeFormat {
-  computeFormat: ComputeFunction<Arg, Format | undefined | Matrix<Format | undefined>>;
-}
-
-interface ComputeValueAndFormat {
-  computeValueAndFormat: ComputeFunction<Arg, Matrix<ValueAndFormat> | ValueAndFormat>;
-}
-
-export type AddFunctionDescription =
-  | (AddFunctionDescriptionBase & ComputeValue & Partial<ComputeFormat>)
-  | (AddFunctionDescriptionBase & ComputeValueAndFormat);
 
 export type FunctionDescription = AddFunctionDescription & {
   minArgRequired: number;
@@ -65,8 +50,11 @@ export type FunctionDescription = AddFunctionDescription & {
 };
 
 export type EvalContext = {
-  __lastFnCalled?: string;
-  __originCellXC?: () => string;
+  __originSheetId: UID;
+  __originCellXC: () => string | undefined;
   locale: Locale;
+  getters: Getters;
   [key: string]: any;
+  updateDependencies?: (position: CellPosition) => void;
+  addDependencies?: (position: CellPosition, ranges: Range[]) => void;
 };

@@ -1,14 +1,15 @@
-import { Model } from "../../src";
-import { FONT_SIZES } from "../../src/constants";
-import { functionRegistry } from "../../src/functions";
-import { zoneToXc } from "../../src/helpers";
-import { interactivePaste } from "../../src/helpers/ui/paste_interactive";
-import { colMenuRegistry, rowMenuRegistry, topbarMenuRegistry } from "../../src/registries/index";
+import { toUnboundedZone, toZone, zoneToXc } from "../../src/helpers";
+import {
+  cellMenuRegistry,
+  colMenuRegistry,
+  rowMenuRegistry,
+  topbarMenuRegistry,
+} from "../../src/registries/index";
 import { SpreadsheetChildEnv, UID } from "../../src/types";
-import { DEFAULT_LOCALES } from "../../src/types/locale";
 import {
   copy,
-  createFilter,
+  createDynamicTable,
+  createTable,
   foldHeaderGroup,
   freezeColumns,
   freezeRows,
@@ -23,15 +24,17 @@ import {
   selectRow,
   setAnchorCorner,
   setCellContent,
+  setFormat,
   setSelection,
   setStyle,
   updateLocale,
+  updateTableConfig,
 } from "../test_helpers/commands_helpers";
-import { FR_LOCALE } from "../test_helpers/constants";
 import { getCell, getCellContent, getEvaluatedCell } from "../test_helpers/getters_helpers";
 import {
   clearFunctions,
   doAction,
+  getDataValidationRules,
   getName,
   getNode,
   makeTestEnv,
@@ -40,6 +43,15 @@ import {
   spyModelDispatch,
   target,
 } from "../test_helpers/helpers";
+
+import { Model } from "../../src";
+import { ComposerStore } from "../../src/components/composer/composer/composer_store";
+import { FONT_SIZES } from "../../src/constants";
+import { functionRegistry } from "../../src/functions";
+import { interactivePaste } from "../../src/helpers/ui/paste_interactive";
+import { DEFAULT_LOCALES } from "../../src/types/locale";
+import { FR_LOCALE } from "../test_helpers/constants";
+
 jest.mock("../../src/helpers/uuid", () => require("../__mocks__/uuid"));
 
 describe("Menu Item Registry", () => {
@@ -200,12 +212,12 @@ describe("Menu Item actions", () => {
 
   test("Edit -> paste_special should be hidden after a CUT ", () => {
     model.dispatch("CUT");
-    expect(getNode(["edit", "paste_special"]).isVisible(env)).toBeFalsy();
+    expect(getNode(["edit", "paste_special"], env).isVisible(env)).toBeFalsy();
   });
 
   test("Edit -> paste_special should not be hidden after a COPY ", () => {
     copy(model, env.model.getters.getSelectedZones().map(zoneToXc).join(","));
-    expect(getNode(["edit", "paste_special"]).isVisible(env)).toBeTruthy();
+    expect(getNode(["edit", "paste_special"], env).isVisible(env)).toBeTruthy();
   });
 
   test("Edit -> paste_special -> paste_special_value", async () => {
@@ -213,7 +225,7 @@ describe("Menu Item actions", () => {
     await doAction(["edit", "paste_special", "paste_special_value"], env);
     expect(dispatch).toHaveBeenCalledWith("PASTE", {
       target: env.model.getters.getSelectedZones(),
-      pasteOption: "onlyValue",
+      pasteOption: "asValue",
     });
   });
 
@@ -224,7 +236,7 @@ describe("Menu Item actions", () => {
     expect(dispatch).toHaveBeenCalledWith("PASTE_FROM_OS_CLIPBOARD", {
       target: target("A1"),
       text,
-      pasteOption: "onlyValue",
+      pasteOption: "asValue",
     });
   });
 
@@ -313,7 +325,18 @@ describe("Menu Item actions", () => {
       selectRow(model, 4, "newAnchor");
       selectRow(model, lastRow, "updateAnchor");
 
-      expect(getNode(path).isVisible(env)).toBeFalsy();
+      expect(getNode(path, env).isVisible(env)).toBeFalsy();
+    });
+
+    test("Delete row option unavailable when selecting all rows with folded row grouping", () => {
+      const lastRow = model.getters.getNumberRows(sheetId) - 1;
+
+      groupHeaders(model, "ROW", 0, 2, sheetId);
+      foldHeaderGroup(model, "ROW", 0, 2, sheetId);
+
+      selectRow(model, 3, "newAnchor");
+      selectRow(model, lastRow, "updateAnchor");
+      expect(getNode(path, env).isVisible(env)).toBeFalsy();
     });
 
     test("Delete row option unavailable when selecting all rows with folded row grouping", () => {
@@ -397,7 +420,7 @@ describe("Menu Item actions", () => {
       selectColumn(model, 3, "newAnchor");
       selectColumn(model, lastColumn, "updateAnchor");
 
-      expect(getNode(path).isVisible(env)).toBeFalsy();
+      expect(getNode(path, env).isVisible(env)).toBeFalsy();
     });
   });
 
@@ -407,7 +430,7 @@ describe("Menu Item actions", () => {
     test("A selected row", () => {
       selectRow(model, 4, "overrideSelection");
       expect(getName(insertRowBeforePath, env)).toBe("Row above");
-      expect(getNode(insertRowBeforePath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertRowBeforePath, env).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple consecutive selected rows", () => {
@@ -422,24 +445,24 @@ describe("Menu Item actions", () => {
         quantity: 2,
         position: "before",
       });
-      expect(getNode(insertRowBeforePath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertRowBeforePath, env).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple inconsecutive selected rows", () => {
       selectRow(model, 4, "overrideSelection");
       selectRow(model, 6, "newAnchor");
-      expect(getNode(insertRowBeforePath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertRowBeforePath, env).isVisible(env)).toBeFalsy();
     });
 
     test("A selected column should hide the item", () => {
       selectColumn(model, 4, "overrideSelection");
-      expect(getNode(insertRowBeforePath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertRowBeforePath, env).isVisible(env)).toBeFalsy();
     });
 
     test("A selected cell", () => {
       selectCell(model, "D4");
       expect(getName(insertRowBeforePath, env)).toBe("Row above");
-      expect(getNode(insertRowBeforePath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertRowBeforePath, env).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple selected cells", () => {
@@ -454,7 +477,7 @@ describe("Menu Item actions", () => {
         quantity: 2,
         position: "before",
       });
-      expect(getNode(insertRowBeforePath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertRowBeforePath, env).isVisible(env)).toBeTruthy();
     });
   });
 
@@ -464,7 +487,7 @@ describe("Menu Item actions", () => {
     test("A selected row", () => {
       selectRow(model, 4, "overrideSelection");
       expect(getName(addRowBeforePath, env, rowMenuRegistry)).toBe("Insert row above");
-      expect(getNode(addRowBeforePath, rowMenuRegistry).isVisible(env)).toBeTruthy();
+      expect(getNode(addRowBeforePath, env, rowMenuRegistry).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple consecutive selected rows", () => {
@@ -479,13 +502,18 @@ describe("Menu Item actions", () => {
         quantity: 2,
         position: "before",
       });
-      expect(getNode(addRowBeforePath, rowMenuRegistry).isVisible(env)).toBeTruthy();
+      expect(getNode(addRowBeforePath, env, rowMenuRegistry).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple inconsecutive selected rows", () => {
       selectRow(model, 4, "overrideSelection");
       selectRow(model, 6, "newAnchor");
-      expect(getNode(addRowBeforePath, rowMenuRegistry).isVisible(env)).toBeFalsy();
+      expect(getNode(addRowBeforePath, env, rowMenuRegistry).isVisible(env)).toBeFalsy();
+    });
+
+    test("Full sheet selected", () => {
+      selectAll(model);
+      expect(getNode(addRowBeforePath, env, rowMenuRegistry).isVisible(env)).toBeTruthy();
     });
 
     test("Full sheet selected", () => {
@@ -500,7 +528,7 @@ describe("Menu Item actions", () => {
     test("A selected row", () => {
       selectRow(model, 4, "overrideSelection");
       expect(getName(insertRowAfterPath, env)).toBe("Row below");
-      expect(getNode(insertRowAfterPath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertRowAfterPath, env).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple consecutive selected rows", () => {
@@ -515,24 +543,24 @@ describe("Menu Item actions", () => {
         quantity: 2,
         position: "after",
       });
-      expect(getNode(insertRowAfterPath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertRowAfterPath, env).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple inconsecutive selected rows", () => {
       selectRow(model, 4, "overrideSelection");
       selectRow(model, 6, "newAnchor");
-      expect(getNode(insertRowAfterPath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertRowAfterPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("A selected column should hide the item", () => {
       selectColumn(model, 4, "overrideSelection");
-      expect(getNode(insertRowAfterPath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertRowAfterPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("A selected cell", () => {
       selectCell(model, "D4");
       expect(getName(insertRowAfterPath, env)).toBe("Row below");
-      expect(getNode(insertRowAfterPath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertRowAfterPath, env).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple selected cells", () => {
@@ -547,7 +575,7 @@ describe("Menu Item actions", () => {
         quantity: 2,
         position: "after",
       });
-      expect(getNode(insertRowAfterPath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertRowAfterPath, env).isVisible(env)).toBeTruthy();
     });
   });
 
@@ -557,7 +585,7 @@ describe("Menu Item actions", () => {
     test("A selected row", () => {
       selectRow(model, 4, "overrideSelection");
       expect(getName(addRowAfterPath, env, rowMenuRegistry)).toBe("Insert row below");
-      expect(getNode(addRowAfterPath, rowMenuRegistry).isVisible(env)).toBeTruthy();
+      expect(getNode(addRowAfterPath, env, rowMenuRegistry).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple consecutive selected rows", () => {
@@ -572,13 +600,18 @@ describe("Menu Item actions", () => {
         quantity: 2,
         position: "after",
       });
-      expect(getNode(addRowAfterPath, rowMenuRegistry).isVisible(env)).toBeTruthy();
+      expect(getNode(addRowAfterPath, env, rowMenuRegistry).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple inconsecutive selected rows", () => {
       selectRow(model, 4, "overrideSelection");
       selectRow(model, 6, "newAnchor");
-      expect(getNode(addRowAfterPath, rowMenuRegistry).isVisible(env)).toBeFalsy();
+      expect(getNode(addRowAfterPath, env, rowMenuRegistry).isVisible(env)).toBeFalsy();
+    });
+
+    test("Full sheet selected", () => {
+      selectAll(model);
+      expect(getNode(addRowAfterPath, env, rowMenuRegistry).isVisible(env)).toBeTruthy();
     });
 
     test("Full sheet selected", () => {
@@ -593,7 +626,7 @@ describe("Menu Item actions", () => {
     test("A selected column", () => {
       selectColumn(model, 4, "overrideSelection");
       expect(getName(insertColBeforePath, env)).toBe("Column left");
-      expect(getNode(insertColBeforePath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertColBeforePath, env).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple consecutive selected columns", () => {
@@ -608,24 +641,24 @@ describe("Menu Item actions", () => {
         quantity: 2,
         position: "before",
       });
-      expect(getNode(insertColBeforePath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertColBeforePath, env).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple inconsecutive selected columns", () => {
       selectColumn(model, 4, "overrideSelection");
       selectColumn(model, 6, "newAnchor");
-      expect(getNode(insertColBeforePath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertColBeforePath, env).isVisible(env)).toBeFalsy();
     });
 
     test("A selected row should hide the item", () => {
       selectRow(model, 4, "overrideSelection");
-      expect(getNode(insertColBeforePath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertColBeforePath, env).isVisible(env)).toBeFalsy();
     });
 
     test("A selected cell", () => {
       selectCell(model, "D4");
       expect(getName(insertColBeforePath, env)).toBe("Column left");
-      expect(getNode(insertColBeforePath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertColBeforePath, env).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple selected cells", () => {
@@ -640,7 +673,7 @@ describe("Menu Item actions", () => {
         quantity: 2,
         position: "before",
       });
-      expect(getNode(insertColBeforePath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertColBeforePath, env).isVisible(env)).toBeTruthy();
     });
   });
 
@@ -650,7 +683,7 @@ describe("Menu Item actions", () => {
     test("A selected column", () => {
       selectColumn(model, 4, "overrideSelection");
       expect(getName(addColBeforePath, env, colMenuRegistry)).toBe("Insert column left");
-      expect(getNode(addColBeforePath, colMenuRegistry).isVisible(env)).toBeTruthy();
+      expect(getNode(addColBeforePath, env, colMenuRegistry).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple consecutive selected columns", () => {
@@ -665,13 +698,18 @@ describe("Menu Item actions", () => {
         quantity: 2,
         position: "before",
       });
-      expect(getNode(addColBeforePath, colMenuRegistry).isVisible(env)).toBeTruthy();
+      expect(getNode(addColBeforePath, env, colMenuRegistry).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple inconsecutive selected columns", () => {
       selectColumn(model, 4, "overrideSelection");
       selectColumn(model, 6, "newAnchor");
-      expect(getNode(addColBeforePath, colMenuRegistry).isVisible(env)).toBeFalsy();
+      expect(getNode(addColBeforePath, env, colMenuRegistry).isVisible(env)).toBeFalsy();
+    });
+
+    test("Full sheet selected", () => {
+      selectAll(model);
+      expect(getNode(addColBeforePath, env, colMenuRegistry).isVisible(env)).toBeTruthy();
     });
 
     test("Full sheet selected", () => {
@@ -686,7 +724,7 @@ describe("Menu Item actions", () => {
     test("A selected column", () => {
       selectColumn(model, 4, "overrideSelection");
       expect(getName(insertColAfterPath, env)).toBe("Column right");
-      expect(getNode(insertColAfterPath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertColAfterPath, env).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple consecutive selected columns", () => {
@@ -701,24 +739,24 @@ describe("Menu Item actions", () => {
         quantity: 2,
         position: "after",
       });
-      expect(getNode(insertColAfterPath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertColAfterPath, env).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple inconsecutive selected columns", () => {
       selectColumn(model, 4, "overrideSelection");
       selectColumn(model, 6, "newAnchor");
-      expect(getNode(insertColAfterPath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertColAfterPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("A selected row should hide the item", () => {
       selectRow(model, 4, "overrideSelection");
-      expect(getNode(insertColAfterPath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertColAfterPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("A selected cell", () => {
       selectCell(model, "D4");
       expect(getName(insertColAfterPath, env)).toBe("Column right");
-      expect(getNode(insertColAfterPath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertColAfterPath, env).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple selected cells", () => {
@@ -733,7 +771,7 @@ describe("Menu Item actions", () => {
         quantity: 2,
         position: "after",
       });
-      expect(getNode(insertColAfterPath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertColAfterPath, env).isVisible(env)).toBeTruthy();
     });
   });
 
@@ -743,7 +781,7 @@ describe("Menu Item actions", () => {
     test("A selected column", () => {
       selectColumn(model, 4, "overrideSelection");
       expect(getName(addColAfterPath, env, colMenuRegistry)).toBe("Insert column right");
-      expect(getNode(addColAfterPath, colMenuRegistry).isVisible(env)).toBeTruthy();
+      expect(getNode(addColAfterPath, env, colMenuRegistry).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple consecutive selected columns", () => {
@@ -758,13 +796,18 @@ describe("Menu Item actions", () => {
         quantity: 2,
         position: "after",
       });
-      expect(getNode(addColAfterPath, colMenuRegistry).isVisible(env)).toBeTruthy();
+      expect(getNode(addColAfterPath, env, colMenuRegistry).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple inconsecutive selected columns", () => {
       selectColumn(model, 4, "overrideSelection");
       selectColumn(model, 6, "newAnchor");
-      expect(getNode(addColAfterPath, colMenuRegistry).isVisible(env)).toBeFalsy();
+      expect(getNode(addColAfterPath, env, colMenuRegistry).isVisible(env)).toBeFalsy();
+    });
+
+    test("Full sheet selected", () => {
+      selectAll(model);
+      expect(getNode(addColAfterPath, env, colMenuRegistry).isVisible(env)).toBeTruthy();
     });
 
     test("Full sheet selected", () => {
@@ -778,36 +821,36 @@ describe("Menu Item actions", () => {
 
     test("A selected row should hide the item", () => {
       selectRow(model, 4, "overrideSelection");
-      expect(getNode(insertCellShiftDownPath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertCellShiftDownPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("A selected column should hide the item", () => {
       selectColumn(model, 4, "overrideSelection");
-      expect(getNode(insertCellShiftDownPath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertCellShiftDownPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("Multiple consecutive selected columns should hide the item", () => {
       selectColumn(model, 4, "overrideSelection");
       selectColumn(model, 5, "updateAnchor");
-      expect(getNode(insertCellShiftDownPath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertCellShiftDownPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("Multiple inconsecutive selected columns should hide the item", () => {
       selectColumn(model, 4, "overrideSelection");
       selectColumn(model, 6, "newAnchor");
-      expect(getNode(insertCellShiftDownPath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertCellShiftDownPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("Multiple consecutive selected rows should hide the item", () => {
       selectRow(model, 4, "overrideSelection");
       selectRow(model, 5, "updateAnchor");
-      expect(getNode(insertCellShiftDownPath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertCellShiftDownPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("Multiple inconsecutive selected rows should hide the item", () => {
       selectRow(model, 4, "overrideSelection");
       selectRow(model, 6, "newAnchor");
-      expect(getNode(insertCellShiftDownPath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertCellShiftDownPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("A selected cell", () => {
@@ -818,7 +861,7 @@ describe("Menu Item actions", () => {
         zone: env.model.getters.getSelectedZone(),
         shiftDimension: "ROW",
       });
-      expect(getNode(insertCellShiftDownPath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertCellShiftDownPath, env).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple selected cells", () => {
@@ -830,7 +873,7 @@ describe("Menu Item actions", () => {
         zone: env.model.getters.getSelectedZone(),
         shiftDimension: "ROW",
       });
-      expect(getNode(insertCellShiftDownPath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertCellShiftDownPath, env).isVisible(env)).toBeTruthy();
     });
   });
 
@@ -839,36 +882,36 @@ describe("Menu Item actions", () => {
 
     test("A selected row should hide the item", () => {
       selectRow(model, 4, "overrideSelection");
-      expect(getNode(insertCellShiftRightPath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertCellShiftRightPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("A selected column should hide the item", () => {
       selectColumn(model, 4, "overrideSelection");
-      expect(getNode(insertCellShiftRightPath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertCellShiftRightPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("Multiple consecutive selected columns should hide the item", () => {
       selectColumn(model, 4, "overrideSelection");
       selectColumn(model, 5, "updateAnchor");
-      expect(getNode(insertCellShiftRightPath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertCellShiftRightPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("Multiple inconsecutive selected columns should hide the item", () => {
       selectColumn(model, 4, "overrideSelection");
       selectColumn(model, 6, "newAnchor");
-      expect(getNode(insertCellShiftRightPath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertCellShiftRightPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("Multiple consecutive selected rows should hide the item", () => {
       selectRow(model, 4, "overrideSelection");
       selectRow(model, 5, "updateAnchor");
-      expect(getNode(insertCellShiftRightPath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertCellShiftRightPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("Multiple inconsecutive selected rows should hide the item", () => {
       selectRow(model, 4, "overrideSelection");
       selectRow(model, 6, "newAnchor");
-      expect(getNode(insertCellShiftRightPath).isVisible(env)).toBeFalsy();
+      expect(getNode(insertCellShiftRightPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("A selected cell", () => {
@@ -879,7 +922,7 @@ describe("Menu Item actions", () => {
         zone: env.model.getters.getSelectedZone(),
         shiftDimension: "COL",
       });
-      expect(getNode(insertCellShiftRightPath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertCellShiftRightPath, env).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple selected cells", () => {
@@ -891,7 +934,7 @@ describe("Menu Item actions", () => {
         zone: env.model.getters.getSelectedZone(),
         shiftDimension: "COL",
       });
-      expect(getNode(insertCellShiftRightPath).isVisible(env)).toBeTruthy();
+      expect(getNode(insertCellShiftRightPath, env).isVisible(env)).toBeTruthy();
     });
   });
 
@@ -923,11 +966,21 @@ describe("Menu Item actions", () => {
       returns: ["NUMBER"],
     });
     const env = makeTestEnv();
-    const allFunctions = getNode(["insert", "insert_function", "categorie_function_all"]).children(
+    const allFunctions = getNode(
+      ["insert", "insert_function", "categorie_function_all"],
       env
-    );
+    ).children(env);
     expect(allFunctions.map((f) => f.name(env))).toContain("TEST.FUNC");
     restoreDefaultFunctions();
+  });
+
+  test("Insert -> Checkbox", () => {
+    selectCell(model, "A1");
+    doAction(["insert", "insert_checkbox"], env);
+    expect(getDataValidationRules(model, sheetId)).toMatchObject([
+      { criterion: { type: "isBoolean" }, ranges: ["A1"] },
+    ]);
+    expect(getCellContent(model, "A1")).toEqual("FALSE");
   });
 
   test("Insert -> Function -> hidden formulas are filtered out", () => {
@@ -941,18 +994,19 @@ describe("Menu Item actions", () => {
       category: "hidden",
     });
     const env = makeTestEnv();
-    const functionCategories = getNode(["insert", "insert_function"]).children(env);
+    const functionCategories = getNode(["insert", "insert_function"], env).children(env);
     expect(functionCategories.map((f) => f.name(env))).not.toContain("hidden");
-    const allFunctions = getNode(["insert", "insert_function", "categorie_function_all"]).children(
+    const allFunctions = getNode(
+      ["insert", "insert_function", "categorie_function_all"],
       env
-    );
+    ).children(env);
     expect(allFunctions.map((f) => f.name(env))).not.toContain("HIDDEN.FUNC");
     restoreDefaultFunctions();
   });
 
   describe("Format -> numbers", () => {
     test("Automatic", () => {
-      const action = getNode(["format", "format_number", "format_number_automatic"]);
+      const action = getNode(["format", "format_number", "format_number_automatic"], env);
       action.execute?.(env);
       expect(dispatch).toHaveBeenCalledWith("SET_FORMATTING", {
         sheetId: env.model.getters.getActiveSheetId(),
@@ -963,7 +1017,7 @@ describe("Menu Item actions", () => {
     });
 
     test("Number", () => {
-      const action = getNode(["format", "format_number", "format_number_number"]);
+      const action = getNode(["format", "format_number", "format_number_number"], env);
       expect(action.isActive?.(env)).toBe(false);
       action.execute?.(env);
       expect(dispatch).toHaveBeenCalledWith("SET_FORMATTING", {
@@ -984,7 +1038,7 @@ describe("Menu Item actions", () => {
       ["format_number_date_time", "9/26/2023 10:43:00 PM"],
       ["format_number_duration", "27:51:38"],
     ])("number formatting description with default locale", (actionId, expectedDescription) => {
-      const action = getNode(["format", "format_number", actionId]);
+      const action = getNode(["format", "format_number", actionId], env);
       expect(action.description(env)).toBe(expectedDescription);
     });
 
@@ -999,7 +1053,7 @@ describe("Menu Item actions", () => {
       ["format_number_duration", "27:51:38"],
     ])("number formatting description with custom locale", (actionId, expectedDescription) => {
       updateLocale(model, FR_LOCALE);
-      const action = getNode(["format", "format_number", actionId]);
+      const action = getNode(["format", "format_number", actionId], env);
       expect(action.description(env)).toBe(expectedDescription);
     });
 
@@ -1013,14 +1067,14 @@ describe("Menu Item actions", () => {
     });
 
     test("currency format with default currency", () => {
-      const action = getNode(["format", "format_number", "format_number_currency"]);
+      const action = getNode(["format", "format_number", "format_number_currency"], env);
       expect(action.description(env)).toBe("$1,000.12");
       action.execute?.(env);
       expect(getCell(model, "A1")?.format).toBe("[$$]#,##0.00");
     });
 
     test("rounded currency format with default currency", () => {
-      const action = getNode(["format", "format_number", "format_number_currency_rounded"]);
+      const action = getNode(["format", "format_number", "format_number_currency_rounded"], env);
       expect(action.description(env)).toBe("$1,000");
       action.execute?.(env);
       expect(getCell(model, "A1")?.format).toBe("[$$]#,##0");
@@ -1029,7 +1083,7 @@ describe("Menu Item actions", () => {
     test("currency format with custom default currency", () => {
       const model = new Model({}, { defaultCurrencyFormat: "[$€]#,##0.000" });
       env = makeTestEnv({ model });
-      const action = getNode(["format", "format_number", "format_number_currency"]);
+      const action = getNode(["format", "format_number", "format_number_currency"], env);
       expect(action.description(env)).toBe("€1,000.120");
       action.execute?.(env);
       expect(getCell(model, "A1")?.format).toBe("[$€]#,##0.000");
@@ -1038,7 +1092,7 @@ describe("Menu Item actions", () => {
     test("rounded currency format with custom default currency", () => {
       const model = new Model({}, { defaultCurrencyFormat: "[$€]#,##0.000" });
       env = makeTestEnv({ model });
-      const action = getNode(["format", "format_number", "format_number_currency_rounded"]);
+      const action = getNode(["format", "format_number", "format_number_currency_rounded"], env);
       expect(action.description(env)).toBe("€1,000");
       action.execute?.(env);
       expect(getCell(model, "A1")?.format).toBe("[$€]#,##0");
@@ -1047,7 +1101,7 @@ describe("Menu Item actions", () => {
     test("rounded currency format is invisible if the custom default format is already rounded", () => {
       const model = new Model({}, { defaultCurrencyFormat: "[$€]#,##0" });
       env = makeTestEnv({ model });
-      const action = getNode(["format", "format_number", "format_number_currency_rounded"]);
+      const action = getNode(["format", "format_number", "format_number_currency_rounded"], env);
       expect(action.isVisible(env)).toBe(false);
     });
 
@@ -1055,7 +1109,7 @@ describe("Menu Item actions", () => {
       const model = new Model({}, { defaultCurrencyFormat: "[$€]#,##0.000" });
       env = makeTestEnv({ model });
       updateLocale(model, FR_LOCALE);
-      const action = getNode(["format", "format_number", "format_number_currency"]);
+      const action = getNode(["format", "format_number", "format_number_currency"], env);
       expect(action.description(env)).toBe("€1 000,120");
     });
 
@@ -1107,8 +1161,14 @@ describe("Menu Item actions", () => {
     test("Automatic format is active when format is computed", () => {
       selectCell(env.model, "A1");
       setCellContent(env.model, "A1", "1");
-      const setNumberFormatAction = getNode(["format", "format_number", "format_number_number"]);
-      const setAutoFormatAction = getNode(["format", "format_number", "format_number_automatic"]);
+      const setNumberFormatAction = getNode(
+        ["format", "format_number", "format_number_number"],
+        env
+      );
+      const setAutoFormatAction = getNode(
+        ["format", "format_number", "format_number_automatic"],
+        env
+      );
       setNumberFormatAction.execute?.(env);
       expect(getCell(model, "A1")?.format).toBe("#,##0.00");
       setCellContent(env.model, "B1", "=A1");
@@ -1120,11 +1180,40 @@ describe("Menu Item actions", () => {
     });
 
     test("cancel edition when setting a format", () => {
-      model.dispatch("START_EDITION", { text: "hello" });
-      expect(model.getters.getEditionMode()).toBe("editing");
+      const composerStore = env.getStore(ComposerStore);
+      composerStore.startEdition("hello");
+      expect(composerStore.editionMode).toBe("editing");
       doAction(["format", "format_number", "format_number_percent"], env);
-      expect(model.getters.getEditionMode()).toBe("inactive");
+      expect(composerStore.editionMode).toBe("inactive");
       expect(getCellContent(model, "A1")).toBe("");
+    });
+
+    describe("Custom number formats", () => {
+      function getNumberFormatsInMenu() {
+        return getNode(["format", "format_number"], env)
+          .children(env)
+          .map((node) => node.name(env));
+      }
+
+      test("Custom date and currency formats are present in the number format item", () => {
+        expect(getNumberFormatsInMenu()).not.toContain("#.##0[$£]");
+        setFormat(model, "A1", "#.##0[$£]");
+        expect(getNumberFormatsInMenu()).toContain("#.##0[$£]");
+
+        expect(getNumberFormatsInMenu()).not.toContain("dd/mm/yyyy");
+        setFormat(model, "A1", "dd/mm/yyyy");
+        expect(getNumberFormatsInMenu()).toContain("dd/mm/yyyy");
+      });
+
+      test("Custom formats that are nether dates nor currencies are not present", () => {
+        setFormat(model, "A1", "#.####0");
+        expect(getNumberFormatsInMenu()).not.toContain("#.####0");
+      });
+
+      test("Default formats are not re-added in custom formats", () => {
+        setFormat(model, "A1", "m/d/yyyy");
+        expect(getNumberFormatsInMenu()).not.toContain("m/d/yyyy");
+      });
     });
   });
 
@@ -1267,13 +1356,13 @@ describe("Menu Item actions", () => {
 
   test("Data -> Split to columns is disabled when multiple cols are selected", () => {
     setSelection(model, ["A1"]);
-    expect(getNode(["data", "split_to_columns"]).isEnabled(env)).toBeTruthy();
+    expect(getNode(["data", "split_to_columns"], env).isEnabled(env)).toBeTruthy();
 
     setSelection(model, ["A1:C1"]);
-    expect(getNode(["data", "split_to_columns"]).isEnabled(env)).toBeFalsy();
+    expect(getNode(["data", "split_to_columns"], env).isEnabled(env)).toBeFalsy();
 
     setSelection(model, ["A1", "B1"]);
-    expect(getNode(["data", "split_to_columns"]).isEnabled(env)).toBeFalsy();
+    expect(getNode(["data", "split_to_columns"], env).isEnabled(env)).toBeFalsy();
   });
 
   test("Data -> Sort ascending", () => {
@@ -1304,12 +1393,12 @@ describe("Menu Item actions", () => {
     test("A selected zone", () => {
       setSelection(model, ["A1:A2"]);
       expect(getName(pathSort, env)).toBe("Sort range");
-      expect(getNode(pathSort).isVisible(env)).toBeTruthy();
+      expect(getNode(pathSort, env).isVisible(env)).toBeTruthy();
     });
 
     test("Multiple selected zones", () => {
       setSelection(model, ["A1:A2", "B1:B2"]);
-      expect(getNode(pathSort).isVisible(env)).toBeFalsy();
+      expect(getNode(pathSort, env).isVisible(env)).toBeFalsy();
     });
   });
   describe("Hide/Unhide Columns", () => {
@@ -1318,7 +1407,7 @@ describe("Menu Item actions", () => {
     test("Action on single column selection", () => {
       selectColumn(model, 1, "overrideSelection");
       expect(getName(hidePath, env, colMenuRegistry)).toBe("Hide column B");
-      expect(getNode(hidePath, colMenuRegistry).isVisible(env)).toBeTruthy();
+      expect(getNode(hidePath, env, colMenuRegistry).isVisible(env)).toBeTruthy();
       doAction(hidePath, env, colMenuRegistry);
       expect(dispatch).toHaveBeenCalledWith("HIDE_COLUMNS_ROWS", {
         sheetId: env.model.getters.getActiveSheetId(),
@@ -1329,7 +1418,7 @@ describe("Menu Item actions", () => {
     test("Action with at least one active column", () => {
       setSelection(model, ["B1:B100", "C5"]);
       expect(getName(hidePath, env, colMenuRegistry)).toBe("Hide columns B - C");
-      expect(getNode(hidePath, colMenuRegistry).isVisible(env)).toBeTruthy();
+      expect(getNode(hidePath, env, colMenuRegistry).isVisible(env)).toBeTruthy();
       doAction(hidePath, env, colMenuRegistry);
       expect(dispatch).toHaveBeenCalledWith("HIDE_COLUMNS_ROWS", {
         sheetId: env.model.getters.getActiveSheetId(),
@@ -1340,7 +1429,7 @@ describe("Menu Item actions", () => {
     test("Action without any active column", () => {
       setSelection(model, ["B1"]);
       expect(getName(hidePath, env, colMenuRegistry)).toBe("Hide columns");
-      expect(getNode(hidePath, colMenuRegistry).isVisible(env)).toBeTruthy();
+      expect(getNode(hidePath, env, colMenuRegistry).isVisible(env)).toBeTruthy();
       doAction(hidePath, env, colMenuRegistry);
       expect(dispatch).toHaveBeenCalledWith("HIDE_COLUMNS_ROWS", {
         sheetId: env.model.getters.getActiveSheetId(),
@@ -1351,13 +1440,13 @@ describe("Menu Item actions", () => {
 
     test("Inactive menu item on invalid selection", () => {
       setSelection(model, ["A1:A100", "A4:Z4"]);
-      expect(getNode(hidePath, colMenuRegistry).isVisible(env)).toBeFalsy();
+      expect(getNode(hidePath, env, colMenuRegistry).isVisible(env)).toBeFalsy();
     });
 
     test("Unhide cols from Col menu", () => {
       hideColumns(model, ["C"]);
       setSelection(model, ["B1:E100"]);
-      expect(getNode(unhidePath, colMenuRegistry).isVisible(env)).toBeTruthy();
+      expect(getNode(unhidePath, env, colMenuRegistry).isVisible(env)).toBeTruthy();
       doAction(unhidePath, env, colMenuRegistry);
       expect(dispatch).toHaveBeenCalledWith("UNHIDE_COLUMNS_ROWS", {
         sheetId: env.model.getters.getActiveSheetId(),
@@ -1367,13 +1456,13 @@ describe("Menu Item actions", () => {
     });
     test("Unhide rows from Col menu without hidden cols", () => {
       setSelection(model, ["B1:E100"]);
-      expect(getNode(unhidePath, colMenuRegistry).isVisible(env)).toBeFalsy();
+      expect(getNode(unhidePath, env, colMenuRegistry).isVisible(env)).toBeFalsy();
     });
     test("Unhide all cols from top menu", () => {
       // no hidden rows
-      expect(getNode(["edit", "edit_unhide_columns"]).isVisible(env)).toBeFalsy();
+      expect(getNode(["edit", "edit_unhide_columns"], env).isVisible(env)).toBeFalsy();
       hideColumns(model, ["C"]);
-      expect(getNode(["edit", "edit_unhide_columns"]).isVisible(env)).toBeTruthy();
+      expect(getNode(["edit", "edit_unhide_columns"], env).isVisible(env)).toBeTruthy();
       doAction(["edit", "edit_unhide_columns"], env);
       const sheetId = env.model.getters.getActiveSheetId();
       expect(dispatch).toHaveBeenCalledWith("UNHIDE_COLUMNS_ROWS", {
@@ -1389,7 +1478,7 @@ describe("Menu Item actions", () => {
     test("Action on single row selection", () => {
       selectRow(model, 1, "overrideSelection");
       expect(getName(hidePath, env, rowMenuRegistry)).toBe("Hide row 2");
-      expect(getNode(hidePath, rowMenuRegistry).isVisible(env)).toBeTruthy();
+      expect(getNode(hidePath, env, rowMenuRegistry).isVisible(env)).toBeTruthy();
       doAction(hidePath, env, rowMenuRegistry);
       expect(dispatch).toHaveBeenCalledWith("HIDE_COLUMNS_ROWS", {
         sheetId: env.model.getters.getActiveSheetId(),
@@ -1400,7 +1489,7 @@ describe("Menu Item actions", () => {
     test("Action with at least one active row", () => {
       setSelection(model, ["A2:Z2", "C3"]);
       expect(getName(hidePath, env, rowMenuRegistry)).toBe("Hide rows 2 - 3");
-      expect(getNode(hidePath, rowMenuRegistry).isVisible(env)).toBeTruthy();
+      expect(getNode(hidePath, env, rowMenuRegistry).isVisible(env)).toBeTruthy();
       doAction(hidePath, env, rowMenuRegistry);
       expect(dispatch).toHaveBeenCalledWith("HIDE_COLUMNS_ROWS", {
         sheetId: env.model.getters.getActiveSheetId(),
@@ -1411,7 +1500,7 @@ describe("Menu Item actions", () => {
     test("Action without any active column", () => {
       setSelection(model, ["B1"]);
       expect(getName(hidePath, env, rowMenuRegistry)).toBe("Hide rows");
-      expect(getNode(hidePath, rowMenuRegistry).isVisible(env)).toBeTruthy();
+      expect(getNode(hidePath, env, rowMenuRegistry).isVisible(env)).toBeTruthy();
       doAction(hidePath, env, rowMenuRegistry);
       expect(dispatch).toHaveBeenCalledWith("HIDE_COLUMNS_ROWS", {
         sheetId: env.model.getters.getActiveSheetId(),
@@ -1422,13 +1511,13 @@ describe("Menu Item actions", () => {
 
     test("Inactive menu item on invalid selection", () => {
       setSelection(model, ["A1:A100", "A4:Z4"]);
-      expect(getNode(hidePath, rowMenuRegistry).isVisible(env)).toBeFalsy();
+      expect(getNode(hidePath, env, rowMenuRegistry).isVisible(env)).toBeFalsy();
     });
 
     test("Unhide rows from Row menu with hidden rows", () => {
       hideRows(model, [2]);
       setSelection(model, ["A1:Z4"]);
-      expect(getNode(unhidePath, rowMenuRegistry).isVisible(env)).toBeTruthy();
+      expect(getNode(unhidePath, env, rowMenuRegistry).isVisible(env)).toBeTruthy();
       doAction(unhidePath, env, rowMenuRegistry);
       expect(dispatch).toHaveBeenCalledWith("UNHIDE_COLUMNS_ROWS", {
         sheetId: env.model.getters.getActiveSheetId(),
@@ -1438,14 +1527,14 @@ describe("Menu Item actions", () => {
     });
     test("Unhide rows from Row menu without hidden rows", () => {
       setSelection(model, ["A1:Z4"]);
-      expect(getNode(unhidePath, rowMenuRegistry).isVisible(env)).toBeFalsy();
+      expect(getNode(unhidePath, env, rowMenuRegistry).isVisible(env)).toBeFalsy();
     });
 
     test("Unhide all rows from top menu", () => {
       // no hidden rows
-      expect(getNode(["edit", "edit_unhide_rows"]).isVisible(env)).toBeFalsy();
+      expect(getNode(["edit", "edit_unhide_rows"], env).isVisible(env)).toBeFalsy();
       hideRows(model, [2]);
-      expect(getNode(["edit", "edit_unhide_rows"]).isVisible(env)).toBeTruthy();
+      expect(getNode(["edit", "edit_unhide_rows"], env).isVisible(env)).toBeTruthy();
       doAction(["edit", "edit_unhide_rows"], env);
       const sheetId = env.model.getters.getActiveSheetId();
       expect(dispatch).toHaveBeenCalledWith("UNHIDE_COLUMNS_ROWS", {
@@ -1463,96 +1552,214 @@ describe("Menu Item actions", () => {
 
       selectRow(model, 3, "newAnchor");
       selectRow(model, lastRow, "updateAnchor");
-      expect(getNode(hidePath, rowMenuRegistry).isVisible(env)).toBeFalsy();
+      expect(getNode(hidePath, env, rowMenuRegistry).isVisible(env)).toBeFalsy();
     });
-  });
 
-  describe("Filters", () => {
-    const FilterItemPath = ["data", "add_remove_data_filter"];
+    describe("Table and filters", () => {
+      const filterPath = ["data", "add_remove_data_filter"];
+      const insertTablePath = ["insert", "insert_table"];
+      const editTablePath = ["edit", "edit_table"];
 
-    test("Filters -> Create filter", () => {
-      setSelection(model, ["A1:A5"]);
-      expect(getName(FilterItemPath, env)).toBe("Create filter");
-      doAction(FilterItemPath, env);
-      expect(dispatch).toHaveBeenCalledWith("CREATE_FILTER_TABLE", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: target("A1:A5"),
+      test("Insert -> Table", () => {
+        setSelection(model, ["A1:A5"]);
+        expect(getName(insertTablePath, env)).toBe("Table");
+        doAction(insertTablePath, env);
+        expect(model.getters.getTable({ sheetId, row: 0, col: 0 })).toMatchObject({
+          range: { zone: toZone("A1:A5") },
+        });
+      });
+
+      test("Insert -> Table on a whole column make it into an unbounded zone", () => {
+        setSelection(model, ["A1:A100"]);
+        expect(getName(insertTablePath, env)).toBe("Table");
+        doAction(insertTablePath, env);
+        expect(model.getters.getTable({ sheetId, row: 0, col: 0 })).toMatchObject({
+          range: { unboundedZone: toUnboundedZone("A:A") },
+        });
+      });
+
+      test("Insert -> Table is not visible if there is already a table in the selection, or if the selection is not continuous", () => {
+        setSelection(model, ["A1", "B2"]);
+        expect(getNode(insertTablePath, env).isVisible(env)).toBeFalsy();
+
+        setSelection(model, ["A1:A5"]);
+        expect(getNode(insertTablePath, env).isVisible(env)).toBeTruthy();
+
+        createTable(model, "A1:A5");
+        expect(getNode(insertTablePath, env).isVisible(env)).toBeFalsy();
+      });
+
+      test("Insert -> Table creates a dynamic table if it's called on a spreading cell", () => {
+        setCellContent(model, "A1", "=MUNIT(5)");
+        setSelection(model, ["A1"]);
+        doAction(insertTablePath, env);
+        expect(model.getters.getCoreTable({ sheetId, row: 0, col: 0 })).toMatchObject({
+          range: { zone: toZone("A1") },
+          type: "dynamic",
+        });
+        expect(model.getters.getTable({ sheetId, row: 0, col: 0 })).toMatchObject({
+          range: { zone: toZone("A1:E5") },
+        });
+      });
+
+      test("Insert -> select the whole spreading zone and create a dynamic if it is called on a single spreaded cell", () => {
+        setCellContent(model, "A1", "=MUNIT(5)");
+        setSelection(model, ["B1"]);
+        doAction(insertTablePath, env);
+        expect(model.getters.getSelectedZone()).toEqual(toZone("A1:E5"));
+        expect(model.getters.getCoreTable({ sheetId, row: 0, col: 0 })).toMatchObject({
+          range: { zone: toZone("A1") },
+          type: "dynamic",
+        });
+        expect(model.getters.getTable({ sheetId, row: 0, col: 0 })).toMatchObject({
+          range: { zone: toZone("A1:E5") },
+        });
+      });
+
+      test("Insert -> Table creates a dynamic table if it's called on all the spreading cells of a formula", () => {
+        setCellContent(model, "A1", "=MUNIT(5)");
+        setSelection(model, ["A1:E5"]);
+        doAction(insertTablePath, env);
+        expect(model.getters.getCoreTable({ sheetId, row: 0, col: 0 })).toMatchObject({
+          range: { zone: toZone("A1") },
+          type: "dynamic",
+        });
+        expect(model.getters.getTable({ sheetId, row: 0, col: 0 })).toMatchObject({
+          range: { zone: toZone("A1:E5") },
+        });
+      });
+
+      test("Edit -> Table (topbar)", () => {
+        const spyOpenSidePanel = jest.spyOn(env, "openSidePanel");
+        createTable(model, "A1:A5");
+        expect(getName(editTablePath, env)).toBe("Edit table");
+        doAction(editTablePath, env);
+        expect(spyOpenSidePanel).toHaveBeenCalledWith("TableSidePanel", {});
+      });
+
+      test("Edit -> Table (topbar) is not visible if there is no table in the selection", () => {
+        expect(getNode(editTablePath, env).isVisible(env)).toBeFalsy();
+        createTable(model, "A1:A5");
+        expect(getNode(editTablePath, env).isVisible(env)).toBeTruthy();
+      });
+
+      test("Edit table (cellRegistry)", () => {
+        const spyOpenSidePanel = jest.spyOn(env, "openSidePanel");
+        createTable(model, "A1:A5");
+        expect(getName(["edit_table"], env, cellMenuRegistry)).toBe("Edit table");
+        doAction(["edit_table"], env, cellMenuRegistry);
+        expect(spyOpenSidePanel).toHaveBeenCalledWith("TableSidePanel", {});
+      });
+
+      test("Delete table (cellRegistry)", () => {
+        createTable(model, "A1:A5");
+        expect(getName(["delete_table"], env, cellMenuRegistry)).toBe("Delete table");
+        doAction(["delete_table"], env, cellMenuRegistry);
+        expect(model.getters.getTable({ sheetId, row: 0, col: 0 })).toBeUndefined();
+      });
+
+      test("Delete table (cellRegistry) on a dynamic table", () => {
+        setCellContent(model, "A1", "=MUNIT(5)");
+        createDynamicTable(model, "A1");
+        setSelection(model, ["C3"]);
+        doAction(["delete_table"], env, cellMenuRegistry);
+        expect(model.getters.getTable({ sheetId, row: 0, col: 0 })).toBeUndefined();
+      });
+
+      test("Edit/delete table (cellRegistry) visible only with a single table in the selection", () => {
+        expect(getNode(["edit_table"], env, cellMenuRegistry).isVisible(env)).toBeFalsy();
+        expect(getNode(["delete_table"], env, cellMenuRegistry).isVisible(env)).toBeFalsy();
+
+        createTable(model, "A1:A5");
+        expect(getNode(["edit_table"], env, cellMenuRegistry).isVisible(env)).toBeTruthy();
+        expect(getNode(["delete_table"], env, cellMenuRegistry).isVisible(env)).toBeTruthy();
+
+        setSelection(model, ["A1:B5"]);
+        expect(getNode(["edit_table"], env, cellMenuRegistry).isVisible(env)).toBeTruthy();
+        expect(getNode(["delete_table"], env, cellMenuRegistry).isVisible(env)).toBeTruthy();
+
+        createTable(model, "B1:B5");
+        expect(getNode(["edit_table"], env, cellMenuRegistry).isVisible(env)).toBeFalsy();
+        expect(getNode(["delete_table"], env, cellMenuRegistry).isVisible(env)).toBeFalsy();
+      });
+
+      test("Filters -> Create filter", () => {
+        setSelection(model, ["A1:A5"]);
+        expect(getName(filterPath, env)).toBe("Add filters");
+        doAction(filterPath, env);
+        expect(model.getters.getTable({ sheetId, row: 0, col: 0 })).toMatchObject({
+          range: { zone: toZone("A1:A5") },
+          config: { hasFilters: true },
+        });
       });
       expect(getName(FilterItemPath, env)).toBe("Remove filter");
     });
 
-    test("Filters -> Remove filter", () => {
-      createFilter(model, "A1:A5");
-      setSelection(model, ["A1:A5"]);
-      expect(getName(FilterItemPath, env)).toBe("Remove filter");
-      doAction(FilterItemPath, env);
-      expect(dispatch).toHaveBeenCalledWith("REMOVE_FILTER_TABLE", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: target("A1:A5"),
+      test("Filters -> Add filters on existing table", () => {
+        createTable(model, "A1:A5");
+        updateTableConfig(model, "A1:A5", { hasFilters: false });
+        doAction(filterPath, env);
+        expect(model.getters.getTable({ sheetId, row: 0, col: 0 })?.config.hasFilters).toBe(true);
+      });
+
+      test("Filters -> Remove filter", () => {
+        createTable(model, "A1:A5");
+        setSelection(model, ["A1:A5"]);
+        expect(getName(filterPath, env)).toBe("Remove selected filters");
+        doAction(filterPath, env);
+        const table = model.getters.getTable({ sheetId, row: 0, col: 0 });
+        expect(table?.config.hasFilters).toBe(false);
       });
       expect(getName(FilterItemPath, env)).toBe("Create filter");
     });
 
-    test("Filters -> Create filter is disabled when the selection isn't continuous", () => {
-      setSelection(model, ["A1", "B6"]);
-      expect(getNode(FilterItemPath).isVisible(env)).toBeTruthy();
-      expect(getNode(FilterItemPath).isEnabled(env)).toBeFalsy();
-    });
+      test("Filters -> Add/Remove filters with multiple table in the selection works only on first table", () => {
+        createTable(model, "A1:A5");
+        createTable(model, "B1:B5");
+        updateTableConfig(model, "A1:A5", { hasFilters: false });
+        updateTableConfig(model, "B1:B5", { hasFilters: false });
 
-    test("Filters -> Create filter is enabled for continuous selection of multiple zones", () => {
-      setSelection(model, ["A1", "A2:A5", "B1:B5"]);
-      expect(getNode(FilterItemPath).isVisible(env)).toBeTruthy();
-      expect(getNode(FilterItemPath).isEnabled(env)).toBeTruthy();
-    });
+        setSelection(model, ["A1:B5"]);
+        doAction(filterPath, env);
+        expect(model.getters.getTables(sheetId)).toMatchObject([
+          { range: { zone: toZone("A1:A5") }, config: { hasFilters: true } },
+          { range: { zone: toZone("B1:B5") }, config: { hasFilters: false } },
+        ]);
 
-    test("Filters -> Remove filter is displayed instead of add filter when the selection contains a filter", () => {
-      setSelection(model, ["A1:A5"]);
-      expect(getName(FilterItemPath, env)).toBe("Create filter");
+        doAction(filterPath, env);
+        expect(model.getters.getTables(sheetId)).toMatchObject([
+          { range: { zone: toZone("A1:A5") }, config: { hasFilters: false } },
+          { range: { zone: toZone("B1:B5") }, config: { hasFilters: false } },
+        ]);
+      });
 
-      createFilter(model, "A1:B5");
-      expect(getName(FilterItemPath, env)).toBe("Remove filter");
+      test("Filters -> Create filter is disabled when the selection is not continuous", () => {
+        setSelection(model, ["A1", "B6"]);
+        expect(getNode(filterPath, env).isVisible(env)).toBeTruthy();
+        expect(getNode(filterPath, env).isEnabled(env)).toBeFalsy();
+      });
 
-      setSelection(model, ["A1:B9"]);
-      expect(getName(FilterItemPath, env)).toBe("Remove filter");
+      test("Filters -> Create filter is enabled for continuous selection of multiple zones", () => {
+        setSelection(model, ["A1", "A2:A5", "B1:B5"]);
+        expect(getNode(filterPath, env).isVisible(env)).toBeTruthy();
+        expect(getNode(filterPath, env).isEnabled(env)).toBeTruthy();
+      });
 
-      setSelection(model, ["A1"]);
-      expect(getName(FilterItemPath, env)).toBe("Remove filter");
+      test("Filters -> Remove filter is displayed instead of add filter when the selection contains a filter", () => {
+        setSelection(model, ["A1:A5"]);
+        expect(getName(filterPath, env)).toBe("Add filters");
 
-      setSelection(model, ["B5"]);
-      expect(getName(FilterItemPath, env)).toBe("Remove filter");
+        createTable(model, "A1:B5");
+        expect(getName(filterPath, env)).toBe("Remove selected filters");
 
-      setSelection(model, ["C3", "A3"]);
-      expect(getName(FilterItemPath, env)).toBe("Remove filter");
-
-      setSelection(model, ["C3"]);
-      expect(getName(FilterItemPath, env)).toBe("Create filter");
-
-      setSelection(model, ["C3", "D3"]);
-      expect(getName(FilterItemPath, env)).toBe("Create filter");
-    });
-
-    test("Filters -> Adjacent cells selection while applying filter on single cell", async () => {
-      setCellContent(model, "A1", "A");
-      setCellContent(model, "A2", "A3");
-      setCellContent(model, "B2", "B");
-      setCellContent(model, "B3", "3");
-      setCellContent(model, "C3", "B4");
-      setCellContent(model, "C4", "Hello");
-      setCellContent(model, "D4", "2");
-      selectCell(model, "A1");
-
-      doAction(FilterItemPath, env);
-      const selection = model.getters.getSelectedZone();
-      expect(zoneToXc(selection)).toEqual("A1:D4");
-      expect(dispatch).toHaveBeenCalledWith("CREATE_FILTER_TABLE", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: target("A1:D4"),
+        setSelection(model, ["A1:B9"]);
+        expect(getName(filterPath, env)).toBe("Remove selected filters");
       });
     });
   });
 
   test("View -> Set gridlines visibility", () => {
-    const path_gridlines = ["view", "view_gridlines"];
+    const path_gridlines = ["view", "show", "view_gridlines"];
     const sheetId = model.getters.getActiveSheetId();
 
     model.dispatch("SET_GRID_LINES_VISIBILITY", {
@@ -1560,15 +1767,17 @@ describe("Menu Item actions", () => {
       areGridLinesVisible: true,
     });
 
-    expect(getName(path_gridlines, env)).toBe("Hide gridlines");
-    expect(getNode(path_gridlines).isVisible(env)).toBeTruthy();
+    expect(getName(path_gridlines, env)).toBe("Gridlines");
+    expect(getNode(path_gridlines, env).isVisible(env)).toBeTruthy();
+    expect(getNode(path_gridlines, env).isActive?.(env)).toBeTruthy();
 
     model.dispatch("SET_GRID_LINES_VISIBILITY", {
       sheetId,
       areGridLinesVisible: false,
     });
-    expect(getName(path_gridlines, env)).toBe("Show gridlines");
-    expect(getNode(path_gridlines).isVisible(env)).toBeTruthy();
+    expect(getName(path_gridlines, env)).toBe("Gridlines");
+    expect(getNode(path_gridlines, env).isVisible(env)).toBeTruthy();
+    expect(getNode(path_gridlines, env).isActive?.(env)).toBeFalsy();
 
     doAction(path_gridlines, env);
     expect(dispatch).toHaveBeenCalledWith("SET_GRID_LINES_VISIBILITY", {
@@ -1585,6 +1794,23 @@ describe("Menu Item actions", () => {
       sheetId,
       areGridLinesVisible: false,
     });
+  });
+
+  test("View -> show formulas", async () => {
+    const path_formulas = ["view", "show", "view_formulas"];
+    expect(model.getters.shouldShowFormulas()).toBe(false);
+
+    expect(getName(path_formulas, env)).toBe("Formulas");
+    expect(getNode(path_formulas, env).isVisible(env)).toBeTruthy();
+    expect(getNode(path_formulas, env).isActive?.(env)).toBeFalsy();
+    doAction(path_formulas, env);
+    expect(model.getters.shouldShowFormulas()).toBe(true);
+
+    expect(getName(path_formulas, env)).toBe("Formulas");
+    expect(getNode(path_formulas, env).isVisible(env)).toBeTruthy();
+    expect(getNode(path_formulas, env).isActive?.(env)).toBeTruthy();
+    doAction(path_formulas, env);
+    expect(model.getters.shouldShowFormulas()).toBe(false);
   });
 
   describe("View -> group headers", () => {
@@ -1605,13 +1831,13 @@ describe("Menu Item actions", () => {
 
     test("Cannot group multiple selections", () => {
       setSelection(model, ["A1:B3", "C1:C3"]);
-      expect(getNode(groupColsPath).isVisible(env)).toBeFalsy();
+      expect(getNode(groupColsPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("Cannot re-group same selection of columns", () => {
       setSelection(model, ["A1:B3"]);
-      getNode(groupColsPath).execute?.(env);
-      expect(getNode(groupColsPath).isVisible(env)).toBeFalsy();
+      getNode(groupColsPath, env).execute?.(env);
+      expect(getNode(groupColsPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("Can ungroup columns", () => {
@@ -1624,10 +1850,10 @@ describe("Menu Item actions", () => {
 
     test("Cannot ungroup columns when there's no group in the selection", () => {
       setSelection(model, ["A1:C3"]);
-      expect(getNode(ungroupColsPath).isVisible(env)).toBeFalsy();
+      expect(getNode(ungroupColsPath, env).isVisible(env)).toBeFalsy();
 
       groupColumns(model, "A", "C");
-      expect(getNode(ungroupColsPath).isVisible(env)).toBeTruthy();
+      expect(getNode(ungroupColsPath, env).isVisible(env)).toBeTruthy();
     });
 
     test("Can group rows", () => {
@@ -1642,13 +1868,13 @@ describe("Menu Item actions", () => {
 
     test("Cannot group multiple selections", () => {
       setSelection(model, ["A1:C1", "A2:C2"]);
-      expect(getNode(groupRowsPath).isVisible(env)).toBeFalsy();
+      expect(getNode(groupRowsPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("Cannot re-group same selection of rows", () => {
       setSelection(model, ["A1:B3"]);
-      getNode(groupRowsPath).execute?.(env);
-      expect(getNode(groupRowsPath).isVisible(env)).toBeFalsy();
+      getNode(groupRowsPath, env).execute?.(env);
+      expect(getNode(groupRowsPath, env).isVisible(env)).toBeFalsy();
     });
 
     test("Can ungroup rows", () => {
@@ -1661,10 +1887,10 @@ describe("Menu Item actions", () => {
 
     test("Cannot ungroup rows when there's no group in the selection", () => {
       setSelection(model, ["A1:C3"]);
-      expect(getNode(ungroupRowsPath).isVisible(env)).toBeFalsy();
+      expect(getNode(ungroupRowsPath, env).isVisible(env)).toBeFalsy();
 
       groupRows(model, 0, 2);
-      expect(getNode(ungroupRowsPath).isVisible(env)).toBeTruthy();
+      expect(getNode(ungroupRowsPath, env).isVisible(env)).toBeTruthy();
     });
   });
 
@@ -1715,9 +1941,9 @@ describe("Menu Item actions", () => {
     });
 
     test("unfreeze actions visibility", () => {
-      const unfreezeColAction = getNode(["view", "freeze_panes", "unfreeze_columns"]);
-      const unfreezeRowAction = getNode(["view", "freeze_panes", "unfreeze_rows"]);
-      const unfreezeAllAction = getNode(["view", "unfreeze_panes"]);
+      const unfreezeColAction = getNode(["view", "freeze_panes", "unfreeze_columns"], env);
+      const unfreezeRowAction = getNode(["view", "freeze_panes", "unfreeze_rows"], env);
+      const unfreezeAllAction = getNode(["view", "unfreeze_panes"], env);
 
       expect(unfreezeColAction.isVisible(env)).toBe(false);
       expect(unfreezeRowAction.isVisible(env)).toBe(false);

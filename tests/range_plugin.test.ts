@@ -1,8 +1,8 @@
 import { CorePlugin, coreTypes, Model } from "../src";
-import { INCORRECT_RANGE_STRING } from "../src/constants";
 import { copyRangeWithNewSheetId } from "../src/helpers";
 import { corePluginRegistry } from "../src/plugins";
 import { ApplyRangeChange, Command, Range, UID } from "../src/types";
+import { CellErrorType } from "../src/types/errors";
 import {
   addColumns,
   addRows,
@@ -535,7 +535,13 @@ describe("range plugin", () => {
     });
 
     test("requesting a range that doesn't exist", () => {
-      expect(m.getters.getRangeString(undefined, "not there")).toBe(INCORRECT_RANGE_STRING);
+      expect(m.getters.getRangeString(undefined, "not there")).toBe(CellErrorType.InvalidReference);
+    });
+
+    test("requesting a range without parts", () => {
+      const r = m.getters.getRangeFromSheetXC("s1", "A1");
+      const rNoParts = r.clone({ parts: [] });
+      expect(m.getters.getRangeString(rNoParts, "forceSheetName")).toBe("s1!A1");
     });
 
     test("requesting a range without parts", () => {
@@ -572,7 +578,7 @@ describe("range plugin", () => {
     expect(m.getters.getRangeString(range)).toBe("s1!A1");
     createSheet(m, { sheetId: "s2" });
     deleteSheet(m, "s1");
-    expect(m.getters.getRangeString(range)).toBe(INCORRECT_RANGE_STRING);
+    expect(m.getters.getRangeString(range)).toBe(CellErrorType.InvalidReference);
   });
 });
 

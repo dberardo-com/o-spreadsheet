@@ -1,7 +1,11 @@
+import { registries } from "../../src";
+import { ComposerStore } from "../../src/components/composer/composer/composer_store";
 import { DEFAULT_CELL_HEIGHT, DEFAULT_CELL_WIDTH } from "../../src/constants";
 import { functionRegistry } from "../../src/functions/index";
 import { Model } from "../../src/model";
+import { Store } from "../../src/store_engine";
 import { ContentEditableHelper } from "../__mocks__/content_editable_helper";
+import { registerCleanup } from "../setup/jest.setup";
 import { selectCell } from "../test_helpers/commands_helpers";
 import {
   click,
@@ -28,6 +32,7 @@ let composerEl: Element;
 let fixture: HTMLElement;
 let cehMock: ContentEditableHelper;
 let parent: ComposerWrapper;
+let composerStore: Store<ComposerStore>;
 
 async function typeInComposer(text: string, fromScratch: boolean = true) {
   if (fromScratch) {
@@ -80,6 +85,7 @@ describe("Functions autocomplete", () => {
     parent.startComposition();
     await nextTick();
     composerEl = fixture.querySelector("div.o-composer")!;
+    composerStore = parent.env.getStore(ComposerStore);
   });
 
   describe("autocomplete", () => {
@@ -204,7 +210,7 @@ describe("Functions autocomplete", () => {
     });
 
     test("autocomplete fuzzy search", async () => {
-      for (const f of ["TEST_FUZZY", "FUZZY", "FUZZY_TEST", "TEST_FUZZY_TEST"]) {
+      for (const f of ["TEST_FUZZY", "FUZZY_TEST", "TEST_FUZZY_TEST"]) {
         functionRegistry.add(f, {
           description: "",
           args: [],
@@ -213,13 +219,23 @@ describe("Functions autocomplete", () => {
         });
       }
       await typeInComposer("=FUZZY");
-      expect(fixture.querySelectorAll(".o-autocomplete-value")).toHaveLength(4);
-      expect(fixture.querySelectorAll(".o-autocomplete-value")[0].textContent).toBe("FUZZY");
-      expect(fixture.querySelectorAll(".o-autocomplete-value")[1].textContent).toBe("FUZZY_TEST");
-      expect(fixture.querySelectorAll(".o-autocomplete-value")[2].textContent).toBe("TEST_FUZZY");
-      expect(fixture.querySelectorAll(".o-autocomplete-value")[3].textContent).toBe(
+      expect(fixture.querySelectorAll(".o-autocomplete-value")).toHaveLength(3);
+      expect(fixture.querySelectorAll(".o-autocomplete-value")[0].textContent).toBe("FUZZY_TEST");
+      expect(fixture.querySelectorAll(".o-autocomplete-value")[1].textContent).toBe("TEST_FUZZY");
+      expect(fixture.querySelectorAll(".o-autocomplete-value")[2].textContent).toBe(
         "TEST_FUZZY_TEST"
       );
+    });
+
+    test("autocomplete not displayed for exact match", async () => {
+      functionRegistry.add("FUZZY", {
+        description: "",
+        args: [],
+        compute: () => 1,
+        returns: ["ANY"],
+      });
+      await typeInComposer("=FUZZY");
+      expect(fixture.querySelectorAll(".o-autocomplete-value")).toHaveLength(0);
     });
 
     test("Mouse events on the autocomplete dropdown don't make the composer loose focus", async () => {
@@ -242,28 +258,80 @@ describe("Functions autocomplete", () => {
       const entries = fixture.querySelectorAll(".o-autocomplete-value");
       const firstEntry = entries[0];
       const secondEntry = entries[1];
-      triggerMouseEvent(secondEntry, "mousemove");
+      triggerMouseEvent(secondEntry, "pointermove");
       await nextTick();
       expect(
         fixture.querySelector(".o-autocomplete-value-focus .o-autocomplete-value")!.textContent
       ).toBe("SZZ");
-      triggerMouseEvent(firstEntry, "mousemove");
+      triggerMouseEvent(firstEntry, "pointermove");
       await nextTick();
       expect(
         fixture.querySelector(".o-autocomplete-value-focus .o-autocomplete-value")!.textContent
       ).toBe("SUM");
     });
 
-    test("autocomplete should not appear when typing '=S', clicking outside, and edting back", async () => {
+    test("key down or up selects auto-complete proposals instead of reference", async () => {
+      registries.autoCompleteProviders.add("test", {
+        getProposals() {
+          return [{ text: "option 1" }, { text: "option 2" }];
+        },
+        selectProposal() {},
+      });
+      registerCleanup(() => registries.autoCompleteProviders.remove("test"));
+      await typeInComposer("=SUM(");
+      const proposals = [...fixture.querySelectorAll(".o-autocomplete-value")].map(
+        (el) => el.parentElement
+      );
+
+      expect(composerStore.autocompleteProvider?.proposals).toHaveLength(2);
+      expect(composerStore.showSelectionIndicator).toBe(true);
+      expect(proposals[0]?.classList).not.toContain("o-autocomplete-value-focus");
+      expect(proposals[1]?.classList).not.toContain("o-autocomplete-value-focus");
+
+      await keyDown({ key: "ArrowDown" });
+      expect(proposals[0]?.classList).toContain("o-autocomplete-value-focus");
+      expect(proposals[1]?.classList).not.toContain("o-autocomplete-value-focus");
+      expect(composerStore.currentContent).toBe("=SUM(");
+
+      await keyDown({ key: "ArrowUp" });
+      expect(proposals[0]?.classList).not.toContain("o-autocomplete-value-focus");
+      expect(proposals[1]?.classList).toContain("o-autocomplete-value-focus");
+      expect(composerStore.currentContent).toBe("=SUM(");
+    });
+
+    test("key left or right selects adjacent cell instead of a proposal", async () => {
+      registries.autoCompleteProviders.add("test", {
+        getProposals() {
+          return [{ text: "option 1" }];
+        },
+        selectProposal() {},
+      });
+      registerCleanup(() => registries.autoCompleteProviders.remove("test"));
+      await typeInComposer("=SUM(");
+      expect(composerStore.autocompleteProvider?.proposals).toHaveLength(1);
+      expect(composerStore.showSelectionIndicator).toBe(true);
+      expect(
+        fixture.querySelector(".o-autocomplete-value")?.parentElement?.classList
+      ).not.toContain("o-autocomplete-value-focus");
+      await keyDown({ key: "ArrowRight" });
+      expect(composerStore.currentContent).toBe("=SUM(B1");
+      expect(fixture.querySelector(".o-autocomplete-value")).toBeNull();
+
+      // now that a reference is selected, arrow up/down should select cells, not select a proposal
+      await keyDown({ key: "ArrowDown" });
+      expect(composerStore.currentContent).toBe("=SUM(B2");
+    });
+
+    test("autocomplete should not appear when typing '=S', stop the edition, and editing back", async () => {
       await typeInComposer("=S", true);
       expect(fixture.querySelectorAll(".o-autocomplete-value")).toHaveLength(2);
 
-      model.dispatch("STOP_EDITION");
+      await keyDown({ key: "Escape" });
       await nextTick();
       await nextTick();
       expect(fixture.querySelector(".o-autocomplete-dropdown")).toBeFalsy();
 
-      await keyDown({ key: "Enter" });
+      await typeInComposer("", true);
       expect(fixture.querySelector(".o-autocomplete-dropdown")).toBeFalsy();
     });
   });
@@ -299,6 +367,7 @@ describe("Autocomplete parenthesis", () => {
     parent.startComposition();
     await nextTick();
     composerEl = fixture.querySelector("div.o-composer")!;
+    composerStore = parent.env.getStore(ComposerStore);
   });
 
   test("=sum(1,2 + enter adds closing parenthesis", async () => {
@@ -310,14 +379,12 @@ describe("Autocomplete parenthesis", () => {
   test("=sum( + enter + edit does not show the formula assistant", async () => {
     await typeInComposer("=sum(");
     expect(fixture.querySelector(".o-formula-assistant-container")).toBeTruthy();
-
-    model.dispatch("STOP_EDITION");
+    await keyDown({ key: "Enter" });
     await nextTick();
     await nextTick();
     expect(fixture.querySelector(".o-formula-assistant-container")).toBeFalsy();
 
-    selectCell(model, "B4");
-    await keyDown({ key: "Enter" });
+    await typeInComposer("", true);
     expect(fixture.querySelector(".o-formula-assistant-container")).toBeFalsy();
   });
 
@@ -327,23 +394,23 @@ describe("Autocomplete parenthesis", () => {
     selectCell(model, "A1");
     //edit A1
     parent.setEdition({});
-    model.dispatch("CHANGE_COMPOSER_CURSOR_SELECTION", { start: 1, end: 4 });
+    composerStore.changeComposerCursorSelection(1, 4);
     await nextTick();
 
     await typeInComposer("if", false);
-    expect(model.getters.getCurrentContent()).toBe("=if(1,2)");
+    expect(composerStore.currentContent).toBe("=if(1,2)");
   });
 
   test("=S( + edit S with autocomplete does not add left parenthesis", async () => {
     await typeInComposer("=S(");
     // go behind the letter "S"
-    model.dispatch("STOP_COMPOSER_RANGE_SELECTION");
-    model.dispatch("CHANGE_COMPOSER_CURSOR_SELECTION", { start: 2, end: 2 });
+    composerStore.stopComposerRangeSelection();
+    composerStore.changeComposerCursorSelection(2, 2);
     await nextTick();
     // show autocomplete
     await typeInComposer("U", false);
-    expect(model.getters.getCurrentContent()).toBe("=SU(");
-    expect(model.getters.getComposerSelection()).toEqual({ start: 3, end: 3 });
+    expect(composerStore.currentContent).toBe("=SU(");
+    expect(composerStore.composerSelection).toEqual({ start: 3, end: 3 });
     expect(document.activeElement).toBe(composerEl);
     expect(fixture.querySelectorAll(".o-autocomplete-value")).toHaveLength(1);
     // select the SUM function
@@ -351,7 +418,7 @@ describe("Autocomplete parenthesis", () => {
     expect(composerEl.textContent).toBe("=SUM(");
     expect(cehMock.selectionState.isSelectingRange).toBeTruthy();
     expect(cehMock.selectionState.position).toBe(5);
-    expect(model.getters.getComposerSelection()).toEqual({ start: 5, end: 5 });
+    expect(composerStore.composerSelection).toEqual({ start: 5, end: 5 });
   });
 
   test("=sum(sum(1,2 + enter add 2 closing parenthesis", async () => {
@@ -375,7 +442,7 @@ describe("Autocomplete parenthesis", () => {
   test("=s + tab should allow to select a ref", async () => {
     await typeInComposer("=s");
     await keyDown({ key: "Tab" });
-    expect(model.getters.getEditionMode()).toBe("selecting");
+    expect(composerStore.editionMode).toBe("selecting");
   });
 });
 

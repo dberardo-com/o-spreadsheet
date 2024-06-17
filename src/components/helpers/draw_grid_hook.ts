@@ -1,11 +1,16 @@
 import { useEffect, useRef } from "@odoo/owl";
 import { Model } from "../..";
 import { CANVAS_SHIFT } from "../../constants";
-import { DOMDimension } from "../../types";
+import { useStore } from "../../store_engine";
+import { GridRenderer } from "../../stores/grid_renderer_store";
+import { RendererStore } from "../../stores/renderer_store";
+import { DOMDimension, OrderedLayers } from "../../types";
 
 export function useGridDrawing(refName: string, model: Model, canvasSize: () => DOMDimension) {
   const canvasRef = useRef(refName);
   useEffect(drawGrid);
+  const rendererStore = useStore(RendererStore);
+  useStore(GridRenderer);
 
   function drawGrid() {
     const canvas = canvasRef.el as HTMLCanvasElement;
@@ -31,6 +36,14 @@ export function useGridDrawing(refName: string, model: Model, canvasSize: () => 
     // http://diveintohtml5.info/canvas.html#pixel-madness
     ctx.translate(-CANVAS_SHIFT, -CANVAS_SHIFT);
     ctx.scale(dpr, dpr);
-    model.drawGrid(renderingContext);
+
+    for (const layer of OrderedLayers()) {
+      model.drawLayer(renderingContext, layer);
+      // @ts-ignore 'drawLayer' is not declated as a mutator because:
+      // it does not mutate anything. Most importantly it's used
+      // during rendering. Invoking a mutator during rendering would
+      // trigger another rendering, ultimately resulting in an infinite loop.
+      rendererStore.drawLayer(renderingContext, layer);
+    }
   }
 }

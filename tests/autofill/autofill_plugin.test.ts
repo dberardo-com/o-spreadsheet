@@ -1,13 +1,12 @@
-import { Model } from "../../src";
-import { functionRegistry } from "../../src/functions";
+import "../test_helpers/helpers";
+
 import { buildSheetLink, toCartesian, toZone } from "../../src/helpers";
-import { AutofillPlugin } from "../../src/plugins/ui_feature/autofill";
 import { Border, ConditionalFormat, Style } from "../../src/types";
-import { DIRECTION } from "../../src/types/index";
 import {
   addDataValidation,
   createSheet,
   createSheetWithName,
+  createTable,
   deleteColumns,
   deleteRows,
   merge,
@@ -22,15 +21,20 @@ import {
   getCellText,
   getMerges,
   getStyle,
-} from "../test_helpers/getters_helpers"; // to have getcontext mocks
-import "../test_helpers/helpers";
+} from "../test_helpers/getters_helpers";
 import {
   XCToMergeCellMap,
   getDataValidationRules,
   getMergeCellMap,
   getPlugin,
+  makeTestComposerStore,
   toRangesData,
 } from "../test_helpers/helpers";
+
+import { Model } from "../../src";
+import { functionRegistry } from "../../src/functions";
+import { AutofillPlugin } from "../../src/plugins/ui_feature/autofill";
+import { DIRECTION } from "../../src/types/index";
 
 let autoFill: AutofillPlugin;
 let model: Model;
@@ -143,10 +147,11 @@ describe("Autofill", () => {
   });
 
   test("Autofill a date displays a date in the composer", () => {
+    const composerStore = makeTestComposerStore(model);
     setCellContent(model, "A1", "1/1/2017");
     autofill("A1", "A2");
     selectCell(model, "A2");
-    expect(model.getters.getCurrentContent()).toBe("1/2/2017");
+    expect(composerStore.currentContent).toBe("1/2/2017");
   });
 
   test("Autofill add CF to target cell if present in origin cell", () => {
@@ -524,6 +529,20 @@ describe("Autofill", () => {
     expect(getCell(model, "B5")).toBeUndefined();
   });
 
+  test("Auto-autofill multiple cells left", () => {
+    setCellContent(model, "A2", "1");
+    setCellContent(model, "A3", "1");
+    setCellContent(model, "A4", "1");
+    setCellContent(model, "A5", "1");
+    setCellContent(model, "B2", "2");
+    setCellContent(model, "B3", "3");
+    setSelection(model, ["B2:B3"]);
+    model.dispatch("AUTOFILL_AUTO");
+    expect(getCellContent(model, "B4")).toBe("4");
+    expect(getCellContent(model, "B5")).toBe("5");
+    expect(getCell(model, "B6")).toBeUndefined();
+  });
+
   test("Auto-autofill right", () => {
     setCellContent(model, "B2", "1");
     setCellContent(model, "B3", "1");
@@ -534,6 +553,20 @@ describe("Autofill", () => {
     expect(getCellContent(model, "A3")).toBe("2");
     expect(getCellContent(model, "A4")).toBe("2");
     expect(getCell(model, "A5")).toBeUndefined();
+  });
+
+  test("Auto-autofill multiple cells right", () => {
+    setCellContent(model, "B2", "1");
+    setCellContent(model, "B3", "1");
+    setCellContent(model, "B4", "1");
+    setCellContent(model, "B5", "1");
+    setCellContent(model, "A2", "2");
+    setCellContent(model, "A3", "3");
+    setSelection(model, ["A2:A3"]);
+    model.dispatch("AUTOFILL_AUTO");
+    expect(getCellContent(model, "A4")).toBe("4");
+    expect(getCellContent(model, "A5")).toBe("5");
+    expect(getCell(model, "A6")).toBeUndefined();
   });
 
   test("Auto-autofill considers cells with a content", () => {
@@ -548,15 +581,29 @@ describe("Autofill", () => {
     expect(getCell(model, "A5")).toBeUndefined();
   });
 
+  test("Auto-autofill of multiple cells considers cells with a content", () => {
+    setCellContent(model, "B2", "1");
+    setCellContent(model, "B3", '=""');
+    setCellContent(model, "B4", '=""');
+    setCellContent(model, "B5", '=""');
+    setCellContent(model, "A2", "2");
+    setCellContent(model, "A3", "3");
+    setSelection(model, ["A2:A3"]);
+    model.dispatch("AUTOFILL_AUTO");
+    expect(getCellContent(model, "A4")).toBe("4");
+    expect(getCellContent(model, "A5")).toBe("5");
+    expect(getCell(model, "A6")).toBeUndefined();
+  });
+
   test("Auto-autofill considers formula spreaded value", () => {
     functionRegistry.add("SPREAD.EMPTY", {
       description: "spreads empty values",
       args: [],
       returns: ["NUMBER"],
-      compute: function (): string[][] {
+      compute: function (): null[][] {
         return [
-          ["", "", ""], // return 2 col, 3 row matrix
-          ["", "", ""],
+          [null, null, null], // return 2 col, 3 row matrix
+          [null, null, null],
         ];
       },
       isExported: false,
@@ -571,6 +618,37 @@ describe("Autofill", () => {
     expect(getCell(model, "C4")).toBeUndefined();
   });
 
+  test("Auto-autofill in a table fill until the end of the table", () => {
+    createTable(model, "A1:B3");
+    setCellContent(model, "A1", "=C1");
+    model.dispatch("AUTOFILL_AUTO");
+    expect(getCell(model, "A2")?.content).toBe("=C2");
+    expect(getCell(model, "A3")?.content).toBe("=C3");
+    expect(getCell(model, "A4")?.content).toBe(undefined);
+  });
+
+  test("Auto-autofill stops at non empty cell", () => {
+    // On standard range
+    setCellContent(model, "A1", "1");
+    setCellContent(model, "A2", "2");
+    setCellContent(model, "A3", "3");
+    setCellContent(model, "B1", "=A1");
+    setCellContent(model, "B3", "Text not overwritten");
+    setSelection(model, ["B1"]);
+    model.dispatch("AUTOFILL_AUTO");
+    expect(getCell(model, "B2")?.content).toBe("=A2");
+    expect(getCell(model, "B3")?.content).toBe("Text not overwritten");
+
+    // On a table
+    createTable(model, "C1:C3");
+    setCellContent(model, "C1", "=D1");
+    setCellContent(model, "C3", "Text not overwritten");
+    setSelection(model, ["C1"]);
+    model.dispatch("AUTOFILL_AUTO");
+    expect(getCell(model, "C2")?.content).toBe("=D2");
+    expect(getCell(model, "C3")?.content).toBe("Text not overwritten");
+  });
+
   test("autofill with merge in selection", () => {
     merge(model, "A1:A2");
     setCellContent(model, "A1", "1");
@@ -579,9 +657,9 @@ describe("Autofill", () => {
       XCToMergeCellMap(model, ["A1", "A2", "A4", "A5", "A7", "A8"])
     );
     expect(getMerges(model)).toEqual({
-      "1": { bottom: 1, id: 1, left: 0, right: 0, top: 0, topLeft: toCartesian("A1") },
-      "2": { bottom: 4, id: 2, left: 0, right: 0, top: 3, topLeft: toCartesian("A4") },
-      "3": { bottom: 7, id: 3, left: 0, right: 0, top: 6, topLeft: toCartesian("A7") },
+      "1": { bottom: 1, id: 1, left: 0, right: 0, top: 0 },
+      "2": { bottom: 4, id: 2, left: 0, right: 0, top: 3 },
+      "3": { bottom: 7, id: 3, left: 0, right: 0, top: 6 },
     });
     expect(getCellContent(model, "A1")).toBe("1");
     expect(getCellContent(model, "A4")).toBe("2");
@@ -594,8 +672,8 @@ describe("Autofill", () => {
     autofill("A1:A2", "A5");
     expect(getMergeCellMap(model)).toEqual(XCToMergeCellMap(model, ["A1", "A2", "A3", "A4"]));
     expect(getMerges(model)).toEqual({
-      "1": { bottom: 1, id: 1, left: 0, right: 0, top: 0, topLeft: toCartesian("A1") },
-      "2": { bottom: 3, id: 2, left: 0, right: 0, top: 2, topLeft: toCartesian("A3") },
+      "1": { bottom: 1, id: 1, left: 0, right: 0, top: 0 },
+      "2": { bottom: 3, id: 2, left: 0, right: 0, top: 2 },
     });
   });
 

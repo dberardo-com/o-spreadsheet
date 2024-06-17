@@ -1,30 +1,28 @@
 import { transformZone } from "../../../collaborative/ot/ot_helpers";
-import { INCORRECT_RANGE_STRING } from "../../../constants";
 import {
   AddColumnsRowsCommand,
   ApplyRangeChange,
-  CellValueType,
   Color,
   CommandResult,
   CoreGetters,
   DOMCoordinates,
   DOMDimension,
-  EvaluatedCell,
   Getters,
-  Locale,
   Range,
   RemoveColumnsRowsCommand,
   UID,
   UnboundedZone,
   Zone,
 } from "../../../types";
-import { BarChartDefinition } from "../../../types/chart/bar_chart";
-import { DataSet, ExcelChartDataset } from "../../../types/chart/chart";
-import { LineChartDefinition } from "../../../types/chart/line_chart";
-import { PieChartDefinition } from "../../../types/chart/pie_chart";
-import { BaselineArrowDirection, BaselineMode } from "../../../types/chart/scorecard_chart";
+import {
+  AxisDesign,
+  ChartWithAxisDefinition,
+  CustomizedDataSet,
+  DataSet,
+  ExcelChartDataset,
+} from "../../../types/chart/chart";
+import { CellErrorType } from "../../../types/errors";
 import { relativeLuminance } from "../../color";
-import { formatValue } from "../../format";
 import { isDefined } from "../../misc";
 import { copyRangeWithNewSheetId } from "../../range";
 import { rangeReference } from "../../references";
@@ -61,7 +59,7 @@ export function updateChartRangesWithDataSets(
     const dataRange = adaptChartRange(ds.dataRange, applyChange);
     if (
       dataRange === undefined ||
-      getters.getRangeString(dataRange, dataRange.sheetId) === INCORRECT_RANGE_STRING
+      getters.getRangeString(dataRange, dataRange.sheetId) === CellErrorType.InvalidReference
     ) {
       isStale = true;
       ds = undefined;
@@ -145,13 +143,13 @@ export function adaptChartRange(
  */
 export function createDataSets(
   getters: CoreGetters,
-  dataSetsString: string[],
+  customizedDataSets: CustomizedDataSet[],
   sheetId: UID,
   dataSetsHaveTitle: boolean
 ): DataSet[] {
   const dataSets: DataSet[] = [];
-  for (const sheetXC of dataSetsString) {
-    const dataRange = getters.getRangeFromSheetXC(sheetId, sheetXC);
+  for (const dataSet of customizedDataSets) {
+    const dataRange = getters.getRangeFromSheetXC(sheetId, dataSet.dataRange);
     const { unboundedZone: zone, sheetId: dataSetSheetId, invalidSheetName, invalidXc } = dataRange;
     if (invalidSheetName || invalidXc) {
       continue;
@@ -169,8 +167,8 @@ export function createDataSets(
           left: column,
           right: column,
         };
-        dataSets.push(
-          createDataSet(
+        dataSets.push({
+          ...createDataSet(
             getters,
             dataSetSheetId,
             columnZone,
@@ -182,13 +180,16 @@ export function createDataSets(
                   right: columnZone.left,
                 }
               : undefined
-          )
-        );
+          ),
+          backgroundColor: dataSet.backgroundColor,
+          rightYAxis: dataSet.yAxisId === "y1",
+          customLabel: dataSet.label,
+        });
       }
     } else {
       /* 1 cell, 1 row or 1 column */
-      dataSets.push(
-        createDataSet(
+      dataSets.push({
+        ...createDataSet(
           getters,
           dataSetSheetId,
           zone,
@@ -200,8 +201,11 @@ export function createDataSets(
                 right: zone.left,
               }
             : undefined
-        )
-      );
+        ),
+        backgroundColor: dataSet.backgroundColor,
+        rightYAxis: dataSet.yAxisId === "y1",
+        customLabel: dataSet.label,
+      });
     }
   }
   return dataSets;
@@ -247,12 +251,24 @@ export function toExcelDataset(getters: CoreGetters, ds: DataSet): ExcelChartDat
   }
 
   const dataRange = ds.dataRange.clone({ zone: dataZone });
+  let label = {};
+  if (ds.customLabel) {
+    label = {
+      text: ds.customLabel,
+    };
+  } else if (ds.labelCell) {
+    label = {
+      reference: getters.getRangeString(ds.labelCell, "forceSheetReference", {
+        useFixedReference: true,
+      }),
+    };
+  }
 
   return {
-    label: ds.labelCell
-      ? getters.getRangeString(ds.labelCell, "forceSheetReference", { useFixedReference: true })
-      : undefined,
+    label,
     range: getters.getRangeString(dataRange, "forceSheetReference", { useFixedReference: true }),
+    backgroundColor: ds.backgroundColor,
+    rightYAxis: ds.rightYAxis,
   };
 }
 
@@ -276,56 +292,25 @@ export function toExcelLabelRange(
  * Transform a chart definition which supports dataSets (dataSets and LabelRange)
  * with an executed command
  */
-export function transformChartDefinitionWithDataSetsWithZone<
-  T extends LineChartDefinition | BarChartDefinition | PieChartDefinition
->(definition: T, executed: AddColumnsRowsCommand | RemoveColumnsRowsCommand): T {
+export function transformChartDefinitionWithDataSetsWithZone<T extends ChartWithAxisDefinition>(
+  definition: T,
+  executed: AddColumnsRowsCommand | RemoveColumnsRowsCommand
+): T {
   let labelRange: string | undefined;
   if (definition.labelRange) {
     const labelZone = transformZone(toUnboundedZone(definition.labelRange), executed);
     labelRange = labelZone ? zoneToXc(labelZone) : undefined;
   }
-  const dataSets = definition.dataSets
-    .map(toUnboundedZone)
+  const dataSets: CustomizedDataSet[] = definition.dataSets
+    .map((ds) => toUnboundedZone(ds.dataRange))
     .map((zone) => transformZone(zone, executed))
     .filter(isDefined)
-    .map(zoneToXc);
+    .map((xc) => ({ dataRange: zoneToXc(xc) }));
   return {
     ...definition,
     labelRange,
     dataSets,
   };
-}
-
-const GraphColors = [
-  // the same colors as those used in odoo reporting
-  "rgb(31,119,180)",
-  "rgb(255,127,14)",
-  "rgb(174,199,232)",
-  "rgb(255,187,120)",
-  "rgb(44,160,44)",
-  "rgb(152,223,138)",
-  "rgb(214,39,40)",
-  "rgb(255,152,150)",
-  "rgb(148,103,189)",
-  "rgb(197,176,213)",
-  "rgb(140,86,75)",
-  "rgb(196,156,148)",
-  "rgb(227,119,194)",
-  "rgb(247,182,210)",
-  "rgb(127,127,127)",
-  "rgb(199,199,199)",
-  "rgb(188,189,34)",
-  "rgb(219,219,141)",
-  "rgb(23,190,207)",
-  "rgb(158,218,229)",
-];
-
-export class ChartColors {
-  private graphColorIndex = 0;
-
-  next(): string {
-    return GraphColors[this.graphColorIndex++ % GraphColors.length];
-  }
 }
 
 /**
@@ -339,16 +324,14 @@ export function chartFontColor(backgroundColor: Color | undefined): Color {
   return relativeLuminance(backgroundColor) < 0.3 ? "#FFFFFF" : "#000000";
 }
 
-export function checkDataset(
-  definition: LineChartDefinition | BarChartDefinition | PieChartDefinition
-): CommandResult {
+export function checkDataset(definition: ChartWithAxisDefinition): CommandResult {
   if (definition.dataSets) {
     const invalidRanges =
-      definition.dataSets.find((range) => !rangeReference.test(range)) !== undefined;
+      definition.dataSets.find((range) => !rangeReference.test(range.dataRange)) !== undefined;
     if (invalidRanges) {
       return CommandResult.InvalidDataSet;
     }
-    const zones = definition.dataSets.map(toUnboundedZone);
+    const zones = definition.dataSets.map((ds) => toUnboundedZone(ds.dataRange));
     if (zones.some((zone) => zone.top !== zone.bottom && isFullRow(zone))) {
       return CommandResult.InvalidDataSet;
     }
@@ -356,9 +339,7 @@ export function checkDataset(
   return CommandResult.Success;
 }
 
-export function checkLabelRange(
-  definition: LineChartDefinition | BarChartDefinition | PieChartDefinition
-): CommandResult {
+export function checkLabelRange(definition: ChartWithAxisDefinition): CommandResult {
   if (definition.labelRange) {
     const invalidLabels = !rangeReference.test(definition.labelRange || "");
     if (invalidLabels) {
@@ -384,84 +365,6 @@ export function shouldRemoveFirstLabel(
   return true;
 }
 
-// ---------------------------------------------------------------------------
-// Scorecard
-// ---------------------------------------------------------------------------
-
-export function getBaselineText(
-  baseline: EvaluatedCell | undefined,
-  keyValue: EvaluatedCell | undefined,
-  baselineMode: BaselineMode,
-  locale: Locale
-): string {
-  if (!baseline) {
-    return "";
-  } else if (
-    baselineMode === "text" ||
-    keyValue?.type !== CellValueType.number ||
-    baseline.type !== CellValueType.number
-  ) {
-    return baseline.formattedValue;
-  } else {
-    let diff = keyValue.value - baseline.value;
-    if (baselineMode === "percentage" && diff !== 0) {
-      diff = (diff / baseline.value) * 100;
-    }
-
-    if (baselineMode !== "percentage" && baseline.format) {
-      return formatValue(diff, { format: baseline.format, locale });
-    }
-
-    const baselineStr = Math.abs(parseFloat(diff.toFixed(2))).toLocaleString();
-    return baselineMode === "percentage" ? baselineStr + "%" : baselineStr;
-  }
-}
-
-export function getBaselineColor(
-  baseline: EvaluatedCell | undefined,
-  baselineMode: BaselineMode,
-  keyValue: EvaluatedCell | undefined,
-  colorUp: Color,
-  colorDown: Color
-): Color | undefined {
-  if (
-    baselineMode === "text" ||
-    baseline?.type !== CellValueType.number ||
-    keyValue?.type !== CellValueType.number
-  ) {
-    return undefined;
-  }
-  const diff = keyValue.value - baseline.value;
-  if (diff > 0) {
-    return colorUp;
-  } else if (diff < 0) {
-    return colorDown;
-  }
-  return undefined;
-}
-
-export function getBaselineArrowDirection(
-  baseline: EvaluatedCell | undefined,
-  keyValue: EvaluatedCell | undefined,
-  baselineMode: BaselineMode
-): BaselineArrowDirection {
-  if (
-    baselineMode === "text" ||
-    baseline?.type !== CellValueType.number ||
-    keyValue?.type !== CellValueType.number
-  ) {
-    return "neutral";
-  }
-
-  const diff = keyValue.value - baseline.value;
-  if (diff > 0) {
-    return "up";
-  } else if (diff < 0) {
-    return "down";
-  }
-  return "neutral";
-}
-
 export function getChartPositionAtCenterOfViewport(
   getters: Getters,
   chartSize: DOMDimension
@@ -476,4 +379,49 @@ export function getChartPositionAtCenterOfViewport(
   }; // Position at the center of the scrollable viewport
 
   return position;
+}
+
+export function getChartAxisTitleRuntime(design?: AxisDesign):
+  | {
+      display: boolean;
+      text: string;
+      color?: string;
+      font: {
+        style: "italic" | "normal";
+        weight: "bold" | "normal";
+      };
+      align: "start" | "center" | "end";
+    }
+  | undefined {
+  if (design?.title?.text) {
+    const { text, color, align, italic, bold } = design.title;
+    return {
+      display: true,
+      text,
+      color,
+      font: {
+        style: italic ? "italic" : "normal",
+        weight: bold ? "bold" : "normal",
+      },
+      align: align === "left" ? "start" : align === "right" ? "end" : "center",
+    };
+  }
+  return;
+}
+
+export function getDefinedAxis(definition: ChartWithAxisDefinition): {
+  useLeftAxis: boolean;
+  useRightAxis: boolean;
+} {
+  let useLeftAxis = false,
+    useRightAxis = false;
+  for (const design of definition.dataSets || []) {
+    if (design.yAxisId === "y1") {
+      useRightAxis = true;
+    } else {
+      useLeftAxis = true;
+    }
+  }
+  useLeftAxis ||= !useRightAxis;
+  return { useLeftAxis, useRightAxis };
 }

@@ -1,15 +1,22 @@
 import { Component } from "@odoo/owl";
 import { ChartJsComponent } from "../components/figures/chart/chartJs/chartjs";
+import { GaugeChartComponent } from "../components/figures/chart/gauge/gauge_chart_component";
 import { ScorecardChart as ScorecardChartComponent } from "../components/figures/chart/scorecard/chart_scorecard";
 import { AbstractChart } from "../helpers/figures/charts/abstract_chart";
 import { BarChart, createBarChartRuntime } from "../helpers/figures/charts/bar_chart";
+import { ComboChart, createComboChartRuntime } from "../helpers/figures/charts/combo_chart";
 import { GaugeChart, createGaugeChartRuntime } from "../helpers/figures/charts/gauge_chart";
 import { LineChart, createLineChartRuntime } from "../helpers/figures/charts/line_chart";
 import { PieChart, createPieChartRuntime } from "../helpers/figures/charts/pie_chart";
+import { ScatterChart, createScatterChartRuntime } from "../helpers/figures/charts/scatter_chart";
 import {
   ScorecardChart,
   createScorecardChartRuntime,
 } from "../helpers/figures/charts/scorecard_chart";
+import {
+  WaterfallChart,
+  createWaterfallChartRuntime,
+} from "../helpers/figures/charts/waterfall_chart";
 import { _t } from "../translation";
 import {
   AddColumnsRowsCommand,
@@ -32,6 +39,9 @@ import {
   ChartRuntime,
   ChartType,
 } from "../types/chart/chart";
+import { ComboChartDefinition } from "../types/chart/combo_chart";
+import { ScatterChartDefinition } from "../types/chart/scatter_chart";
+import { WaterfallChartDefinition } from "../types/chart/waterfall_chart";
 import { Validator } from "../types/validator";
 import { Registry } from "./registry";
 
@@ -72,30 +82,31 @@ chartRegistry.add("bar", {
   createChart: (definition, sheetId, getters) =>
     new BarChart(definition as BarChartDefinition, sheetId, getters),
   getChartRuntime: createBarChartRuntime,
-  validateChartDefinition: (validator, definition: BarChartDefinition) =>
-    BarChart.validateChartDefinition(validator, definition),
-  transformDefinition: (
-    definition: BarChartDefinition,
-    executed: AddColumnsRowsCommand | RemoveColumnsRowsCommand
-  ) => BarChart.transformDefinition(definition, executed),
-  getChartDefinitionFromContextCreation: (context: ChartCreationContext) =>
-    BarChart.getDefinitionFromContextCreation(context),
+  validateChartDefinition: BarChart.validateChartDefinition,
+  transformDefinition: BarChart.transformDefinition,
+  getChartDefinitionFromContextCreation: BarChart.getDefinitionFromContextCreation,
   name: _t("Bar"),
   sequence: 10,
+});
+chartRegistry.add("combo", {
+  match: (type) => type === "combo",
+  createChart: (definition, sheetId, getters) =>
+    new ComboChart(definition as ComboChartDefinition, sheetId, getters),
+  getChartRuntime: createComboChartRuntime,
+  validateChartDefinition: ComboChart.validateChartDefinition,
+  transformDefinition: ComboChart.transformDefinition,
+  getChartDefinitionFromContextCreation: ComboChart.getDefinitionFromContextCreation,
+  name: _t("Combo"),
+  sequence: 15,
 });
 chartRegistry.add("line", {
   match: (type) => type === "line",
   createChart: (definition, sheetId, getters) =>
     new LineChart(definition as LineChartDefinition, sheetId, getters),
   getChartRuntime: createLineChartRuntime,
-  validateChartDefinition: (validator, definition) =>
-    LineChart.validateChartDefinition(validator, definition as LineChartDefinition),
-  transformDefinition: (
-    definition: LineChartDefinition,
-    executed: AddColumnsRowsCommand | RemoveColumnsRowsCommand
-  ) => LineChart.transformDefinition(definition, executed),
-  getChartDefinitionFromContextCreation: (context: ChartCreationContext) =>
-    LineChart.getDefinitionFromContextCreation(context),
+  validateChartDefinition: LineChart.validateChartDefinition,
+  transformDefinition: LineChart.transformDefinition,
+  getChartDefinitionFromContextCreation: LineChart.getDefinitionFromContextCreation,
   name: _t("Line"),
   sequence: 20,
 });
@@ -104,14 +115,9 @@ chartRegistry.add("pie", {
   createChart: (definition, sheetId, getters) =>
     new PieChart(definition as PieChartDefinition, sheetId, getters),
   getChartRuntime: createPieChartRuntime,
-  validateChartDefinition: (validator, definition: PieChartDefinition) =>
-    PieChart.validateChartDefinition(validator, definition),
-  transformDefinition: (
-    definition: PieChartDefinition,
-    executed: AddColumnsRowsCommand | RemoveColumnsRowsCommand
-  ) => PieChart.transformDefinition(definition, executed),
-  getChartDefinitionFromContextCreation: (context: ChartCreationContext) =>
-    PieChart.getDefinitionFromContextCreation(context),
+  validateChartDefinition: PieChart.validateChartDefinition,
+  transformDefinition: PieChart.transformDefinition,
+  getChartDefinitionFromContextCreation: PieChart.getDefinitionFromContextCreation,
   name: _t("Pie"),
   sequence: 30,
 });
@@ -120,14 +126,9 @@ chartRegistry.add("scorecard", {
   createChart: (definition, sheetId, getters) =>
     new ScorecardChart(definition as ScorecardChartDefinition, sheetId, getters),
   getChartRuntime: createScorecardChartRuntime,
-  validateChartDefinition: (validator, definition) =>
-    ScorecardChart.validateChartDefinition(validator, definition as ScorecardChartDefinition),
-  transformDefinition: (
-    definition: ScorecardChartDefinition,
-    executed: AddColumnsRowsCommand | RemoveColumnsRowsCommand
-  ) => ScorecardChart.transformDefinition(definition, executed),
-  getChartDefinitionFromContextCreation: (context: ChartCreationContext) =>
-    ScorecardChart.getDefinitionFromContextCreation(context),
+  validateChartDefinition: ScorecardChart.validateChartDefinition,
+  transformDefinition: ScorecardChart.transformDefinition,
+  getChartDefinitionFromContextCreation: ScorecardChart.getDefinitionFromContextCreation,
   name: _t("Scorecard"),
   sequence: 40,
 });
@@ -136,21 +137,41 @@ chartRegistry.add("gauge", {
   createChart: (definition, sheetId, getters) =>
     new GaugeChart(definition as GaugeChartDefinition, sheetId, getters),
   getChartRuntime: createGaugeChartRuntime,
-  validateChartDefinition: (validator, definition) =>
-    GaugeChart.validateChartDefinition(validator, definition as GaugeChartDefinition),
-  transformDefinition: (
-    definition: GaugeChartDefinition,
-    executed: AddColumnsRowsCommand | RemoveColumnsRowsCommand
-  ) => GaugeChart.transformDefinition(definition, executed),
-  getChartDefinitionFromContextCreation: (context: ChartCreationContext) =>
-    GaugeChart.getDefinitionFromContextCreation(context),
+  validateChartDefinition: GaugeChart.validateChartDefinition,
+  transformDefinition: GaugeChart.transformDefinition,
+  getChartDefinitionFromContextCreation: GaugeChart.getDefinitionFromContextCreation,
   name: _t("Gauge"),
   sequence: 50,
+});
+chartRegistry.add("scatter", {
+  match: (type) => type === "scatter",
+  createChart: (definition, sheetId, getters) =>
+    new ScatterChart(definition as ScatterChartDefinition, sheetId, getters),
+  getChartRuntime: createScatterChartRuntime,
+  validateChartDefinition: ScatterChart.validateChartDefinition,
+  transformDefinition: ScatterChart.transformDefinition,
+  getChartDefinitionFromContextCreation: ScatterChart.getDefinitionFromContextCreation,
+  name: _t("Scatter"),
+  sequence: 60,
+});
+chartRegistry.add("waterfall", {
+  match: (type) => type === "waterfall",
+  createChart: (definition, sheetId, getters) =>
+    new WaterfallChart(definition as WaterfallChartDefinition, sheetId, getters),
+  getChartRuntime: createWaterfallChartRuntime,
+  validateChartDefinition: WaterfallChart.validateChartDefinition,
+  transformDefinition: WaterfallChart.transformDefinition,
+  getChartDefinitionFromContextCreation: WaterfallChart.getDefinitionFromContextCreation,
+  name: _t("Waterfall"),
+  sequence: 70,
 });
 
 export const chartComponentRegistry = new Registry<new (...args: any) => Component>();
 chartComponentRegistry.add("line", ChartJsComponent);
 chartComponentRegistry.add("bar", ChartJsComponent);
+chartComponentRegistry.add("combo", ChartJsComponent);
 chartComponentRegistry.add("pie", ChartJsComponent);
-chartComponentRegistry.add("gauge", ChartJsComponent);
+chartComponentRegistry.add("gauge", GaugeChartComponent);
+chartComponentRegistry.add("scatter", ChartJsComponent);
 chartComponentRegistry.add("scorecard", ScorecardChartComponent);
+chartComponentRegistry.add("waterfall", ChartJsComponent);

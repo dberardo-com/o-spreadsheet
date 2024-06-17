@@ -1,4 +1,4 @@
-import { areZonesContinuous, getZoneArea } from "../helpers/index";
+import { getZoneArea } from "../helpers/index";
 import { interactiveSortSelection } from "../helpers/sort";
 import { _t } from "../translation";
 import { ActionSpec } from "./action";
@@ -53,15 +53,13 @@ export const sortDescending: ActionSpec = {
   icon: "o-spreadsheet-Icon.SORT_DESCENDING",
 };
 
-export const addRemoveDataFilter: ActionSpec = {
-  name: (env) =>
-    ACTIONS.SELECTION_CONTAINS_FILTER(env) ? _t("Remove filter") : _t("Create filter"),
-  execute: (env) => createRemoveFilterAction(env),
-  isEnabled: (env): boolean => {
-    const selectedZones = env.model.getters.getSelectedZones();
-    return areZonesContinuous(...selectedZones);
-  },
-  icon: "o-spreadsheet-Icon.MENU_FILTER_ICON",
+export const createRemoveFilter: ActionSpec = {
+  ...ACTIONS.CREATE_OR_REMOVE_FILTER_ACTION,
+};
+
+export const createRemoveFilterTool: ActionSpec = {
+  ...ACTIONS.CREATE_OR_REMOVE_FILTER_ACTION,
+  isActive: (env) => ACTIONS.SELECTED_TABLE_HAS_FILTERS(env),
 };
 
 export const splitToColumns: ActionSpec = {

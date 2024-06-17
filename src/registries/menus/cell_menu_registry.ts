@@ -3,7 +3,8 @@ import { MenuItemRegistry } from "../menu_items_registry";
 
 import * as ACTION_EDIT from "../../actions/edit_actions";
 import * as ACTION_INSERT from "../../actions/insert_actions";
-import { INSERT_LINK_NAME } from "../../actions/menu_items_actions";
+import * as ACTIONS from "../../actions/menu_items_actions";
+import * as ACTIONS_PIVOT from "../../helpers/pivot/pivot_menu_items";
 
 //------------------------------------------------------------------------------
 // Context Menu Registry
@@ -63,18 +64,18 @@ cellMenuRegistry
   .add("delete_row", {
     ...ACTION_EDIT.deleteRow,
     sequence: 110,
-    icon: "o-spreadsheet-Icon.DELETE",
+    icon: "o-spreadsheet-Icon.TRASH",
   })
   .add("delete_column", {
     ...ACTION_EDIT.deleteCol,
     sequence: 120,
-    icon: "o-spreadsheet-Icon.DELETE",
+    icon: "o-spreadsheet-Icon.TRASH",
   })
   .add("delete_cell", {
     ...ACTION_EDIT.deleteCells,
     sequence: 130,
     separator: true,
-    icon: "o-spreadsheet-Icon.DELETE",
+    icon: "o-spreadsheet-Icon.TRASH",
   })
   .addChild("delete_cell_up", ["delete_cell"], {
     ...ACTION_EDIT.deleteCellShiftUp,
@@ -88,9 +89,25 @@ cellMenuRegistry
     sequence: 20,
     icon: "o-spreadsheet-Icon.DELETE_CELL_SHIFT_LEFT",
   })
+  .add("edit_table", {
+    ...ACTION_EDIT.editTable,
+    isVisible: ACTIONS.SELECTION_CONTAINS_SINGLE_TABLE,
+    sequence: 140,
+  })
+  .add("delete_table", {
+    ...ACTION_EDIT.deleteTable,
+    isVisible: ACTIONS.SELECTION_CONTAINS_SINGLE_TABLE,
+    sequence: 145,
+    separator: true,
+  })
   .add("insert_link", {
     ...ACTION_INSERT.insertLink,
-    name: INSERT_LINK_NAME,
+    name: ACTIONS.INSERT_LINK_NAME,
     sequence: 150,
+    separator: true,
+  })
+  .add("pivot_properties", {
+    ...ACTIONS_PIVOT.pivotProperties,
+    sequence: 160,
     separator: true,
   });

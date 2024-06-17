@@ -1,4 +1,4 @@
-import { evaluateGrid } from "../test_helpers/helpers";
+import { evaluateCell, evaluateGrid } from "../test_helpers/helpers";
 
 describe("database formula", () => {
   // prettier-ignore
@@ -255,7 +255,7 @@ describe("database formula", () => {
 
       const gridResult = evaluateGrid({ ...database, ...criteria, ...grid });
       expect(gridResult.A20).toBeCloseTo(0.02828, 5);
-      expect(gridResult.A21).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!
+      expect(gridResult.A21).toBe("#DIV/0!");
       expect(gridResult.A22).toBeCloseTo(24.47448, 5);
       expect(gridResult.A23).toBeCloseTo(6.9282, 5);
     });
@@ -309,7 +309,7 @@ describe("database formula", () => {
 
       const gridResult = evaluateGrid({ ...database, ...criteria, ...grid });
       expect(gridResult.A20).toBeCloseTo(0.0008, 4);
-      expect(gridResult.A21).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!
+      expect(gridResult.A21).toBe("#DIV/0!");
       expect(gridResult.A22).toBe(599);
       expect(gridResult.A23).toBe(48);
     });
@@ -331,5 +331,21 @@ describe("database formula", () => {
       expect(gridResult.A22).toBeCloseTo(549.08333, 5);
       expect(gridResult.A23).toBe(32);
     });
+  });
+
+  test("database formulas accepts errors in first argument", () => {
+    // prettier-ignore
+    const grid = {
+        A1: "Name", B1: "Age",
+        A2: "Peter", B2: "20",
+        A3: "=KABOUM", B3: "20",
+        A4: "Peter", B4: "26",
+        A5: "John", B5: "=KABOUM",
+
+        A6: "Name", B6: "Age",
+        A7: "Peter",
+      };
+
+    expect(evaluateCell("A10", { A10: '=DAVERAGE(A1:B5, "Age", A6:B7)', ...grid })).toBe(23);
   });
 });

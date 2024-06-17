@@ -18,6 +18,11 @@ interface State {
 /** This component looks like a select input, but on click it opens a Menu with the items given as props instead of a dropdown */
 export class SelectMenu extends Component<SelectMenuProps, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-SelectMenu";
+  static props = {
+    menuItems: Array,
+    selectedValue: String,
+    class: { type: String, optional: true },
+  };
   static components = { Menu };
 
   menuId = new UuidGenerator().uuidv4();
@@ -47,8 +52,3 @@ export class SelectMenu extends Component<SelectMenuProps, SpreadsheetChildEnv> 
     };
   }
 }
-SelectMenu.props = {
-  menuItems: Array,
-  selectedValue: String,
-  class: { type: String, optional: true },
-};

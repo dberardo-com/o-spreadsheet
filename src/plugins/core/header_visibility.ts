@@ -214,7 +214,7 @@ export class HeaderVisibilityPlugin extends CorePlugin {
           if (sheet.rows[row] === undefined) {
             sheet.rows[row] = {};
           }
-          sheet.rows[row].isHidden = this.hiddenHeaders[sheet.id]["ROW"][row];
+          sheet.rows[row].isHidden ||= this.hiddenHeaders[sheet.id]["ROW"][row];
         }
       }
 
@@ -226,7 +226,7 @@ export class HeaderVisibilityPlugin extends CorePlugin {
           if (sheet.cols[col] === undefined) {
             sheet.cols[col] = {};
           }
-          sheet.cols[col].isHidden = this.hiddenHeaders[sheet.id]["COL"][col];
+          sheet.cols[col].isHidden ||= this.hiddenHeaders[sheet.id]["COL"][col];
         }
       }
     }

@@ -1,8 +1,11 @@
-import { App, Component, onMounted, onWillUnmount, useSubEnv, xml } from "@odoo/owl";
+import { App, Component, useSubEnv, xml } from "@odoo/owl";
 import { Model } from "../../src";
 import { OPEN_CF_SIDEPANEL_ACTION } from "../../src/actions/menu_items_actions";
 import { SelectionInput } from "../../src/components/selection_input/selection_input";
-import { toCartesian, toZone } from "../../src/helpers";
+import { ColorGenerator, toCartesian, toZone } from "../../src/helpers";
+import { useStoreProvider } from "../../src/store_engine";
+import { ModelStore } from "../../src/stores";
+import { Color, SpreadsheetChildEnv } from "../../src/types";
 import {
   activateSheet,
   addCellToSelection,
@@ -48,22 +51,27 @@ interface SelectionInputTestConfig {
   hasSingleRange?: boolean;
   onChanged?: jest.Mock<void, [any]>;
   onConfirmed?: jest.Mock<void, []>;
+  colors?: Color[];
 }
 
 class Parent extends Component<any> {
   static template = xml/* xml */ `
     <SelectionInput
-      ranges="() => initialRanges || []"
+      ranges="initialRanges || []"
       hasSingleRange="hasSingleRange"
       onSelectionChanged="(ranges) => this.onChanged(ranges)"
-      onSelectionConfirmed="onConfirmed" />
+      onSelectionConfirmed="onConfirmed"
+      colors="colors || []"
+    />
   `;
   static components = { SelectionInput };
+  static props = { model: Object, config: Object };
   model!: Model;
   initialRanges: string[] | undefined;
   hasSingleRange: boolean | undefined;
   onChanged!: jest.Mock<void, [any]>;
   onConfirmed!: jest.Mock<void, []>;
+  colors: Color[] | undefined;
 
   get id(): string {
     const selectionInput = getChildFromComponent(this, SelectionInput);
@@ -74,16 +82,14 @@ class Parent extends Component<any> {
     useSubEnv({
       model: this.props.model,
     });
+    const stores = useStoreProvider();
+    stores.inject(ModelStore, this.props.model);
     this.initialRanges = this.props.config.initialRanges;
     this.hasSingleRange = this.props.config.hasSingleRange;
+    this.colors = this.props.config.colors;
     this.model = model;
     this.onChanged = this.props.config.onChanged || jest.fn();
     this.onConfirmed = this.props.config.onConfirmed || jest.fn();
-    onMounted(() => {
-      this.model.on("update", this, () => this.render(true));
-      this.render(true);
-    });
-    onWillUnmount(() => this.model.off("update", this));
   }
 }
 
@@ -91,24 +97,22 @@ class MultiParent extends Component<any> {
   static template = xml/* xml */ `
     <div>
       <div class="input-1">
-        <SelectionInput ranges="() => []"/>
+        <SelectionInput ranges="[]"/>
       </div>
       <div class="input-2">
-        <SelectionInput ranges="() => []"/>
+        <SelectionInput ranges="[]"/>
       </div>
     </div>
   `;
   static components = { SelectionInput };
+  static props = { model: Object };
 
   setup() {
     useSubEnv({
       model: this.props.model,
     });
-    onMounted(() => {
-      this.props.model.on("update", this, () => this.render(true));
-      this.render(true);
-    });
-    onWillUnmount(() => this.props.model.off("update", this));
+    const stores = useStoreProvider();
+    stores.inject(ModelStore, this.props.model);
   }
 }
 
@@ -126,7 +130,14 @@ async function createSelectionInput(
   }));
   await nextTick();
   const id = (parent as Parent).id;
-  return { parent: parent as Parent, model, id, app, fixture };
+  return {
+    parent: parent as Parent,
+    env: parent.env as SpreadsheetChildEnv,
+    model,
+    id,
+    app,
+    fixture,
+  };
 }
 
 describe("Selection Input", () => {
@@ -184,16 +195,37 @@ describe("Selection Input", () => {
     selectCell(model, "B4");
     await nextTick();
     expect(fixture.querySelector("input")!.value).toBe("B4");
-    const color = model.getters.getHighlights()[0].color;
+    const colorGenerator = new ColorGenerator();
+    const color = colorGenerator.next();
     expect(fixture.querySelector("input")!.getAttribute("style")).toBe(`color: ${color};`);
     simulateClick(".o-add-selection");
     selectCell(model, "B5");
     await nextTick();
-    const color2 = model.getters.getHighlights()[1].color;
+    const color2 = colorGenerator.next();
     expect(fixture.querySelectorAll("input")[0].value).toBe("B4");
     expect(fixture.querySelectorAll("input")[0].getAttribute("style")).toBe(`color: ${color};`);
     expect(fixture.querySelectorAll("input")[1].value).toBe("B5");
     expect(fixture.querySelectorAll("input")[1].getAttribute("style")).toBe(`color: ${color2};`);
+  });
+
+  test("colors passed as props are taken into account and completed by a color", async () => {
+    const { model } = await createSelectionInput({ colors: ["#FF0000"] });
+    selectCell(model, "B4");
+    await nextTick();
+    expect(fixture.querySelector("input")!.value).toBe("B4");
+    expect(fixture.querySelector("input")!.getAttribute("style")).toBe("color: #FF0000;");
+    simulateClick(".o-add-selection");
+    selectCell(model, "B5");
+    await nextTick();
+    const colorGenerator = new ColorGenerator();
+    colorGenerator.next(); //the first generated color is skipped in favor of the props color
+    const secondColor = colorGenerator.next();
+    expect(fixture.querySelectorAll("input")[0].value).toBe("B4");
+    expect(fixture.querySelectorAll("input")[0].getAttribute("style")).toBe("color: #FF0000;");
+    expect(fixture.querySelectorAll("input")[1].value).toBe("B5");
+    expect(fixture.querySelectorAll("input")[1].getAttribute("style")).toBe(
+      `color: ${secondColor};`
+    );
   });
 
   test("can select full column as unbounded zone by clicking on header", async () => {
@@ -278,13 +310,6 @@ describe("Selection Input", () => {
     expect(fixture.querySelectorAll("input")[1].classList).not.toContain("o-focused");
   });
 
-  test("unmounting deletes the state", async () => {
-    const { model, id, app } = await createSelectionInput();
-    expect(model.getters.getSelectionInput(id).length).toBe(1);
-    app.destroy();
-    expect(model.getters.getSelectionInput(id).length).toBe(0);
-  });
-
   test("can unfocus all inputs with the OK button", async () => {
     await createSelectionInput();
     expect(fixture.querySelector(".o-focused")).toBeTruthy();
@@ -293,28 +318,23 @@ describe("Selection Input", () => {
   });
 
   test("manually input a single cell", async () => {
-    const { model, id } = await createSelectionInput();
+    await createSelectionInput();
     await writeInput(0, "C2");
     expect(fixture.querySelectorAll("input")[0].value).toBe("C2");
-    expect(model.getters.getSelectionInput(id)[0].xc).toBe("C2");
   });
 
   test("manually input multiple cells", async () => {
-    const { model, id } = await createSelectionInput();
+    await createSelectionInput();
     await writeInput(0, "C2,A1");
     expect(fixture.querySelectorAll("input")[0].value).toBe("C2");
-    expect(model.getters.getSelectionInput(id)[0].xc).toBe("C2");
     expect(fixture.querySelectorAll("input")[1].value).toBe("A1");
-    expect(model.getters.getSelectionInput(id)[1].xc).toBe("A1");
   });
 
   test("manually add another range via trailing comma", async () => {
-    const { model, id } = await createSelectionInput({ initialRanges: ["C2"] });
+    await createSelectionInput({ initialRanges: ["C2"] });
     await writeInput(0, "C2,");
     expect(fixture.querySelectorAll("input")[0].value).toBe("C2");
-    expect(model.getters.getSelectionInput(id)[0].xc).toBe("C2");
     expect(fixture.querySelectorAll("input")[1].value).toBe("");
-    expect(model.getters.getSelectionInput(id)[1].xc).toBe("");
   });
 
   test.each([
@@ -323,11 +343,10 @@ describe("Selection Input", () => {
   ])(
     "leading comma will not split the input into multiple ranges",
     async (inputString, rangeValue) => {
-      const { model, id } = await createSelectionInput();
+      await createSelectionInput();
       await writeInput(0, inputString);
       expect(fixture.querySelectorAll("input").length).toEqual(1);
       expect(fixture.querySelectorAll("input")[0].value).toBe(rangeValue);
-      expect(model.getters.getSelectionInput(id)[0].xc).toBe(rangeValue);
     }
   );
 
@@ -393,11 +412,11 @@ describe("Selection Input", () => {
     model = new Model();
     ({ fixture } = await mountComponent(MultiParent, { props: { model }, model }));
     await nextTick();
-    expect(fixture.querySelector(".input-1 .o-focused")).toBeTruthy();
-    expect(fixture.querySelector(".input-2 .o-focused")).toBeFalsy();
-    await simulateClick(".input-2 input");
     expect(fixture.querySelector(".input-1 .o-focused")).toBeFalsy();
     expect(fixture.querySelector(".input-2 .o-focused")).toBeTruthy();
+    await simulateClick(".input-1 input");
+    expect(fixture.querySelector(".input-1 .o-focused")).toBeTruthy();
+    expect(fixture.querySelector(".input-2 .o-focused")).toBeFalsy();
   });
 
   test("focus is transferred into the newly added input automatically when typing comma at the end", async () => {
@@ -474,9 +493,9 @@ describe("Selection Input", () => {
   });
 
   test("In 'isSingleRange' mode, capture the first part of a multi range input", async () => {
-    const { model, id } = await createSelectionInput({ hasSingleRange: true });
+    await createSelectionInput({ hasSingleRange: true });
     await writeInput(0, "C2,A1");
-    expect(model.getters.getSelectionInput(id)[0].xc).toBe("C2");
+    expect(fixture.querySelector("input")?.value).toBe("C2");
   });
 
   describe("change highlight position in the grid", () => {
@@ -752,19 +771,5 @@ describe("Selection Input", () => {
     expect(input.value).toBe("C4");
 
     expect(model.getters.isGridSelectionActive()).toBeTruthy();
-  });
-
-  test("Ensure responsive behavior of selection input after entering an invalid range", async () => {
-    const { model, id } = await createSelectionInput({
-      hasSingleRange: true,
-      initialRanges: ["TEST"],
-    });
-    expect(model.getters.getSelectionInput(id)[0].xc).toBe("TEST");
-
-    await keyDown({ key: "Enter" });
-    await simulateClick("input");
-
-    selectCell(model, "B4");
-    expect(model.getters.getSelectionInput(id)[0].xc).toBe("B4");
   });
 });

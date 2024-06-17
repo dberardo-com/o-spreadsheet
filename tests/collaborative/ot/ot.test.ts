@@ -1,8 +1,6 @@
 import { transform } from "../../../src/collaborative/ot/ot";
 import { DeleteFigureCommand, UpdateChartCommand, UpdateFigureCommand } from "../../../src/types";
 import { LineChartDefinition } from "../../../src/types/chart/line_chart";
-import { TEST_COMMANDS } from "../../test_helpers/constants";
-import { target } from "../../test_helpers/helpers";
 
 describe("OT with DELETE_FIGURE", () => {
   const deleteFigure: DeleteFigureCommand = {
@@ -29,24 +27,4 @@ describe("OT with DELETE_FIGURE", () => {
       expect(transform({ ...cmd, id: "otherId" }, deleteFigure)).toEqual({ ...cmd, id: "otherId" });
     });
   });
-});
-
-describe("OT with CREATE_FILTER_TABLE", () => {
-  describe.each([TEST_COMMANDS.CREATE_FILTER_TABLE, TEST_COMMANDS.ADD_MERGE])(
-    "CREATE_FILTER_TABLE with CREATE_FILTER_TABLE & ADD_MERGE",
-    (cmd) => {
-      test("Overlapping target", () => {
-        const zones = target("A1");
-        const createTableCmd = { ...TEST_COMMANDS.CREATE_FILTER_TABLE, target: zones };
-        const executed = { ...cmd, target: zones };
-        expect(transform(createTableCmd, executed)).toBeUndefined();
-      });
-
-      test("distinct targets", () => {
-        const createTableCommand = { ...TEST_COMMANDS.CREATE_FILTER_TABLE, target: target("A1") };
-        const executed = { ...cmd, target: target("B2") };
-        expect(transform(createTableCommand, executed)).toEqual(createTableCommand);
-      });
-    }
-  );
 });

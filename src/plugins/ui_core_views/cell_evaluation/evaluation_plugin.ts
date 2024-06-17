@@ -1,7 +1,7 @@
 import { compileTokens } from "../../../formulas/compiler";
-import { Token, isExportableToExcel } from "../../../formulas/index";
+import { isExportableToExcel, Token } from "../../../formulas/index";
 import { getItemId, positions, toXC } from "../../../helpers/index";
-import { CellErrorType, EvaluationError } from "../../../types/errors";
+import { CellErrorType } from "../../../types/errors";
 import {
   CellPosition,
   CellValue,
@@ -13,14 +13,15 @@ import {
   Format,
   FormattedValue,
   FormulaCell,
+  invalidateDependenciesCommands,
   Matrix,
   Range,
   UID,
   Zone,
-  invalidateDependenciesCommands,
 } from "../../../types/index";
+import { FormulaCellWithDependencies } from "../../core";
 import { UIPlugin, UIPluginConfig } from "../../ui_plugin";
-import { CoreViewCommand } from "./../../../types/commands";
+import { CoreViewCommand, invalidateEvaluationCommands } from "./../../../types/commands";
 import { Evaluator } from "./evaluator";
 
 //#region
@@ -148,7 +149,7 @@ export class EvaluationPlugin extends UIPlugin {
     "getEvaluatedCell",
     "getEvaluatedCells",
     "getEvaluatedCellsInZone",
-    "getSpreadPositionsOf",
+    "getSpreadZone",
     "getArrayFormulaSpreadingOn",
     "isEmpty",
   ] as const;
@@ -168,7 +169,10 @@ export class EvaluationPlugin extends UIPlugin {
   // ---------------------------------------------------------------------------
 
   beforeHandle(cmd: Command) {
-    if (invalidateDependenciesCommands.has(cmd.type)) {
+    if (
+      invalidateEvaluationCommands.has(cmd.type) ||
+      invalidateDependenciesCommands.has(cmd.type)
+    ) {
       this.shouldRebuildDependenciesGraph = true;
     }
   }
@@ -210,7 +214,7 @@ export class EvaluationPlugin extends UIPlugin {
     try {
       return this.evaluator.evaluateFormula(sheetId, formulaString);
     } catch (error) {
-      return error instanceof EvaluationError ? error.errorType : CellErrorType.GenericError;
+      return error.value || CellErrorType.GenericError;
     }
   }
 
@@ -263,8 +267,11 @@ export class EvaluationPlugin extends UIPlugin {
     );
   }
 
-  getSpreadPositionsOf(position: CellPosition): CellPosition[] {
-    return this.evaluator.getSpreadPositionsOf(position);
+  /**
+   * Return the spread zone the position is part of, if any
+   */
+  getSpreadZone(position: CellPosition, options = { ignoreSpillError: false }): Zone | undefined {
+    return this.evaluator.getSpreadZone(position, options);
   }
 
   getArrayFormulaSpreadingOn(position: CellPosition): CellPosition | undefined {
@@ -308,7 +315,7 @@ export class EvaluationPlugin extends UIPlugin {
           // * non-falsy value are relevant and so are 0 and FALSE, which only leaves
           // the empty string.
           if (value !== "") {
-            newContent = value.toString();
+            newContent = (value ?? "").toString();
             newFormat = evaluatedCell.format;
           }
         }
@@ -320,13 +327,8 @@ export class EvaluationPlugin extends UIPlugin {
         ? getItemId<Format>(newFormat, data.formats)
         : exportedCellData.format;
       let content: string | undefined;
-      if (isExported && isFormula && formulaCell?.compiledFormula.dependencies.length) {
-        content = this.getters.getFormulaCellContent(
-          exportedSheetData.id,
-          formulaCell.compiledFormula,
-          formulaCell.compiledFormula.dependencies,
-          true
-        );
+      if (isExported && isFormula && formulaCell instanceof FormulaCellWithDependencies) {
+        content = formulaCell.contentWithFixedReferences;
       } else {
         content = !isExported ? newContent : exportedCellData.content;
       }

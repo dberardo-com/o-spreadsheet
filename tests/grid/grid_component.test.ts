@@ -1,4 +1,7 @@
 import { Spreadsheet, TransportService } from "../../src";
+import { ComposerStore } from "../../src/components/composer/composer/composer_store";
+import { ComposerFocusStore } from "../../src/components/composer/composer_focus_store";
+import { CellPopoverStore } from "../../src/components/popover";
 import {
   BACKGROUND_GRAY_COLOR,
   DEFAULT_CELL_HEIGHT,
@@ -13,15 +16,16 @@ import {
 import { buildSheetLink, toCartesian, toHex, toZone, zoneToXc } from "../../src/helpers";
 import { createEmptyWorkbookData } from "../../src/migrations/data";
 import { Model } from "../../src/model";
-import { Align, ClipboardMIMEType } from "../../src/types";
+import { Store } from "../../src/store_engine";
+import { Align, ClipboardMIMEType, SpreadsheetChildEnv } from "../../src/types";
 import { FileStore } from "../__mocks__/mock_file_store";
 import { MockTransportService } from "../__mocks__/transport_service";
 import { MockClipboardData, getClipboardEvent } from "../test_helpers/clipboard";
 import {
   copy,
   createChart,
-  createFilter,
   createSheet,
+  createTable,
   cut,
   foldHeaderGroup,
   freezeColumns,
@@ -39,6 +43,7 @@ import {
   setSelection,
   setStyle,
   updateFilter,
+  updateTableConfig,
 } from "../test_helpers/commands_helpers";
 import {
   clickCell,
@@ -65,13 +70,7 @@ import {
   getSelectionAnchorCellXc,
   getStyle,
 } from "../test_helpers/getters_helpers";
-import {
-  mockChart,
-  mountSpreadsheet,
-  nextTick,
-  target,
-  typeInComposerGrid,
-} from "../test_helpers/helpers";
+import { mockChart, mountSpreadsheet, nextTick, typeInComposerGrid } from "../test_helpers/helpers";
 import { mockGetBoundingClientRect } from "../test_helpers/mock_helpers";
 jest.mock("../../src/components/composer/content_editable_helper", () =>
   require("../__mocks__/content_editable_helper")
@@ -94,13 +93,18 @@ mockGetBoundingClientRect({
 
 let fixture: HTMLElement;
 let model: Model;
+let env: SpreadsheetChildEnv;
 let parent: Spreadsheet;
+let composerStore: Store<ComposerStore>;
+let composerFocusStore: Store<ComposerFocusStore>;
 
 jest.useFakeTimers();
 
 describe("Grid component", () => {
   beforeEach(async () => {
-    ({ parent, model, fixture } = await mountSpreadsheet());
+    ({ parent, model, fixture, env } = await mountSpreadsheet());
+    composerStore = env.getStore(ComposerStore);
+    composerFocusStore = env.getStore(ComposerFocusStore);
   });
 
   test("simple rendering snapshot", async () => {
@@ -191,14 +195,14 @@ describe("Grid component", () => {
       // change this
       await keyDown({ key: "Enter" });
       expect(getSelectionAnchorCellXc(model)).toBe("A1");
-      expect(model.getters.getEditionMode()).toBe("editing");
+      expect(composerStore.editionMode).toBe("editing");
     });
 
     test("pressing ENTER in edit mode stop editing and move one cell down", async () => {
       await typeInComposerGrid("a");
       keyDown({ key: "Enter" });
       expect(getSelectionAnchorCellXc(model)).toBe("A2");
-      expect(model.getters.getEditionMode()).toBe("inactive");
+      expect(composerStore.editionMode).toBe("inactive");
       expect(getCellContent(model, "A1")).toBe("a");
     });
 
@@ -207,7 +211,7 @@ describe("Grid component", () => {
       await nextTick();
       keyDown({ key: "Backspace" });
       expect(getSelectionAnchorCellXc(model)).toBe("A1");
-      expect(model.getters.getEditionMode()).toBe("inactive");
+      expect(composerStore.editionMode).toBe("inactive");
       expect(getCellContent(model, "A1")).toBe("");
     });
 
@@ -217,7 +221,7 @@ describe("Grid component", () => {
       await typeInComposerGrid("a");
       keyDown({ key: "Enter", shiftKey: true });
       expect(getSelectionAnchorCellXc(model)).toBe("A1");
-      expect(model.getters.getEditionMode()).toBe("inactive");
+      expect(composerStore.editionMode).toBe("inactive");
       expect(getCellContent(model, "A2")).toBe("a");
     });
 
@@ -225,7 +229,7 @@ describe("Grid component", () => {
       await typeInComposerGrid("a");
       keyDown({ key: "Enter", shiftKey: true });
       expect(getSelectionAnchorCellXc(model)).toBe("A1");
-      expect(model.getters.getEditionMode()).toBe("inactive");
+      expect(composerStore.editionMode).toBe("inactive");
       expect(getCellContent(model, "A1")).toBe("a");
     });
 
@@ -245,11 +249,7 @@ describe("Grid component", () => {
       { key: "F4", ctrlKey: false },
       { key: "Y", ctrlKey: true },
     ])("can undo/redo with keyboard CTRL+Z/%s", async (redoKey) => {
-      model.dispatch("SET_FORMATTING", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: [{ left: 0, right: 0, top: 0, bottom: 0 }],
-        style: { fillColor: "red" },
-      });
+      setStyle(model, "A1", { fillColor: "red" });
       expect(getCell(model, "A1")!.style).toBeDefined();
       keyDown({ key: "z", ctrlKey: true });
       expect(getCell(model, "A1")).toBeUndefined();
@@ -259,11 +259,7 @@ describe("Grid component", () => {
     });
 
     test("can undo/redo with keyboard (uppercase version)", async () => {
-      model.dispatch("SET_FORMATTING", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: [{ left: 0, right: 0, top: 0, bottom: 0 }],
-        style: { fillColor: "red" },
-      });
+      setStyle(model, "A1", { fillColor: "red" });
       expect(getCell(model, "A1")!.style).toBeDefined();
       keyDown({ key: "Z", ctrlKey: true });
       expect(getCell(model, "A1")).toBeUndefined();
@@ -302,7 +298,7 @@ describe("Grid component", () => {
       expect(getStyle(model, "A1")).toEqual({ bold: true });
       await keyDown({ key: "B", ctrlKey: true });
       expect(getCell(model, "A1")!.style).toEqual({ bold: false });
-      expect(getStyle(model, "A1")).toEqual({ bold: false });
+      expect(getStyle(model, "A1")).toEqual({});
     });
 
     test("toggle Italic with Ctrl+I", async () => {
@@ -313,7 +309,7 @@ describe("Grid component", () => {
       expect(getStyle(model, "A1")).toEqual({ italic: true });
       await keyDown({ key: "I", ctrlKey: true });
       expect(getCell(model, "A1")!.style).toEqual({ italic: false });
-      expect(getStyle(model, "A1")).toEqual({ italic: false });
+      expect(getStyle(model, "A1")).toEqual({});
     });
 
     test("open inserting image window with CTRL+O", async () => {
@@ -366,11 +362,7 @@ describe("Grid component", () => {
     test("clean formatting with CTRL+SHIFT+<", async () => {
       const style = { fillColor: "red", align: "right" as Align, bold: true };
       setCellContent(model, "A1", "hello");
-      model.dispatch("SET_FORMATTING", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: [{ left: 0, right: 0, top: 0, bottom: 0 }],
-        style,
-      });
+      setStyle(model, "A1", style);
       expect(getCell(model, "A1")!.style).toEqual(style);
       document.activeElement!.dispatchEvent(
         new KeyboardEvent("keydown", { key: "<", ctrlKey: true, shiftKey: true, bubbles: true })
@@ -382,11 +374,7 @@ describe("Grid component", () => {
     test("clean formatting with CTRL+<", async () => {
       const style = { fillColor: "red", align: "right" as Align, bold: true };
       setCellContent(model, "A1", "hello");
-      model.dispatch("SET_FORMATTING", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: [{ left: 0, right: 0, top: 0, bottom: 0 }],
-        style,
-      });
+      setStyle(model, "A1", style);
       expect(getCell(model, "A1")!.style).toEqual(style);
       document.activeElement!.dispatchEvent(
         new KeyboardEvent("keydown", { key: "<", ctrlKey: true, bubbles: true })
@@ -423,26 +411,26 @@ describe("Grid component", () => {
       selectCell(model, "B5");
       await keyDown({ key: "=", altKey: true });
       expect(document.activeElement).toBe(document.querySelector(".o-grid-composer .o-composer"));
-      expect(model.getters.getEditionMode()).toBe("editing");
-      expect(model.getters.getComposerSelection()).toEqual({ start: 5, end: 10 });
-      expect(model.getters.getCurrentContent()).toBe("=SUM(B2:B4)");
-      expect(model.getters.getHighlights()[0]?.zone).toEqual(toZone("B2:B4"));
+      expect(composerStore.editionMode).toBe("editing");
+      expect(composerStore.composerSelection).toEqual({ start: 5, end: 10 });
+      expect(composerStore.currentContent).toBe("=SUM(B2:B4)");
+      expect(composerStore.highlights[0]?.zone).toEqual(toZone("B2:B4"));
     });
 
     test("can automatically sum in an empty sheet with ALT+=", () => {
       selectCell(model, "B5");
       keyDown({ key: "=", altKey: true });
-      expect(model.getters.getEditionMode()).toBe("selecting");
-      expect(model.getters.getComposerSelection()).toEqual({ start: 5, end: 5 });
-      expect(model.getters.getCurrentContent()).toBe("=SUM()");
+      expect(composerStore.editionMode).toBe("selecting");
+      expect(composerStore.composerSelection).toEqual({ start: 5, end: 5 });
+      expect(composerStore.currentContent).toBe("=SUM()");
     });
 
     test("can automatically sum multiple zones in an empty sheet with ALT+=", () => {
       setSelection(model, ["A1:B2", "C4:C6"]);
       keyDown({ key: "=", altKey: true });
-      expect(model.getters.getEditionMode()).toBe("selecting");
-      expect(model.getters.getComposerSelection()).toEqual({ start: 5, end: 5 });
-      expect(model.getters.getCurrentContent()).toBe("=SUM()");
+      expect(composerStore.editionMode).toBe("selecting");
+      expect(composerStore.composerSelection).toEqual({ start: 5, end: 5 });
+      expect(composerStore.currentContent).toBe("=SUM()");
     });
 
     test("automatically sum zoned xc is merged", () => {
@@ -450,7 +438,7 @@ describe("Grid component", () => {
       merge(model, "B2:B4");
       selectCell(model, "B5");
       keyDown({ key: "=", altKey: true });
-      expect(model.getters.getCurrentContent()).toBe("=SUM(B2)");
+      expect(composerStore.currentContent).toBe("=SUM(B2)");
     });
 
     test("automatically sum from merged cell", () => {
@@ -458,11 +446,11 @@ describe("Grid component", () => {
       merge(model, "B1:B2");
       selectCell(model, "B2");
       keyDown({ key: "=", altKey: true });
-      expect(model.getters.getCurrentContent()).toBe("=SUM(A1)");
-      model.dispatch("CANCEL_EDITION");
+      expect(composerStore.currentContent).toBe("=SUM(A1)");
+      composerStore.cancelEdition();
       selectCell(model, "B1");
       keyDown({ key: "=", altKey: true });
-      expect(model.getters.getCurrentContent()).toBe("=SUM(A1)");
+      expect(composerStore.currentContent).toBe("=SUM(A1)");
     });
 
     test("automatic sum does not open composer when multiple zones are summed", () => {
@@ -471,7 +459,7 @@ describe("Grid component", () => {
       setSelection(model, ["A2:B2"]);
 
       keyDown({ key: "=", altKey: true });
-      expect(model.getters.getEditionMode()).toBe("inactive");
+      expect(composerStore.editionMode).toBe("inactive");
       expect(getCellText(model, "A2")).toBe("=SUM(A1)");
       expect(getCellText(model, "B2")).toBe("=SUM(B1)");
     });
@@ -482,7 +470,7 @@ describe("Grid component", () => {
       setSelection(model, ["A1:A2"]);
 
       keyDown({ key: "=", altKey: true });
-      expect(model.getters.getEditionMode()).toBe("inactive");
+      expect(composerStore.editionMode).toBe("inactive");
       expect(getCellText(model, "A3")).toBe("=SUM(A1:A2)");
     });
 
@@ -490,8 +478,8 @@ describe("Grid component", () => {
       setCellContent(model, "A2", "2");
       selectCell(model, "A2");
       keyDown({ key: "=", altKey: true });
-      expect(model.getters.getEditionMode()).toBe("selecting");
-      expect(model.getters.getCurrentContent()).toBe("=SUM()");
+      expect(composerStore.editionMode).toBe("selecting");
+      expect(composerStore.currentContent).toBe("=SUM()");
     });
 
     test("automatic sum opens composer if selection is one merge even if it's not empty", () => {
@@ -499,8 +487,8 @@ describe("Grid component", () => {
       merge(model, "A2:A3");
       selectCell(model, "A2");
       keyDown({ key: "=", altKey: true });
-      expect(model.getters.getEditionMode()).toBe("selecting");
-      expect(model.getters.getCurrentContent()).toBe("=SUM()");
+      expect(composerStore.editionMode).toBe("selecting");
+      expect(composerStore.currentContent).toBe("=SUM()");
     });
 
     test("Pressing CTRL+HOME moves you to first visible top-left cell", () => {
@@ -746,26 +734,20 @@ describe("Grid component", () => {
     });
 
     test("Filter icon is correctly rendered", async () => {
-      createFilter(model, "B2:C3");
+      createTable(model, "B2:C3");
       await nextTick();
 
       const icons = fixture.querySelectorAll(".o-grid-cell-icon");
       expect(icons).toHaveLength(2);
-      const top = `${
-        DEFAULT_CELL_HEIGHT * 2 - GRID_ICON_EDGE_LENGTH - GRID_ICON_MARGIN + HEADER_HEIGHT
-      }px`;
-      const leftA = `${
-        DEFAULT_CELL_WIDTH * 2 - GRID_ICON_EDGE_LENGTH + HEADER_WIDTH - GRID_ICON_MARGIN
-      }px`;
-      const leftB = `${
-        DEFAULT_CELL_WIDTH * 3 - GRID_ICON_EDGE_LENGTH + HEADER_WIDTH - GRID_ICON_MARGIN
-      }px`;
+      const top = `${DEFAULT_CELL_HEIGHT * 2 - GRID_ICON_EDGE_LENGTH - GRID_ICON_MARGIN}px`;
+      const leftA = `${DEFAULT_CELL_WIDTH * 2 - GRID_ICON_EDGE_LENGTH - GRID_ICON_MARGIN}px`;
+      const leftB = `${DEFAULT_CELL_WIDTH * 3 - GRID_ICON_EDGE_LENGTH - GRID_ICON_MARGIN}px`;
       expect((icons[0] as HTMLElement).style["_values"]).toEqual({ top, left: leftA });
       expect((icons[1] as HTMLElement).style["_values"]).toEqual({ top, left: leftB });
     });
 
     test("Filter icon change when filter is active", async () => {
-      createFilter(model, "A1:A2");
+      createTable(model, "A1:A2");
       await nextTick();
       const grid = fixture.querySelector(".o-grid")!;
       expect(grid.querySelectorAll(".filter-icon")).toHaveLength(1);
@@ -779,8 +761,24 @@ describe("Grid component", () => {
       expect(grid.querySelectorAll(".filter-icon-active")).toHaveLength(1);
     });
 
+    test("Filter icon changes color on high contrast background", async () => {
+      createTable(model, "A1:A2");
+      updateTableConfig(model, "A1", { styleId: "None" });
+      await nextTick();
+      const icon = fixture.querySelector(".o-grid .o-filter-icon");
+      expect(icon?.classList).not.toContain(".o-high-contrast");
+
+      updateTableConfig(model, "A1", { styleId: "TableStyleLight8" });
+      await nextTick();
+      expect(icon?.classList).toContain("o-high-contrast");
+
+      setStyle(model, "A1", { fillColor: "#fff" });
+      await nextTick();
+      expect(icon?.classList).not.toContain(".o-high-contrast");
+    });
+
     test("Clicking on a filter icon correctly open context menu", async () => {
-      createFilter(model, "A1:A2");
+      createTable(model, "A1:A2");
       await nextTick();
       await simulateClick(".o-filter-icon");
       expect(fixture.querySelectorAll(".o-filter-menu")).toHaveLength(1);
@@ -811,11 +809,8 @@ describe("Grid component", () => {
     });
 
     test("Scrolling the grid remove persistent popovers if the cell is outside the viewport", async () => {
-      model.dispatch("OPEN_CELL_POPOVER", {
-        col: 0,
-        row: 0,
-        popoverType: "LinkEditor",
-      });
+      const cellPopovers = env.getStore(CellPopoverStore);
+      cellPopovers.open({ col: 0, row: 0 }, "LinkEditor");
       await nextTick();
       expect(fixture.querySelector(".o-link-editor")).not.toBeNull();
       await scrollGrid({ deltaY: DEFAULT_CELL_HEIGHT });
@@ -825,11 +820,8 @@ describe("Grid component", () => {
     });
 
     test("Scrolling the grid don't remove persistent popovers if the cell is inside the viewport", async () => {
-      model.dispatch("OPEN_CELL_POPOVER", {
-        col: 0,
-        row: 0,
-        popoverType: "LinkEditor",
-      });
+      const cellPopovers = env.getStore(CellPopoverStore);
+      cellPopovers.open({ col: 0, row: 0 }, "LinkEditor");
       await nextTick();
       expect(fixture.querySelector(".o-link-editor")).not.toBeNull();
       await scrollGrid({ deltaY: DEFAULT_CELL_HEIGHT - 5 });
@@ -843,51 +835,39 @@ describe("Grid component", () => {
     test("can paste format with mouse once", async () => {
       setCellContent(model, "B2", "b2");
       selectCell(model, "B2");
-      model.dispatch("SET_FORMATTING", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: target("B2"),
-        style: { bold: true },
-      });
+      setStyle(model, "B2", { bold: true });
       model.dispatch("ACTIVATE_PAINT_FORMAT", { persistent: false });
-      gridMouseEvent(model, "mousedown", "C8");
+      gridMouseEvent(model, "pointerdown", "C8");
       expect(getCell(model, "C8")).toBeUndefined();
-      gridMouseEvent(model, "mouseup", "C8");
+      gridMouseEvent(model, "pointerup", "C8");
       expect(getCell(model, "C8")!.style).toEqual({ bold: true });
 
-      gridMouseEvent(model, "mousedown", "D8");
+      gridMouseEvent(model, "pointerdown", "D8");
       expect(getCell(model, "D8")).toBeUndefined();
-      gridMouseEvent(model, "mouseup", "D8");
+      gridMouseEvent(model, "pointerup", "D8");
       expect(getCell(model, "D8")).toBeUndefined();
     });
 
     test("can keep the paint format mode persistently", async () => {
       setCellContent(model, "B2", "b2");
       selectCell(model, "B2");
-      model.dispatch("SET_FORMATTING", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: target("B2"),
-        style: { bold: true },
-      });
+      setStyle(model, "B2", { bold: true });
       model.dispatch("ACTIVATE_PAINT_FORMAT", { persistent: true });
-      gridMouseEvent(model, "mousedown", "C8");
+      gridMouseEvent(model, "pointerdown", "C8");
       expect(getCell(model, "C8")).toBeUndefined();
-      gridMouseEvent(model, "mouseup", "C8");
+      gridMouseEvent(model, "pointerup", "C8");
       expect(getCell(model, "C8")!.style).toEqual({ bold: true });
 
-      gridMouseEvent(model, "mousedown", "D8");
+      gridMouseEvent(model, "pointerdown", "D8");
       expect(getCell(model, "D8")).toBeUndefined();
-      gridMouseEvent(model, "mouseup", "D8");
+      gridMouseEvent(model, "pointerup", "D8");
       expect(getCell(model, "D8")!.style).toEqual({ bold: true });
     });
 
     test("can paste format with key", async () => {
       setCellContent(model, "B2", "b2");
       selectCell(model, "B2");
-      model.dispatch("SET_FORMATTING", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: target("B2"),
-        style: { bold: true },
-      });
+      setStyle(model, "B2", { bold: true });
       model.dispatch("ACTIVATE_PAINT_FORMAT", { persistent: false });
       expect(getCell(model, "C2")).toBeUndefined();
       keyDown({ key: "ArrowRight" });
@@ -897,37 +877,25 @@ describe("Grid component", () => {
     test("can exit the paint format mode via ESC key", async () => {
       setCellContent(model, "B2", "b2");
       selectCell(model, "B2");
-      model.dispatch("SET_FORMATTING", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: target("B2"),
-        style: { bold: true },
-      });
+      setStyle(model, "B2", { bold: true });
       model.dispatch("ACTIVATE_PAINT_FORMAT", { persistent: false });
       keyDown({ key: "Escape" });
-      gridMouseEvent(model, "mousedown", "C8");
+      gridMouseEvent(model, "pointerdown", "C8");
       expect(getCell(model, "C8")).toBeUndefined();
-      gridMouseEvent(model, "mouseup", "C8");
+      gridMouseEvent(model, "pointerup", "C8");
       expect(getCell(model, "C8")).toBeUndefined();
     });
 
     test("in persistent mode, updating the style of origin cell won't change the copied style", async () => {
       setCellContent(model, "B2", "b2");
       selectCell(model, "B2");
-      model.dispatch("SET_FORMATTING", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: target("B2"),
-        style: { bold: true },
-      });
+      setStyle(model, "B2", { bold: true });
       model.dispatch("ACTIVATE_PAINT_FORMAT", { persistent: true });
-      model.dispatch("SET_FORMATTING", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: target("B2"),
-        style: { bold: false },
-      });
+      setStyle(model, "B2", { bold: false });
 
-      gridMouseEvent(model, "mousedown", "D8");
+      gridMouseEvent(model, "pointerdown", "D8");
       expect(getCell(model, "D8")).toBeUndefined();
-      gridMouseEvent(model, "mouseup", "D8");
+      gridMouseEvent(model, "pointerup", "D8");
       expect(getCell(model, "D8")!.style).toEqual({ bold: true });
     });
   });
@@ -1295,12 +1263,12 @@ describe("Edge-Scrolling on mouseMove in selection", () => {
   test("Can edge-scroll horizontally", async () => {
     const { width, height } = model.getters.getSheetViewDimension();
     const y = height / 2;
-    triggerMouseEvent(".o-grid-overlay", "mousedown", width / 2, y);
-    triggerMouseEvent(".o-grid-overlay", "mousemove", 1.5 * width, y);
+    triggerMouseEvent(".o-grid-overlay", "pointerdown", width / 2, y);
+    triggerMouseEvent(".o-grid-overlay", "pointermove", 1.5 * width, y);
     const advanceTimer = edgeScrollDelay(0.5 * width, 5);
 
     jest.advanceTimersByTime(advanceTimer);
-    triggerMouseEvent(".o-grid-overlay", "mouseup", 1.5 * width, y);
+    triggerMouseEvent(".o-grid-overlay", "pointerup", 1.5 * width, y);
 
     expect(model.getters.getActiveMainViewport()).toMatchObject({
       left: 6,
@@ -1309,12 +1277,12 @@ describe("Edge-Scrolling on mouseMove in selection", () => {
       bottom: 42,
     });
 
-    triggerMouseEvent(".o-grid-overlay", "mousedown", width / 2, y);
-    triggerMouseEvent(".o-grid-overlay", "mousemove", -0.5 * width, y);
+    triggerMouseEvent(".o-grid-overlay", "pointerdown", width / 2, y);
+    triggerMouseEvent(".o-grid-overlay", "pointermove", -0.5 * width, y);
     const advanceTimer2 = edgeScrollDelay(0.5 * width, 2);
 
     jest.advanceTimersByTime(advanceTimer2);
-    triggerMouseEvent(".o-grid-overlay", "mouseup", -0.5 * width, y);
+    triggerMouseEvent(".o-grid-overlay", "pointerup", -0.5 * width, y);
 
     expect(model.getters.getActiveMainViewport()).toMatchObject({
       left: 3,
@@ -1327,12 +1295,12 @@ describe("Edge-Scrolling on mouseMove in selection", () => {
   test("Can edge-scroll vertically", async () => {
     const { width, height } = model.getters.getSheetViewDimensionWithHeaders();
     const x = width / 2;
-    triggerMouseEvent(".o-grid-overlay", "mousedown", x, height / 2);
-    triggerMouseEvent(".o-grid-overlay", "mousemove", x, 1.5 * height);
+    triggerMouseEvent(".o-grid-overlay", "pointerdown", x, height / 2);
+    triggerMouseEvent(".o-grid-overlay", "pointermove", x, 1.5 * height);
     const advanceTimer = edgeScrollDelay(0.5 * height, 5);
 
     jest.advanceTimersByTime(advanceTimer);
-    triggerMouseEvent(".o-grid-overlay", "mouseup", x, 1.5 * height);
+    triggerMouseEvent(".o-grid-overlay", "pointerup", x, 1.5 * height);
 
     expect(model.getters.getActiveMainViewport()).toMatchObject({
       left: 0,
@@ -1341,12 +1309,12 @@ describe("Edge-Scrolling on mouseMove in selection", () => {
       bottom: 48,
     });
 
-    triggerMouseEvent(".o-grid-overlay", "mousedown", x, height / 2);
-    triggerMouseEvent(".o-grid-overlay", "mousemove", x, -0.5 * height);
+    triggerMouseEvent(".o-grid-overlay", "pointerdown", x, height / 2);
+    triggerMouseEvent(".o-grid-overlay", "pointermove", x, -0.5 * height);
     const advanceTimer2 = edgeScrollDelay(0.5 * height, 2);
 
     jest.advanceTimersByTime(advanceTimer2);
-    triggerMouseEvent(".o-grid-overlay", "mouseup", x, -0.5 * height);
+    triggerMouseEvent(".o-grid-overlay", "pointerup", x, -0.5 * height);
 
     expect(model.getters.getActiveMainViewport()).toMatchObject({
       left: 0,
@@ -1374,6 +1342,8 @@ describe("Copy paste keyboard shortcut", () => {
     clipboardData = new MockClipboardData();
     ({ parent, model, fixture } = await mountSpreadsheet());
     sheetId = model.getters.getActiveSheetId();
+    composerStore = parent.env.getStore(ComposerStore);
+    composerFocusStore = parent.env.getStore(ComposerFocusStore);
   });
   test("Can paste from OS", async () => {
     selectCell(model, "A1");
@@ -1452,19 +1422,15 @@ describe("Copy paste keyboard shortcut", () => {
     expect(getCellContent(model, "B2")).toEqual("1");
   });
 
-  test("can paste value only with CTRL+SHIFT+V", async () => {
+  test("can paste as value with CTRL+SHIFT+V", async () => {
     const content = "things";
     setCellContent(model, "A1", content);
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: target("A1"),
-      style: { fillColor: "red", align: "right", bold: true },
-    });
+    setStyle(model, "A1", { fillColor: "red", align: "right", bold: true });
     selectCell(model, "A1");
     document.body.dispatchEvent(getClipboardEvent("copy", clipboardData));
     // Fake OS clipboard should have the same content
     // to make paste come from spreadsheet clipboard
-    // which support paste values only
+    // which support paste as values
     parent.env.clipboard.writeText(content);
     selectCell(model, "A2");
     document.activeElement!.dispatchEvent(
@@ -1526,7 +1492,7 @@ describe("Copy paste keyboard shortcut", () => {
 
   test("When there is a opened cell popover, hitting esc key will only close the popover and not clean the clipboard visible zones", async () => {
     setCellContent(model, "A1", "things");
-    createFilter(model, "A1:A2");
+    createTable(model, "A1:A2");
     selectCell(model, "A1");
     copy(model, "A1");
     selectCell(model, "A2");
@@ -1534,7 +1500,6 @@ describe("Copy paste keyboard shortcut", () => {
     await simulateClick(".o-filter-icon");
     expect(fixture.querySelectorAll(".o-filter-menu")).toHaveLength(1);
     expect(getClipboardVisibleZones(model).length).toBe(1);
-
     await keyDown({ key: "Escape" });
     expect(fixture.querySelectorAll(".o-filter-menu")).toHaveLength(0);
     expect(getClipboardVisibleZones(model).length).toBe(1);
@@ -1559,7 +1524,7 @@ describe("Copy paste keyboard shortcut", () => {
 
   test("Can copy/paste chart", async () => {
     selectCell(model, "A1");
-    createChart(model, {}, "chartId");
+    createChart(model, { type: "bar" }, "chartId");
     model.dispatch("SELECT_FIGURE", { id: "chartId" });
     document.body.dispatchEvent(getClipboardEvent("copy", clipboardData));
     expect(clipboardData.content).toEqual({ "text/plain": "\t" });
@@ -1569,7 +1534,7 @@ describe("Copy paste keyboard shortcut", () => {
 
   test("Can cut/paste chart", async () => {
     selectCell(model, "A1");
-    createChart(model, {}, "chartId");
+    createChart(model, { type: "bar" }, "chartId");
     model.dispatch("SELECT_FIGURE", { id: "chartId" });
     document.body.dispatchEvent(getClipboardEvent("cut", clipboardData));
     expect(clipboardData.content).toEqual({ "text/plain": "\t" });
@@ -1581,19 +1546,19 @@ describe("Copy paste keyboard shortcut", () => {
   test("Double clicking only opens composer when actually targetting grid overlay", async () => {
     // creating a child  node
     mockChart();
-    createChart(model, {}, "chartId");
+    createChart(model, { type: "bar" }, "chartId");
     await nextTick();
     await simulateClick(".o-figure", 0, 0);
     await nextTick();
     expect(document.activeElement).toBe(fixture.querySelector(".o-figure"));
     // double click on child
     await doubleClick(fixture, ".o-figure");
-    expect(model.getters.getEditionMode()).toBe("inactive");
+    expect(composerStore.editionMode).toBe("inactive");
     expect(document.activeElement).toBe(fixture.querySelector(".o-figure"));
 
     // double click on grid overlay
     await doubleClick(fixture, ".o-grid-overlay");
-    expect(model.getters.getEditionMode()).toBe("editing");
+    expect(composerStore.editionMode).toBe("editing");
     expect(document.activeElement).toBe(fixture.querySelector(".o-grid div.o-composer"));
   });
 
@@ -1609,11 +1574,11 @@ describe("Copy paste keyboard shortcut", () => {
       0.5 * DEFAULT_CELL_HEIGHT
     );
     await nextTick();
-    expect(parent.focusGridComposer).toBe("contentFocus");
+    expect(composerFocusStore.gridComposerFocus).toBe("contentFocus");
 
-    model.dispatch("STOP_EDITION");
+    composerStore.stopEdition();
     await nextTick();
-    expect(parent.focusGridComposer).toBe("inactive");
+    expect(composerFocusStore.gridComposerFocus).toBe("inactive");
 
     // double click A2 - still in a non empty cell (in merge)
     triggerMouseEvent(
@@ -1623,11 +1588,11 @@ describe("Copy paste keyboard shortcut", () => {
       1.5 * DEFAULT_CELL_HEIGHT
     );
     await nextTick();
-    expect(parent.focusGridComposer).toBe("contentFocus");
+    expect(composerFocusStore.gridComposerFocus).toBe("contentFocus");
 
-    model.dispatch("STOP_EDITION");
+    composerStore.stopEdition();
     await nextTick();
-    expect(parent.focusGridComposer).toBe("inactive");
+    expect(composerFocusStore.gridComposerFocus).toBe("inactive");
 
     // double click B2
     triggerMouseEvent(
@@ -1637,7 +1602,7 @@ describe("Copy paste keyboard shortcut", () => {
       1.5 * DEFAULT_CELL_HEIGHT
     );
     await nextTick();
-    expect(parent.focusGridComposer).toBe("cellFocus");
+    expect(composerFocusStore.gridComposerFocus).toBe("cellFocus");
   });
 });
 

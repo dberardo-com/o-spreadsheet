@@ -266,6 +266,12 @@ describe("sheets", () => {
     expect(activateSheet(model, "INVALID_ID")).toBeCancelledBecause(CommandResult.InvalidSheetId);
   });
 
+  test("cannot activate an hidden sheet", () => {
+    const model = new Model();
+    createSheet(model, { sheetId: "42", hidden: true });
+    expect(activateSheet(model, "42")).toBeCancelledBecause(CommandResult.SheetIsHidden);
+  });
+
   test("evaluating multiple sheets", () => {
     const model = new Model({
       sheets: [
@@ -714,7 +720,11 @@ describe("sheets", () => {
     const model = new Model();
     const sheetId = model.getters.getActiveSheetId();
     const chartId = "uuid";
-    createChart(model, { dataSets: ["Sheet1!B1:B4"], labelRange: "Sheet1!A2:A4" }, chartId);
+    createChart(
+      model,
+      { type: "bar", dataSets: [{ dataRange: "Sheet1!B1:B4" }], labelRange: "Sheet1!A2:A4" },
+      chartId
+    );
     model.dispatch("DUPLICATE_SHEET", { sheetId, sheetIdTo: "42" });
     model.dispatch("UPDATE_FIGURE", {
       sheetId: sheetId,

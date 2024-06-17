@@ -1,46 +1,47 @@
 import { compile } from "../../../formulas";
+import { implementationErrorMessage } from "../../../functions";
 import { matrixMap } from "../../../functions/helpers";
-import { forEachPositionsInZone, JetSet, lazy, toXC } from "../../../helpers";
-import { createEvaluatedCell, errorCell, evaluateLiteral } from "../../../helpers/cells";
+import { lazy, positionToZone, toXC, union, unionPositionsToZone } from "../../../helpers";
+import { createEvaluatedCell, evaluateLiteral } from "../../../helpers/cells";
 import { ModelConfig } from "../../../model";
+import { onIterationEndEvaluationRegistry } from "../../../registries/evaluation_registry";
 import { _t } from "../../../translation";
 import {
-  Cell,
   CellPosition,
   CellValue,
   CellValueType,
   EvaluatedCell,
+  FPayload,
   FormulaCell,
   Getters,
-  isMatrix,
   Matrix,
   Range,
+  RangeCompiledFormula,
   UID,
-  ValueAndFormat,
+  Zone,
+  isMatrix,
 } from "../../../types";
-import { CellErrorType, CircularDependencyError, EvaluationError } from "../../../types/errors";
-import { buildCompilationParameters, CompilationParameters } from "./compilation_parameters";
+import { CellErrorType, CircularDependencyError, SplillBlockedError } from "../../../types/errors";
+import { CompilationParameters, buildCompilationParameters } from "./compilation_parameters";
 import { FormulaDependencyGraph } from "./formula_dependency_graph";
+import { PositionMap } from "./position_map";
+import { PositionSet, SheetSizes } from "./position_set";
 import { RTreeBoundingBox } from "./r_tree";
 import { SpreadingRelation } from "./spreading_relation";
 
-type PositionDict<T> = Map<PositionId, T>;
-
-/**
- * A CellPosition encoded as an integer
- */
-export type PositionId = bigint;
-
 const MAX_ITERATION = 30;
+const ERROR_CYCLE_CELL = createEvaluatedCell(new CircularDependencyError());
+const EMPTY_CELL = createEvaluatedCell({ value: null });
 
 export class Evaluator {
   private readonly getters: Getters;
   private compilationParams: CompilationParameters;
-  private readonly encoder = new PositionBitsEncoder();
 
-  private evaluatedCells: PositionDict<EvaluatedCell> = new Map();
-  private formulaDependencies = lazy(new FormulaDependencyGraph(this.encoder));
-  private blockedArrayFormulas = new Set<PositionId>();
+  private evaluatedCells: PositionMap<EvaluatedCell> = new PositionMap();
+  private formulaDependencies = lazy(
+    new FormulaDependencyGraph(this.createEmptyPositionSet.bind(this))
+  );
+  private blockedArrayFormulas = new PositionSet({});
   private spreadingRelations = new SpreadingRelation();
 
   constructor(private readonly context: ModelConfig["custom"], getters: Getters) {
@@ -53,47 +54,53 @@ export class Evaluator {
   }
 
   getEvaluatedCell(position: CellPosition): EvaluatedCell {
-    return (
-      this.evaluatedCells.get(this.encoder.encode(position)) ||
-      createEvaluatedCell("", { locale: this.getters.getLocale() })
-    );
+    return this.evaluatedCells.get(position) || EMPTY_CELL;
   }
 
-  getSpreadPositionsOf(position: CellPosition): CellPosition[] {
-    const positionId = this.encoder.encode(position);
-    if (!this.spreadingRelations.isArrayFormula(positionId)) {
-      return [];
+  getSpreadZone(position: CellPosition, options = { ignoreSpillError: false }): Zone | undefined {
+    if (!this.spreadingRelations.isArrayFormula(position)) {
+      return undefined;
     }
-    return Array.from(this.spreadingRelations.getArrayResultPositionIds(positionId)).map(
-      (positionId) => this.encoder.decode(positionId)
-    );
-  }
-
-  getArrayFormulaSpreadingOn(position: CellPosition): CellPosition | undefined {
-    const positionId = this.encoder.encode(position);
-    const formulaPosition = this.getArrayFormulaSpreadingOnId(positionId);
-    return formulaPosition !== undefined ? this.encoder.decode(formulaPosition) : undefined;
+    const evaluatedCell = this.evaluatedCells.get(position);
+    if (
+      evaluatedCell?.type === CellValueType.error &&
+      !(options.ignoreSpillError && evaluatedCell?.value === CellErrorType.SpilledBlocked)
+    ) {
+      return positionToZone(position);
+    }
+    const spreadPositions = Array.from(this.spreadingRelations.getArrayResultPositions(position));
+    return union(positionToZone(position), unionPositionsToZone(spreadPositions));
   }
 
   getEvaluatedPositions(): CellPosition[] {
-    return [...this.evaluatedCells.keys()].map((p) => this.encoder.decode(p));
+    return this.evaluatedCells.keys();
   }
 
-  private getArrayFormulaSpreadingOnId(positionId: PositionId): PositionId | undefined {
-    if (!this.spreadingRelations.hasArrayFormulaResult(positionId)) {
-      return undefined;
+  getArrayFormulaSpreadingOn(position: CellPosition): CellPosition | undefined {
+    if (!this.spreadingRelations.hasArrayFormulaResult(position)) {
+      return this.spreadingRelations.isArrayFormula(position) ? position : undefined;
     }
-    const arrayFormulas = this.spreadingRelations.getFormulaPositionsSpreadingOn(positionId);
-    return Array.from(arrayFormulas).find(
-      (positionId) => !this.blockedArrayFormulas.has(positionId)
-    );
+    const arrayFormulas = this.spreadingRelations.getFormulaPositionsSpreadingOn(position);
+    return Array.from(arrayFormulas).find((position) => !this.blockedArrayFormulas.has(position));
   }
 
   updateDependencies(position: CellPosition) {
-    const positionId = this.encoder.encode(position);
-    this.formulaDependencies().removeAllDependencies(positionId);
-    const dependencies = this.getDirectDependencies(positionId);
-    this.formulaDependencies().addDependencies(positionId, dependencies);
+    this.formulaDependencies().removeAllDependencies(position);
+    const dependencies = this.getDirectDependencies(position);
+    this.formulaDependencies().addDependencies(position, dependencies);
+  }
+
+  private addDependencies(position: CellPosition, dependencies: Range[]) {
+    this.formulaDependencies().addDependencies(position, dependencies);
+    for (const range of dependencies) {
+      const sheetId = range.sheetId;
+      const { left, bottom, right, top } = range.zone;
+      for (let col = left; col <= right; col++) {
+        for (let row = top; row <= bottom; row++) {
+          this.computeAndSave({ sheetId, col, row });
+        }
+      }
+    }
   }
 
   private updateCompilationParameters() {
@@ -103,60 +110,78 @@ export class Evaluator {
       this.getters,
       this.computeAndSave.bind(this)
     );
+    this.compilationParams.evalContext.updateDependencies = this.updateDependencies.bind(this);
+    this.compilationParams.evalContext.addDependencies = this.addDependencies.bind(this);
+  }
+
+  private createEmptyPositionSet() {
+    const sheetSizes: SheetSizes = {};
+    for (const sheetId of this.getters.getSheetIds()) {
+      sheetSizes[sheetId] = {
+        rows: this.getters.getNumberRows(sheetId),
+        cols: this.getters.getNumberCols(sheetId),
+      };
+    }
+    return new PositionSet(sheetSizes);
   }
 
   evaluateCells(positions: CellPosition[]) {
-    const cells: PositionId[] = positions.map((p) => this.encoder.encode(p));
-    const cellsToCompute = new JetSet<PositionId>(cells);
-    const arrayFormulasPositionIds = this.getArrayFormulasImpactedByChangesOf(cells);
-    cellsToCompute.addMany(this.getCellsDependingOn(cells));
-    cellsToCompute.addMany(arrayFormulasPositionIds);
-    cellsToCompute.addMany(this.getCellsDependingOn(arrayFormulasPositionIds));
+    const start = performance.now();
+    const cellsToCompute = this.createEmptyPositionSet();
+    cellsToCompute.addMany(positions);
+    const arrayFormulasPositions = this.getArrayFormulasImpactedByChangesOf(positions);
+    cellsToCompute.addMany(this.getCellsDependingOn(positions));
+    cellsToCompute.addMany(arrayFormulasPositions);
+    cellsToCompute.addMany(this.getCellsDependingOn(arrayFormulasPositions));
     this.evaluate(cellsToCompute);
+    console.info("evaluate Cells", performance.now() - start, "ms");
   }
 
   private getArrayFormulasImpactedByChangesOf(
-    positionIds: Iterable<PositionId>
-  ): Iterable<PositionId> {
-    const impactedPositionIds = new JetSet<PositionId>();
+    positions: Iterable<CellPosition>
+  ): Iterable<CellPosition> {
+    const impactedPositions = this.createEmptyPositionSet();
 
-    for (const positionId of positionIds) {
-      const content = this.getCell(positionId)?.content;
-      const arrayFormulaPositionId = this.getArrayFormulaSpreadingOnId(positionId);
-      if (arrayFormulaPositionId !== undefined) {
+    for (const position of positions) {
+      const content = this.getters.getCell(position)?.content;
+      const arrayFormulaPosition = this.getArrayFormulaSpreadingOn(position);
+      if (arrayFormulaPosition !== undefined) {
         // take into account new collisions.
-        impactedPositionIds.add(arrayFormulaPositionId);
+        impactedPositions.add(arrayFormulaPosition);
       }
       if (!content) {
         // The previous content could have blocked some array formulas
-        impactedPositionIds.addMany(this.getArrayFormulasBlockedBy(positionId));
+        impactedPositions.add(position);
       }
     }
-    return impactedPositionIds;
+    impactedPositions.addMany(this.getArrayFormulasBlockedBy(impactedPositions));
+    return impactedPositions;
   }
 
   buildDependencyGraph() {
-    this.blockedArrayFormulas = new Set<PositionId>();
+    this.blockedArrayFormulas = this.createEmptyPositionSet();
     this.spreadingRelations = new SpreadingRelation();
     this.formulaDependencies = lazy(() => {
-      const dependencies = [...this.getAllCells()].flatMap((positionId) =>
-        this.getDirectDependencies(positionId)
+      const dependencies = [...this.getAllCells()].flatMap((position) =>
+        this.getDirectDependencies(position)
           .filter((range) => !range.invalidSheetName && !range.invalidXc)
           .map((range) => ({
-            data: positionId,
+            data: position,
             boundingBox: {
               zone: range.zone,
               sheetId: range.sheetId,
             },
           }))
       );
-      return new FormulaDependencyGraph(this.encoder, dependencies);
+      return new FormulaDependencyGraph(this.createEmptyPositionSet.bind(this), dependencies);
     });
   }
 
   evaluateAllCells() {
-    this.evaluatedCells = new Map();
+    const start = performance.now();
+    this.evaluatedCells = new PositionMap();
     this.evaluate(this.getAllCells());
+    console.info("evaluate all cells", performance.now() - start, "ms");
   }
 
   evaluateFormula(sheetId: UID, formulaString: string): CellValue | Matrix<CellValue> {
@@ -166,137 +191,132 @@ export class Evaluator {
       this.getters.getRangeFromSheetXC(sheetId, xc)
     );
     this.updateCompilationParameters();
-    const array = compiledFormula.execute(ranges, ...this.compilationParams);
-    if (isMatrix(array)) {
-      return matrixMap(array, (cell) => cell.value);
+    const result = updateEvalContextAndExecute(
+      { ...compiledFormula, dependencies: ranges },
+      this.compilationParams,
+      sheetId
+    );
+    if (isMatrix(result)) {
+      return matrixMap(result, (cell) => cell.value);
     }
-    return array.value;
+    if (result.value === null) {
+      return 0;
+    }
+    return result.value;
   }
 
-  private getAllCells(): JetSet<PositionId> {
-    const positionIds = new JetSet<PositionId>();
-    for (const sheetId of this.getters.getSheetIds()) {
-      const cellIds = this.getters.getCells(sheetId);
-      for (const cellId in cellIds) {
-        positionIds.add(this.encoder.encode(this.getters.getCellPosition(cellId)));
-      }
-    }
-    return positionIds;
+  private getAllCells(): PositionSet {
+    const positions = this.createEmptyPositionSet();
+    positions.fillAllPositions();
+    return positions;
   }
 
   /**
-   * Return the position of formulas blocked by the given position
+   * Return the position of formulas blocked by the given positions
    * as well as all their dependencies.
    */
-  private getArrayFormulasBlockedBy(positionId: PositionId): Iterable<PositionId> {
-    if (!this.spreadingRelations.hasArrayFormulaResult(positionId)) {
-      return [];
+  private getArrayFormulasBlockedBy(positions: Iterable<CellPosition>): Iterable<CellPosition> {
+    const arrayFormulaPositions = this.createEmptyPositionSet();
+    for (const position of positions) {
+      if (!this.spreadingRelations.hasArrayFormulaResult(position)) {
+        continue;
+      }
+      const arrayFormulas = this.spreadingRelations.getFormulaPositionsSpreadingOn(position);
+      arrayFormulaPositions.addMany(arrayFormulas);
+      const arrayFormulaPosition = this.getArrayFormulaSpreadingOn(position);
+      if (arrayFormulaPosition) {
+        // ignore the formula spreading on the position. Keep only the blocked ones
+        arrayFormulaPositions.delete(arrayFormulaPosition);
+      }
     }
-    const arrayFormulas = this.spreadingRelations.getFormulaPositionsSpreadingOn(positionId);
-    const cells = new JetSet<PositionId>(arrayFormulas);
-    const arrayFormulaPositionId = this.getArrayFormulaSpreadingOnId(positionId);
-    if (arrayFormulaPositionId) {
-      // ignore the formula spreading on the position. Keep only the blocked ones
-      cells.delete(arrayFormulaPositionId);
-    }
-    cells.addMany(this.getCellsDependingOn(cells));
-    return cells;
+    arrayFormulaPositions.addMany(this.getCellsDependingOn(arrayFormulaPositions));
+    return arrayFormulaPositions;
   }
 
-  private nextPositionsToUpdate = new JetSet<PositionId>();
+  private nextPositionsToUpdate = new PositionSet({});
   private cellsBeingComputed = new Set<UID>();
 
-  private evaluate(cells: JetSet<PositionId>) {
+  private evaluate(positions: PositionSet) {
     this.cellsBeingComputed = new Set<UID>();
-    this.nextPositionsToUpdate = cells;
+    this.nextPositionsToUpdate = positions;
 
     let currentIteration = 0;
-    while (this.nextPositionsToUpdate.size && currentIteration++ < MAX_ITERATION) {
+    while (!this.nextPositionsToUpdate.isEmpty() && currentIteration++ < MAX_ITERATION) {
       this.updateCompilationParameters();
-      const positionIds = Array.from(this.nextPositionsToUpdate);
-      this.nextPositionsToUpdate.clear();
-      for (let i = 0; i < positionIds.length; ++i) {
-        const cell = positionIds[i];
-        this.evaluatedCells.delete(cell);
+      const positions = this.nextPositionsToUpdate.clear();
+      for (let i = 0; i < positions.length; ++i) {
+        this.evaluatedCells.delete(positions[i]);
       }
-      for (let i = 0; i < positionIds.length; ++i) {
-        const cell = positionIds[i];
-        this.setEvaluatedCell(cell, this.computeCell(cell));
+      for (let i = 0; i < positions.length; ++i) {
+        const position = positions[i];
+        const evaluatedCell = this.computeCell(position);
+        if (evaluatedCell !== EMPTY_CELL) {
+          this.evaluatedCells.set(position, evaluatedCell);
+        }
       }
+      onIterationEndEvaluationRegistry.getAll().forEach((callback) => callback(this.getters));
     }
   }
 
-  private setEvaluatedCell(positionId: PositionId, evaluatedCell: EvaluatedCell) {
-    this.evaluatedCells.set(positionId, evaluatedCell);
-  }
-
-  private computeCell(positionId: PositionId): EvaluatedCell {
-    const evaluation = this.evaluatedCells.get(positionId);
+  private computeCell(position: CellPosition): EvaluatedCell {
+    const evaluation = this.evaluatedCells.get(position);
     if (evaluation) {
       return evaluation; // already computed
     }
 
-    if (!this.blockedArrayFormulas.has(positionId)) {
-      this.invalidateSpreading(positionId);
+    if (!this.blockedArrayFormulas.has(position)) {
+      this.invalidateSpreading(position);
     }
+    this.spreadingRelations.removeNode(position);
 
-    const cell = this.getCell(positionId);
+    const cell = this.getters.getCell(position);
     if (cell === undefined) {
-      return createEvaluatedCell("", { locale: this.getters.getLocale() });
+      return EMPTY_CELL;
     }
 
     const cellId = cell.id;
-
+    const localeFormat = { format: cell.format, locale: this.getters.getLocale() };
     try {
       if (this.cellsBeingComputed.has(cellId)) {
-        throw new CircularDependencyError();
+        return ERROR_CYCLE_CELL;
       }
       this.cellsBeingComputed.add(cellId);
       return cell.isFormula
-        ? this.computeFormulaCell(cell)
-        : evaluateLiteral(cell.content, { format: cell.format, locale: this.getters.getLocale() });
+        ? this.computeFormulaCell(position.sheetId, cell)
+        : evaluateLiteral(cell.content, localeFormat);
     } catch (e) {
-      return this.handleError(e, cell);
+      e.value = e?.value || CellErrorType.GenericError;
+      e.message = e?.message || implementationErrorMessage;
+      return createEvaluatedCell(e);
     } finally {
       this.cellsBeingComputed.delete(cellId);
     }
   }
 
   private computeAndSave(position: CellPosition) {
-    const positionId = this.encoder.encode(position);
-    const evaluatedCell = this.computeCell(positionId);
-    if (!this.evaluatedCells.has(positionId)) {
-      this.setEvaluatedCell(positionId, evaluatedCell);
+    const evaluatedCell = this.computeCell(position);
+    if (!this.evaluatedCells.has(position)) {
+      this.evaluatedCells.set(position, evaluatedCell);
     }
     return evaluatedCell;
   }
 
-  private handleError(e: Error | any, cell: Cell): EvaluatedCell {
-    if (!(e instanceof EvaluationError)) {
-      e = new EvaluationError(CellErrorType.GenericError, e.message);
-    }
-    const __lastFnCalled = this.compilationParams[2].__lastFnCalled || "";
-    e.message = e.message.replace("[[FUNCTION_NAME]]", __lastFnCalled);
-    return errorCell(e);
-  }
-
-  private computeFormulaCell(cellData: FormulaCell): EvaluatedCell {
+  private computeFormulaCell(sheetId: UID, cellData: FormulaCell): EvaluatedCell {
     const cellId = cellData.id;
-    this.compilationParams[2].__originCellXC = () => {
-      // compute the value lazily for performance reasons
-      const position = this.compilationParams[2].getters.getCellPosition(cellId);
-      return toXC(position.col, position.row);
-    };
-    const formulaReturn = cellData.compiledFormula.execute(
-      cellData.compiledFormula.dependencies,
-      ...this.compilationParams
+
+    const formulaReturn = updateEvalContextAndExecute(
+      cellData.compiledFormula,
+      this.compilationParams,
+      sheetId,
+      cellId
     );
 
     if (!isMatrix(formulaReturn)) {
-      return createEvaluatedCell(formulaReturn.value, {
-        format: cellData.format || formulaReturn.format,
-        locale: this.getters.getLocale(),
-      });
+      return createEvaluatedCell(
+        nullValueToZeroValue(formulaReturn),
+        this.getters.getLocale(),
+        cellData
+      );
     }
 
     const formulaPosition = this.getters.getCellPosition(cellId);
@@ -307,6 +327,7 @@ export class Evaluator {
     const nbRows = formulaReturn[0].length;
 
     forEachSpreadPositionInMatrix(nbColumns, nbRows, this.updateSpreadRelation(formulaPosition));
+    this.assertNoMergedCellsInSpreadZone(formulaPosition, formulaReturn);
     forEachSpreadPositionInMatrix(nbColumns, nbRows, this.checkCollision(formulaPosition));
     forEachSpreadPositionInMatrix(
       nbColumns,
@@ -315,15 +336,16 @@ export class Evaluator {
       this.spreadValues(formulaPosition, formulaReturn)
     );
 
-    return createEvaluatedCell(formulaReturn[0][0].value, {
-      format: cellData.format || formulaReturn[0][0]?.format,
-      locale: this.getters.getLocale(),
-    });
+    return createEvaluatedCell(
+      nullValueToZeroValue(formulaReturn[0][0]),
+      this.getters.getLocale(),
+      cellData
+    );
   }
 
   private assertSheetHasEnoughSpaceToSpreadFormulaResult(
     { sheetId, col, row }: CellPosition,
-    matrixResult: Matrix<ValueAndFormat>
+    matrixResult: Matrix<FPayload>
   ) {
     const numberOfCols = this.getters.getNumberCols(sheetId);
     const numberOfRows = this.getters.getNumberRows(sheetId);
@@ -335,15 +357,39 @@ export class Evaluator {
     }
 
     if (enoughCols) {
-      throw new Error(_t("Result couldn't be automatically expanded. Please insert more rows."));
+      throw new SplillBlockedError(
+        _t("Result couldn't be automatically expanded. Please insert more rows.")
+      );
     }
 
     if (enoughRows) {
-      throw new Error(_t("Result couldn't be automatically expanded. Please insert more columns."));
+      throw new SplillBlockedError(
+        _t("Result couldn't be automatically expanded. Please insert more columns.")
+      );
     }
 
-    throw new Error(
+    throw new SplillBlockedError(
       _t("Result couldn't be automatically expanded. Please insert more columns and rows.")
+    );
+  }
+
+  private assertNoMergedCellsInSpreadZone(
+    { sheetId, col, row }: CellPosition,
+    matrixResult: Matrix<FPayload>
+  ) {
+    const mergedCells = this.getters.getMergesInZone(sheetId, {
+      top: row,
+      bottom: row + matrixResult.length,
+      left: col,
+      right: col + matrixResult[0].length,
+    });
+
+    if (mergedCells.length === 0) {
+      return;
+    }
+
+    throw new SplillBlockedError(
+      _t("Merged cells found in the spill zone. Please unmerge cells before using array formulas.")
     );
   }
 
@@ -352,16 +398,15 @@ export class Evaluator {
     col,
     row,
   }: CellPosition): (i: number, j: number) => void {
-    const arrayFormulaPositionId = this.encoder.encode({ sheetId, col, row });
+    const arrayFormulaPosition = { sheetId, col, row };
     return (i: number, j: number) => {
       const position = { sheetId, col: i + col, row: j + row };
-      const resultPositionId = this.encoder.encode(position);
-      this.spreadingRelations.addRelation({ resultPositionId, arrayFormulaPositionId });
+      this.spreadingRelations.addRelation({ resultPosition: position, arrayFormulaPosition });
     };
   }
 
-  private checkCollision({ sheetId, col, row }: CellPosition): (i: number, j: number) => void {
-    const formulaPositionId = this.encoder.encode({ sheetId, col, row });
+  private checkCollision(formulaPosition: CellPosition): (i: number, j: number) => void {
+    const { sheetId, col, row } = formulaPosition;
     return (i: number, j: number) => {
       const position = { sheetId: sheetId, col: i + col, row: j + row };
       const rawCell = this.getters.getCell(position);
@@ -369,81 +414,75 @@ export class Evaluator {
         rawCell?.content ||
         this.getters.getEvaluatedCell(position).type !== CellValueType.empty
       ) {
-        this.blockedArrayFormulas.add(formulaPositionId);
-        throw new Error(
+        this.blockedArrayFormulas.add(formulaPosition);
+        throw new SplillBlockedError(
           _t(
             "Array result was not expanded because it would overwrite data in %s.",
             toXC(position.col, position.row)
           )
         );
       }
-      this.blockedArrayFormulas.delete(formulaPositionId);
+      this.blockedArrayFormulas.delete(formulaPosition);
     };
   }
 
   private spreadValues(
     { sheetId, col, row }: CellPosition,
-    matrixResult: Matrix<ValueAndFormat>
+    matrixResult: Matrix<FPayload>
   ): (i: number, j: number) => void {
     return (i: number, j: number) => {
       const position = { sheetId, col: i + col, row: j + row };
       const cell = this.getters.getCell(position);
-      const format = cell?.format;
-      const evaluatedCell = createEvaluatedCell(matrixResult[i][j].value, {
-        format: format || matrixResult[i][j]?.format,
-        locale: this.getters.getLocale(),
-      });
-
-      const positionId = this.encoder.encode(position);
-
-      this.setEvaluatedCell(positionId, evaluatedCell);
+      const evaluatedCell = createEvaluatedCell(
+        nullValueToZeroValue(matrixResult[i][j]),
+        this.getters.getLocale(),
+        cell
+      );
+      this.evaluatedCells.set(position, evaluatedCell);
 
       // check if formula dependencies present in the spread zone
       // if so, they need to be recomputed
-      this.nextPositionsToUpdate.addMany(this.getCellsDependingOn([positionId]));
+      this.nextPositionsToUpdate.addMany(this.getCellsDependingOn([position]));
     };
   }
 
-  private invalidateSpreading(positionId: PositionId) {
-    if (!this.spreadingRelations.isArrayFormula(positionId)) {
+  private invalidateSpreading(position: CellPosition) {
+    if (!this.spreadingRelations.isArrayFormula(position)) {
       return;
     }
-    for (const child of this.spreadingRelations.getArrayResultPositionIds(positionId)) {
-      const content = this.getCell(child)?.content;
+    const invalidated = this.createEmptyPositionSet();
+    for (const child of this.spreadingRelations.getArrayResultPositions(position)) {
+      const content = this.getters.getCell(child)?.content;
       if (content) {
         // there's no point at re-evaluating overlapping array formulas,
         // there's still a collision
         continue;
       }
+      invalidated.add(child);
       this.evaluatedCells.delete(child);
-      this.nextPositionsToUpdate.addMany(this.getCellsDependingOn([child]));
-      this.nextPositionsToUpdate.addMany(this.getArrayFormulasBlockedBy(child));
     }
-    this.spreadingRelations.removeNode(positionId);
+    this.nextPositionsToUpdate.addMany(this.getCellsDependingOn(invalidated));
+    this.nextPositionsToUpdate.addMany(this.getArrayFormulasBlockedBy(invalidated));
   }
 
   // ----------------------------------------------------------
   //                 COMMON FUNCTIONALITY
   // ----------------------------------------------------------
 
-  private getDirectDependencies(positionId: PositionId): Range[] {
-    const cell = this.getCell(positionId);
+  private getDirectDependencies(position: CellPosition): Range[] {
+    const cell = this.getters.getCell(position);
     if (!cell?.isFormula) {
       return [];
     }
     return cell.compiledFormula.dependencies;
   }
 
-  private getCellsDependingOn(positionIds: Iterable<PositionId>): Iterable<PositionId> {
+  private getCellsDependingOn(positions: Iterable<CellPosition>): Iterable<CellPosition> {
     const ranges: RTreeBoundingBox[] = [];
-    for (const positionId of positionIds) {
-      ranges.push(this.encoder.decodeToBoundingBox(positionId));
+    for (const position of positions) {
+      ranges.push({ sheetId: position.sheetId, zone: positionToZone(position) });
     }
     return this.formulaDependencies().getCellsDependingOn(ranges);
-  }
-
-  private getCell(positionId: PositionId): Cell | undefined {
-    return this.getters.getCell(this.encoder.decode(positionId));
   }
 }
 
@@ -463,87 +502,39 @@ function forEachSpreadPositionInMatrix(
 }
 
 /**
- * Encode (and decode) cell positions { sheetId, col, row }
- * to a single integer.
- *
- * `col` and `row` values are encoded on 21 bits each (max 2^21 = 2_097_152),
- * An incremental integer id is assigned to each different sheet id, starting at 0.
- *
- * e.g.
- * Given { col: 10, row: 4, sheetId: "abcde" }
- * we have:
- *  - row "4" encoded on 21 bits:  000000000000000000100
- *  - col "10" encoded on 21 bits: 000000000000000001010
- *  - sheetId: let's say it's the 4th sheetId met, encoded to: 11
- *
- * The final encoded value is found by concatenating the 3 bit sequences:
- *
- * sheetId: 11
- * col:       000000000000000001010
- * row:                            000000000000000000100
- * =>       11000000000000000001010000000000000000000100
- *
- * this binary sequence is the integer 13194160504836
+ * This function replaces null payload values with 0.
+ * This aids in the UI by ensuring that a cell with a
+ * formula referencing an empty cell displays a value (0),
+ * rather than appearing empty. This indicates that the
+ * cell is the result of a non-empty content.
  */
-export class PositionBitsEncoder {
-  private readonly sheetMapping: Record<string, PositionId> = {};
-  private readonly inverseSheetMapping = new Map<PositionId, string>();
-
-  constructor() {
-    try {
-      // @ts-ignore
-      o_spreadsheet.__DEBUG__ = o_spreadsheet.__DEBUG__ || {};
-      // @ts-ignore
-      o_spreadsheet.__DEBUG__.decodePosition = this.decode.bind(this);
-      // @ts-ignore
-      o_spreadsheet.__DEBUG__.encodePosition = this.encode.bind(this);
-    } catch (error) {}
+function nullValueToZeroValue(fPayload: FPayload): FPayload {
+  if (fPayload.value === null || fPayload.value === undefined) {
+    // 'fPayload.value === undefined' is supposed to never happen, it's a safety net for javascript use
+    return { ...fPayload, value: 0 };
   }
+  return fPayload;
+}
 
-  /**
-   * Encode a cell position to a single integer.
-   */
-  encode({ sheetId, col, row }: CellPosition): PositionId {
-    return (this.encodeSheet(sheetId) << 42n) | (BigInt(col) << 21n) | BigInt(row);
-  }
-
-  encodeBoundingBox({ sheetId, zone }: RTreeBoundingBox): PositionId[] {
-    const positions: PositionId[] = [];
-    forEachPositionsInZone(zone, (col, row) => {
-      positions.push(this.encode({ sheetId, col, row }));
-    });
-    return positions;
-  }
-
-  decode(id: PositionId): CellPosition {
-    // keep only the last 21 bits by AND-ing the bit sequence with 21 ones
-    const row = Number(id & 0b111111111111111111111n);
-    const col = Number((id >> 21n) & 0b111111111111111111111n);
-    const sheetId = this.decodeSheet(id >> 42n);
-    return { sheetId, col, row };
-  }
-
-  decodeToBoundingBox(id: PositionId): RTreeBoundingBox {
-    const { sheetId, col, row } = this.decode(id);
-    return { sheetId, zone: { left: col, top: row, right: col, bottom: row } };
-  }
-
-  private encodeSheet(sheetId: UID): PositionId {
-    const sheetKey = this.sheetMapping[sheetId];
-    if (sheetKey === undefined) {
-      const newSheetKey = BigInt(Object.keys(this.sheetMapping).length);
-      this.sheetMapping[sheetId] = newSheetKey;
-      this.inverseSheetMapping.set(newSheetKey, sheetId);
-      return newSheetKey;
+export function updateEvalContextAndExecute(
+  compiledFormula: RangeCompiledFormula,
+  compilationParams: CompilationParameters,
+  sheetId: UID,
+  cellId?: UID
+) {
+  compilationParams.evalContext.__originCellXC = lazy(() => {
+    if (!cellId) {
+      return undefined;
     }
-    return sheetKey;
-  }
-
-  private decodeSheet(sheetKey: PositionId): UID {
-    const sheetId = this.inverseSheetMapping.get(sheetKey);
-    if (sheetId === undefined) {
-      throw new Error("Sheet id not found");
-    }
-    return sheetId;
-  }
+    // compute the value lazily for performance reasons
+    const position = compilationParams.evalContext.getters.getCellPosition(cellId);
+    return toXC(position.col, position.row);
+  });
+  compilationParams.evalContext.__originSheetId = sheetId;
+  return compiledFormula.execute(
+    compiledFormula.dependencies,
+    compilationParams.referenceDenormalizer,
+    compilationParams.ensureRange,
+    compilationParams.evalContext
+  );
 }

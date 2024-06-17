@@ -95,7 +95,7 @@ describe("Data validation", () => {
     ]);
   });
 
-  test("Paste value/format only don't paste data validation", () => {
+  test("Paste as value or paste format only don't paste data validation", () => {
     const criterion: DataValidationCriterion = { type: "textContains", values: ["1"] };
     addDataValidation(model, "A1:A5", "id", criterion);
     copy(model, "A1:A5");
@@ -105,7 +105,7 @@ describe("Data validation", () => {
       { id: "id", criterion, ranges: ["A1:A5"] },
     ]);
 
-    paste(model, "C1", "onlyValue");
+    paste(model, "C1", "asValue");
     expect(getDataValidationRules(model, sheetId)).toMatchObject([
       { id: "id", criterion, ranges: ["A1:A5"] },
     ]);
@@ -134,6 +134,17 @@ describe("Data validation", () => {
     expect(getDataValidationRules(model, sheet2Id)).toMatchObject([
       { criterion: { values: ["1"] }, ranges: ["A1"] },
       { criterion: { values: ["5"] }, ranges: ["B2"] },
+    ]);
+  });
+
+  test("Can copy/paste empty cell to clear data validation rule", () => {
+    const criterion: DataValidationCriterion = { type: "textContains", values: ["1"] };
+    addDataValidation(model, "A1:A5", "id", criterion);
+    copy(model, "A6");
+    paste(model, "A1");
+
+    expect(getDataValidationRules(model, sheetId)).toMatchObject([
+      { id: expect.any(String), criterion, ranges: ["A2:A5"] },
     ]);
   });
 });

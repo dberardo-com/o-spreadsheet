@@ -49,6 +49,7 @@ export const CellIsOperators = {
 
 export const ChartTerms = {
   Series: _t("Series"),
+  BackgroundColor: _t("Background color"),
   Errors: {
     Unexpected: _t("The chart definition is invalid for an unknown reason"),
     // BASIC CHART ERRORS (LINE | BAR | PIE)
@@ -129,5 +130,32 @@ export const DVTerms = {
     numberValue: _t("The value must be a number"),
     dateValue: _t("The value must be a date"),
     validRange: _t("The value must be a valid range"),
+  },
+};
+
+export const TableTerms = {
+  Errors: {
+    Unexpected: _t("The table zone is invalid for an unknown reason"),
+    [CommandResult.TableOverlap]: _t("You cannot create overlapping tables."),
+    [CommandResult.NonContinuousTargets]: _t(
+      "A table can only be created on a continuous selection."
+    ),
+    [CommandResult.InvalidRange]: _t("The range is invalid"),
+    [CommandResult.TargetOutOfSheet]: _t("The range is out of the sheet"),
+  },
+  Checkboxes: {
+    hasFilters: _t("Filter button"),
+    headerRow: _t("Header row(s)"),
+    bandedRows: _t("Banded rows"),
+    firstColumn: _t("First column"),
+    lastColumn: _t("Last column"),
+    bandedColumns: _t("Banded columns"),
+    automaticAutofill: _t("Automatically autofill formulas"),
+    totalRow: _t("Total row"),
+    isDynamic: _t("Auto-adjust to formula result"),
+  },
+  Tooltips: {
+    filterWithoutHeader: _t("Cannot have filters without a header row"),
+    isDynamic: _t("For tables based on array formulas only"),
   },
 };

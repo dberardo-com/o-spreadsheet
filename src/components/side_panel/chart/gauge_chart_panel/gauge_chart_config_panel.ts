@@ -1,9 +1,15 @@
 import { Component, useState } from "@odoo/owl";
 import { GaugeChartDefinition } from "../../../../types/chart/gauge_chart";
-import { CommandResult, DispatchResult, SpreadsheetChildEnv, UID } from "../../../../types/index";
-import { SelectionInput } from "../../../selection_input/selection_input";
+import {
+  CommandResult,
+  CustomizedDataSet,
+  DispatchResult,
+  SpreadsheetChildEnv,
+  UID,
+} from "../../../../types/index";
 import { ChartTerms } from "../../../translations_terms";
-import { ValidationMessages } from "../../../validation_messages/validation_messages";
+import { ChartDataSeries } from "../building_blocks/data_series/data_series";
+import { ChartErrorSection } from "../building_blocks/error_section/error_section";
 
 interface Props {
   figureId: UID;
@@ -18,7 +24,13 @@ interface PanelState {
 
 export class GaugeChartConfigPanel extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-GaugeChartConfigPanel";
-  static components = { SelectionInput, ValidationMessages };
+  static components = { ChartErrorSection, ChartDataSeries };
+  static props = {
+    figureId: String,
+    definition: Object,
+    updateChart: Function,
+    canUpdateChart: Function,
+  };
 
   private state: PanelState = useState({
     dataRangeDispatchResult: undefined,
@@ -52,14 +64,7 @@ export class GaugeChartConfigPanel extends Component<Props, SpreadsheetChildEnv>
     });
   }
 
-  getDataRange(): string {
-    return this.dataRange || "";
+  getDataRange(): CustomizedDataSet {
+    return { dataRange: this.dataRange || "" };
   }
 }
-
-GaugeChartConfigPanel.props = {
-  figureId: String,
-  definition: Object,
-  updateChart: Function,
-  canUpdateChart: Function,
-};

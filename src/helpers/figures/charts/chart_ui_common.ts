@@ -1,13 +1,16 @@
-import type { ChartConfiguration, ChartOptions, ChartType } from "chart.js";
+import type { BasePlatform, ChartConfiguration, ChartOptions, ChartType } from "chart.js";
 import { ChartTerms } from "../../../components/translations_terms";
-import { MAX_CHAR_LABEL } from "../../../constants";
+import { DEFAULT_CHART_FONT_SIZE, DEFAULT_CHART_PADDING, MAX_CHAR_LABEL } from "../../../constants";
+import { isEvaluationError } from "../../../functions/helpers";
 import { _t } from "../../../translation";
 import { Color, Figure, Format, Getters, LocaleFormat, Range } from "../../../types";
+import { GaugeChartRuntime, ScorecardChartRuntime } from "../../../types/chart";
 import { ChartRuntime, DataSet, DatasetValues, LabelValues } from "../../../types/chart/chart";
 import { formatValue, isDateTimeFormat } from "../../format";
 import { deepCopy, range } from "../../misc";
-import { recomputeZones, zoneToXc } from "../../zones";
+import { recomputeZones } from "../../recompute_zones";
 import { AbstractChart } from "./abstract_chart";
+import { drawGaugeChart } from "./gauge_chart_rendering";
 import { drawScoreChart } from "./scorecard_chart";
 import { getScorecardConfiguration } from "./scorecard_chart_config_builder";
 /**
@@ -20,12 +23,12 @@ import { getScorecardConfiguration } from "./scorecard_chart_config_builder";
  */
 export function getData(getters: Getters, ds: DataSet): any[] {
   if (ds.dataRange) {
-    const labelCellZone = ds.labelCell ? [zoneToXc(ds.labelCell.zone)] : [];
-    const dataXC = recomputeZones([zoneToXc(ds.dataRange.zone)], labelCellZone)[0];
-    if (dataXC === undefined) {
+    const labelCellZone = ds.labelCell ? [ds.labelCell.zone] : [];
+    const dataZone = recomputeZones([ds.dataRange.zone], labelCellZone)[0];
+    if (dataZone === undefined) {
       return [];
     }
-    const dataRange = getters.getRangeFromSheetXC(ds.dataRange.sheetId, dataXC);
+    const dataRange = getters.getRangeFromZone(ds.dataRange.sheetId, dataZone);
     return getters.getRangeValues(dataRange).map((value) => (value === "" ? undefined : value));
   }
   return [];
@@ -102,12 +105,18 @@ export function getDefaultChartJsRuntime(
   fontColor: Color,
   { format, locale, truncateLabels }: LocaleFormat & { truncateLabels?: boolean }
 ): Required<ChartConfiguration> {
+  const chartTitle = chart.title.text ? chart.title : { ...chart.title, content: "" };
   const options: ChartOptions = {
     // https://www.chartjs.org/docs/latest/general/responsive.html
     responsive: true, // will resize when its container is resized
     maintainAspectRatio: false, // doesn't maintain the aspect ration (width/height =2 by default) so the user has the choice of the exact layout
     layout: {
-      padding: { left: 20, right: 20, top: chart.title ? 10 : 25, bottom: 10 },
+      padding: {
+        left: DEFAULT_CHART_PADDING,
+        right: DEFAULT_CHART_PADDING,
+        top: chartTitle.text ? DEFAULT_CHART_PADDING / 2 : DEFAULT_CHART_PADDING + 5,
+        bottom: DEFAULT_CHART_PADDING,
+      },
     },
     elements: {
       line: {
@@ -120,10 +129,16 @@ export function getDefaultChartJsRuntime(
     animation: false,
     plugins: {
       title: {
-        display: !!chart.title,
-        text: _t(chart.title),
-        color: fontColor,
-        font: { size: 22, weight: "normal" },
+        display: !!chartTitle.text,
+        text: _t(chartTitle.text!),
+        color: chartTitle?.color ?? fontColor,
+        align:
+          chartTitle.align === "center" ? "center" : chartTitle.align === "right" ? "end" : "start",
+        font: {
+          size: DEFAULT_CHART_FONT_SIZE,
+          weight: chartTitle.bold ? "bold" : "normal",
+          style: chartTitle.italic ? "italic" : "normal",
+        },
       },
       legend: {
         // Disable default legend onClick (show/hide dataset), to allow us to set a global onClick on the chart container.
@@ -151,6 +166,7 @@ export function getDefaultChartJsRuntime(
       labels: truncateLabels ? labels.map(truncateLabel) : labels,
       datasets: [],
     },
+    platform: undefined as unknown as typeof BasePlatform, // This key is optional and will be set by chart.js
     plugins: [],
   };
 }
@@ -177,7 +193,7 @@ export function getChartLabelValues(
     if (!labelRange.invalidXc && !labelRange.invalidSheetName) {
       labels = {
         formattedValues: getters.getRangeFormattedValues(labelRange),
-        values: getters.getRangeValues(labelRange).map((val) => String(val)),
+        values: getters.getRangeValues(labelRange).map((val) => String(val ?? "")),
       };
     }
   } else if (dataSets.length === 1) {
@@ -228,9 +244,15 @@ export function getChartDatasetValues(getters: Getters, dataSets: DataSet[]): Da
           ? truncateLabel(cell.formattedValue)
           : (label = `${ChartTerms.Series} ${parseInt(dsIndex) + 1}`);
     } else {
-      label = label = `${ChartTerms.Series} ${parseInt(dsIndex) + 1}`;
+      label = `${ChartTerms.Series} ${parseInt(dsIndex) + 1}`;
     }
     let data = ds.dataRange ? getData(getters, ds) : [];
+    if (data.every((e) => typeof e === "string" && !isEvaluationError(e))) {
+      // In this case, we want a chart based on the string occurrences count
+      // This will be done by associating each string with a value of 1 and
+      // the using the classical aggregation method to sum the values.
+      data.fill(1);
+    }
     datasetValues.push({ data, label });
   }
   return datasetValues;
@@ -245,7 +267,11 @@ export function getFillingMode(index: number): "origin" | number {
   }
 }
 
-export function chartToImage(runtime: ChartRuntime, figure: Figure, type: string) {
+export function chartToImage(
+  runtime: ChartRuntime,
+  figure: Figure,
+  type: string
+): string | undefined {
   // wrap the canvas in a div with a fixed size because chart.js would
   // fill the whole page otherwise
   const div = document.createElement("div");
@@ -258,21 +284,27 @@ export function chartToImage(runtime: ChartRuntime, figure: Figure, type: string
   // we have to add the canvas to the DOM otherwise it won't be rendered
   document.body.append(div);
   if ("chartJsConfig" in runtime) {
-    runtime.chartJsConfig.plugins = [backgroundColorChartJSPlugin];
+    const config = deepCopy(runtime.chartJsConfig);
+    config.plugins = [backgroundColorChartJSPlugin];
     // @ts-ignore
-    const chart = new window.Chart(canvas, deepCopy(runtime.chartJsConfig));
-    const imgContent = chart.toBase64Image();
+    const chart = new window.Chart(canvas, config);
+    const imgContent = chart.toBase64Image() as string;
     chart.destroy();
     div.remove();
     return imgContent;
   } else if (type === "scorecard") {
-    const design = getScorecardConfiguration(figure, runtime);
+    const design = getScorecardConfiguration(figure, runtime as ScorecardChartRuntime);
     drawScoreChart(design, canvas);
     const imgContent = canvas.toDataURL();
     div.remove();
     return imgContent;
+  } else if (type === "gauge") {
+    drawGaugeChart(canvas, runtime as GaugeChartRuntime);
+    const imgContent = canvas.toDataURL();
+    div.remove();
+    return imgContent;
   }
-  return "";
+  return undefined;
 }
 
 /**

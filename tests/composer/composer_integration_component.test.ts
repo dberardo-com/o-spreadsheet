@@ -1,4 +1,5 @@
 import { Model } from "../../src";
+import { ComposerStore } from "../../src/components/composer/composer/composer_store";
 import {
   DEFAULT_CELL_HEIGHT,
   DEFAULT_CELL_WIDTH,
@@ -7,6 +8,8 @@ import {
   HEADER_WIDTH,
 } from "../../src/constants";
 import { colors, toHex, toZone } from "../../src/helpers";
+import { Store } from "../../src/store_engine";
+import { SpreadsheetChildEnv } from "../../src/types";
 import { ContentEditableHelper } from "../__mocks__/content_editable_helper";
 import {
   activateSheet,
@@ -18,6 +21,7 @@ import {
   resizeRows,
   selectCell,
   setCellContent,
+  setStyle,
 } from "../test_helpers/commands_helpers";
 import {
   click,
@@ -54,6 +58,7 @@ jest.mock("../../src/components/composer/content_editable_helper.ts", () =>
 let fixture: HTMLElement;
 let model: Model;
 let cehMock: ContentEditableHelper;
+let composerStore: Store<ComposerStore>;
 
 async function startComposition(key?: string) {
   const composerEl = await startGridComposition(key);
@@ -80,9 +85,9 @@ const modelData = { sheets: [{ id: "sh1" }] };
 
 describe("Composer interactions", () => {
   beforeEach(async () => {
-    ({ model, fixture } = await mountSpreadsheet({
-      model: new Model(modelData),
-    }));
+    let env: SpreadsheetChildEnv;
+    ({ model, fixture, env } = await mountSpreadsheet({ model: new Model(modelData) }));
+    composerStore = env.getStore(ComposerStore);
   });
 
   test("type in grid composer adds text to topbar composer", async () => {
@@ -205,7 +210,7 @@ describe("Composer interactions", () => {
     expect(composerEl.textContent).toBe("=");
     expect(cehMock.selectionState.isSelectingRange).toBeTruthy();
     expect(cehMock.selectionState.position).toBe(1);
-    expect(model.getters.getEditionMode()).toBe("selecting");
+    expect(composerStore.editionMode).toBe("selecting");
     await clickCell(model, "C8");
     expect(composerEl.textContent).toBe("=C8");
     expect(cehMock.colors["C8"]).toBe(colors[0]);
@@ -213,9 +218,9 @@ describe("Composer interactions", () => {
 
   test("=+Click range, the range ref should be colored", async () => {
     const composerEl = await typeInComposerGrid("=");
-    gridMouseEvent(model, "mousedown", "C8");
-    gridMouseEvent(model, "mousemove", "B8");
-    gridMouseEvent(model, "mouseup", "B8");
+    gridMouseEvent(model, "pointerdown", "C8");
+    gridMouseEvent(model, "pointermove", "B8");
+    gridMouseEvent(model, "pointerup", "B8");
     await nextTick();
     expect(composerEl.textContent).toBe("=B8:C8");
     expect(cehMock.colors["B8:C8"]).toBe(colors[0]);
@@ -231,7 +236,7 @@ describe("Composer interactions", () => {
   });
 
   test("grid composer is not visible when not editing", async () => {
-    expect(model.getters.getEditionMode()).toBe("inactive");
+    expect(composerStore.editionMode).toBe("inactive");
     const gridComposerEl = fixture.querySelector(".o-grid-composer") as HTMLDivElement;
     expect(gridComposerEl.style.zIndex).toBe("-1000");
     await startComposition();
@@ -240,7 +245,7 @@ describe("Composer interactions", () => {
 
   test("starting the edition with enter, the composer should have the focus", async () => {
     await startComposition();
-    expect(model.getters.getEditionMode()).toBe("editing");
+    expect(composerStore.editionMode).toBe("editing");
     expect(getActivePosition(model)).toBe("A1");
     expect(document.activeElement).toBe(fixture.querySelector(".o-grid div.o-composer")!);
   });
@@ -294,7 +299,8 @@ describe("Composer interactions", () => {
     const reference = fixture.querySelector(referenceSelector);
     expect(reference).not.toBeNull();
     expect(reference!.textContent).toBe("A1");
-    await keyDown({ key: "Escape" });
+    composerStore.stopEdition();
+    await nextTick();
     expect(fixture.querySelector(referenceSelector)).toBeNull();
     await startComposition();
     expect(fixture.querySelector(referenceSelector)).toBeNull();
@@ -314,13 +320,13 @@ describe("Composer interactions", () => {
 
   test("type '=', backspace and select a cell should not add it", async () => {
     const composerEl = await typeInComposerGrid("=");
-    model.dispatch("SET_CURRENT_CONTENT", { content: "" });
+    composerStore.setCurrentContent("");
     cehMock.removeAll();
     composerEl.dispatchEvent(new Event("input"));
     composerEl.dispatchEvent(new Event("keyup"));
     await clickCell(model, "C8");
     expect(getSelectionAnchorCellXc(model)).toBe("C8");
-    expect(model.getters.getEditionMode()).toBe("inactive");
+    expect(composerStore.editionMode).toBe("inactive");
   });
 
   test("ArrowKeys will move to neighbour cell, if not in contentFocus mode (left/right)", async () => {
@@ -355,7 +361,7 @@ describe("Composer interactions", () => {
     await typeInComposerGrid(`"`, false);
     expect(composerEl.textContent).toBe(`=""`);
     await keyDown({ key: "ArrowLeft" });
-    expect(model.getters.getEditionMode()).not.toBe("inactive");
+    expect(composerStore.editionMode).not.toBe("inactive");
   });
 
   test("ArrowKeys will move to neighbour cell, if not in contentFocus mode (up/down)", async () => {
@@ -386,14 +392,14 @@ describe("Composer interactions", () => {
   test("The composer should be closed before opening the context menu", async () => {
     await typeInComposerGrid("=");
     await rightClickCell(model, "C8");
-    expect(model.getters.getEditionMode()).toBe("inactive");
+    expect(composerStore.editionMode).toBe("inactive");
   });
 
   test("The composer should be closed before selecting headers", async () => {
     await typeInComposerGrid("Hello");
-    expect(model.getters.getEditionMode()).not.toBe("inactive");
+    expect(composerStore.editionMode).not.toBe("inactive");
     await selectColumnByClicking(model, "C");
-    expect(model.getters.getEditionMode()).toBe("inactive");
+    expect(composerStore.editionMode).toBe("inactive");
   });
 
   test("The content in the composer should be kept after selecting headers", async () => {
@@ -405,7 +411,7 @@ describe("Composer interactions", () => {
 
   test("typing CTRL+C in grid does not type C in the cell", async () => {
     await keyDown({ key: "c", ctrlKey: true });
-    expect(model.getters.getCurrentContent()).toBe("");
+    expect(composerStore.currentContent).toBe("");
   });
 
   test("Hitting enter on topbar composer will properly update it", async () => {
@@ -450,33 +456,46 @@ describe("Composer interactions", () => {
     await clickCell(model, "B2");
     expect(getCellText(model, "A1")).toBe("=sum(sum(1,2))");
   });
+
+  test("Autocomplete should not appear when typing '=S', clicking outside, and editing back", async () => {
+    await typeInComposerGrid("=S");
+    expect(fixture.querySelectorAll(".o-autocomplete-value")).toHaveLength(10);
+
+    await clickCell(model, "B2");
+    expect(fixture.querySelector(".o-autocomplete-dropdown")).toBeFalsy();
+
+    await startGridComposition();
+    expect(fixture.querySelector(".o-autocomplete-dropdown")).toBeFalsy();
+  });
 });
 
 describe("Grid composer", () => {
+  let env: SpreadsheetChildEnv;
   beforeEach(async () => {
-    ({ model, fixture } = await mountSpreadsheet({
+    ({ model, env, fixture } = await mountSpreadsheet({
       model: new Model(modelData),
     }));
   });
 
   test("Composer is closed when changing sheet while not editing a formula", async () => {
+    const composerStore = env.getStore(ComposerStore);
     const baseSheetId = model.getters.getActiveSheetId();
     createSheet(model, { sheetId: "42", name: "Sheet2" });
     await nextTick();
 
     // Editing text
     await typeInComposerGrid("hey");
-    expect(model.getters.getEditionMode()).not.toBe("inactive");
+    expect(composerStore.editionMode).not.toBe("inactive");
     activateSheet(model, "42");
     await nextTick();
-    expect(model.getters.getEditionMode()).toBe("inactive");
+    expect(composerStore.editionMode).toBe("inactive");
 
     // Editing formula
     await typeInComposerGrid("=");
-    expect(model.getters.getEditionMode()).not.toBe("inactive");
+    expect(composerStore.editionMode).not.toBe("inactive");
     activateSheet(model, baseSheetId);
     await nextTick();
-    expect(model.getters.getEditionMode()).not.toBe("inactive");
+    expect(composerStore.editionMode).not.toBe("inactive");
   });
 
   test("the composer should keep the focus after changing sheet", async () => {
@@ -497,8 +516,6 @@ describe("Grid composer", () => {
     paste(model, "A3:A4");
     selectCell(model, "B1");
     await startComposition("=C4");
-    model.dispatch("CHANGE_COMPOSER_CURSOR_SELECTION", { start: 1, end: 1 });
-    await nextTick();
     await keyDown({ key: "F4" });
     expect(getCellContent(model, "B2")).toBe("");
   });
@@ -559,19 +576,15 @@ describe("Grid composer", () => {
     test("Inherits the style of the cell", async () => {
       const fontSize = FONT_SIZES[0];
       const color = "#123456";
-      model.dispatch("SET_FORMATTING", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: [toZone("A1")],
-        style: {
-          textColor: color,
-          fillColor: color,
-          fontSize,
-          bold: true,
-          italic: true,
-          strikethrough: true,
-          underline: true,
-          align: "right",
-        },
+      setStyle(model, "A1", {
+        textColor: color,
+        fillColor: color,
+        fontSize,
+        bold: true,
+        italic: true,
+        strikethrough: true,
+        underline: true,
+        align: "right",
       });
       await typeInComposerGrid("Hello");
       const gridComposer = fixture.querySelector(".o-grid-composer")! as HTMLElement;
@@ -616,19 +629,15 @@ describe("Grid composer", () => {
     test("Does not inherit style of the cell", async () => {
       const fontSize = FONT_SIZES[0];
       const color = "#123456";
-      model.dispatch("SET_FORMATTING", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: [toZone("A1")],
-        style: {
-          textColor: color,
-          fillColor: color,
-          fontSize,
-          bold: true,
-          italic: true,
-          strikethrough: true,
-          underline: true,
-          align: "right",
-        },
+      setStyle(model, "A1", {
+        textColor: color,
+        fillColor: color,
+        fontSize,
+        bold: true,
+        italic: true,
+        strikethrough: true,
+        underline: true,
+        align: "right",
       });
       await typeInComposerGrid("=");
       const gridComposer = fixture.querySelector(".o-grid-composer")! as HTMLElement;

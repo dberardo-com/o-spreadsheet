@@ -3,7 +3,8 @@
 //------------------------------------------------------------------------------
 import { NEWLINE } from "../constants";
 import { ConsecutiveIndexes, Lazy, UID } from "../types";
-import { Cloneable } from "./../types/misc";
+import { SearchOptions } from "../types/find_and_replace";
+import { Cloneable, DebouncedFunction } from "./../types/misc";
 
 /**
  * Remove quotes from a quoted string
@@ -83,10 +84,17 @@ function isPlainObject(obj: unknown): boolean {
  * @param sheetName name of the sheet, potentially quoted with single quotes
  */
 export function getUnquotedSheetName(sheetName: string): string {
-  if (sheetName.startsWith("'")) {
-    sheetName = sheetName.slice(1, -1).replace(/''/g, "'");
+  return unquote(sheetName, "'");
+}
+
+export function unquote(string: string, quoteChar: "'" | '"' = '"'): string {
+  if (string.startsWith(quoteChar)) {
+    string = string.slice(1);
   }
-  return sheetName;
+  if (string.endsWith(quoteChar)) {
+    string = string.slice(0, -1);
+  }
+  return string;
 }
 
 /**
@@ -272,22 +280,26 @@ export function getItemId<T>(item: T, itemsDic: { [id: number]: T }) {
 }
 
 /**
- * This method comes from owl 1 as it was removed in owl 2
- *
  * Returns a function, that, as long as it continues to be invoked, will not
  * be triggered. The function will be called after it stops being called for
  * N milliseconds. If `immediate` is passed, trigger the function on the
  * leading edge, instead of the trailing.
  *
+ * Also decorate the argument function with two methods: stopDebounce and isDebouncePending.
+ *
  * Inspired by https://davidwalsh.name/javascript-debounce-function
  */
-export function debounce(func: Function, wait: number, immediate?: boolean): Function {
-  let timeout;
-  return function (this: any): void {
+export function debounce<T extends (...args: any) => void>(
+  func: T,
+  wait: number,
+  immediate?: boolean
+): DebouncedFunction<T> {
+  let timeout: any | undefined = undefined;
+  const debounced = function (this: any): void {
     const context = this;
-    const args = arguments;
+    const args = Array.from(arguments);
     function later() {
-      timeout = null;
+      timeout = undefined;
       if (!immediate) {
         func.apply(context, args);
       }
@@ -297,6 +309,32 @@ export function debounce(func: Function, wait: number, immediate?: boolean): Fun
     timeout = setTimeout(later, wait);
     if (callNow) {
       func.apply(context, args);
+    }
+  };
+  debounced.isDebouncePending = () => timeout !== undefined;
+  debounced.stopDebounce = () => {
+    clearTimeout(timeout);
+  };
+  return debounced as DebouncedFunction<T>;
+}
+
+/**
+ * Creates a batched version of a callback so that all calls to it in the same
+ * microtick will only call the original callback once.
+ *
+ * @param callback the callback to batch
+ * @returns a batched version of the original callback
+ *
+ * Copied from odoo/owl repo.
+ */
+export function batched(callback: () => void): () => void {
+  let scheduled = false;
+  return async (...args) => {
+    if (!scheduled) {
+      scheduled = true;
+      await Promise.resolve();
+      scheduled = false;
+      callback(...args);
     }
   };
 }
@@ -409,7 +447,8 @@ export function includesAll<T>(arr: T[], values: T[]): boolean {
 /**
  * Return an object with all the keys in the object that have a falsy value removed.
  */
-export function removeFalsyAttributes(obj: Object): Object {
+export function removeFalsyAttributes<T extends Object | undefined | null>(obj: T): T {
+  if (!obj) return obj;
   const cleanObject = { ...obj };
   Object.keys(cleanObject).forEach((key) => !cleanObject[key] && delete cleanObject[key]);
   return cleanObject;
@@ -447,15 +486,6 @@ export function replaceSpecialSpaces(text: string | undefined): string {
   return text.replace(whiteSpaceRegexp, (match, newLine) => (newLine ? NEWLINE : " "));
 }
 
-/** Move the item at the starting index to the target index in an array */
-export function moveItemToIndex<T>(array: T[], startIndex: number, targetIndex: number): T[] {
-  array = [...array];
-  const item = array[startIndex];
-  array.splice(startIndex, 1);
-  array.splice(targetIndex, 0, item);
-  return array;
-}
-
 /**
  * Determine if the numbers are consecutive.
  */
@@ -467,22 +497,6 @@ export function isConsecutive(iterable: Iterable<number>): boolean {
     }
   }
   return true;
-}
-
-export class JetSet<T> extends Set<T> {
-  addMany(iterable: Iterable<T>): this {
-    for (const element of iterable) {
-      super.add(element);
-    }
-    return this;
-  }
-  deleteMany(iterable: Iterable<T>): boolean {
-    let wasDeleted = false;
-    for (const element of iterable) {
-      wasDeleted ||= super.delete(element);
-    }
-    return wasDeleted;
-  }
 }
 
 /**
@@ -522,6 +536,18 @@ export function isNumberBetween(value: number, min: number, max: number): boolea
     return isNumberBetween(value, max, min);
   }
   return value >= min && value <= max;
+}
+
+/**
+ * Get a Regex for the find & replace that matches the given search string and options.
+ */
+export function getSearchRegex(searchStr: string, searchOptions: SearchOptions): RegExp {
+  let searchValue = escapeRegExp(searchStr);
+  const flags = !searchOptions.matchCase ? "i" : "";
+  if (searchOptions.exactMatch) {
+    searchValue = `^${searchValue}$`;
+  }
+  return RegExp(searchValue, flags);
 }
 
 /**

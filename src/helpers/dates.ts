@@ -81,6 +81,10 @@ export class DateTime {
     return this.jsDate.getUTCMonth();
   }
 
+  getQuarter() {
+    return Math.floor(this.getMonth() / 3) + 1;
+  }
+
   getDate() {
     return this.jsDate.getUTCDate();
   }
@@ -99,6 +103,14 @@ export class DateTime {
 
   getSeconds() {
     return this.jsDate.getUTCSeconds();
+  }
+
+  getIsoWeek() {
+    const date = new Date(this.jsDate.getTime());
+    const dayNumber = date.getUTCDay() || 7;
+    date.setUTCDate(date.getUTCDate() + 4 - dayNumber);
+    const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1));
+    return Math.ceil(((date.getTime() - yearStart.getTime()) / 86400000 + 1) / 7);
   }
 
   setFullYear(year: number) {

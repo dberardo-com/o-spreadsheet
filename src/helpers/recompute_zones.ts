@@ -1,5 +1,5 @@
+import { deepEqualsArray } from "../helpers/misc";
 import { UnboundedZone, Zone } from "../types";
-import { deepEquals } from "./misc";
 
 /**
  * ####################################################
@@ -128,22 +128,25 @@ import { deepEquals } from "./misc";
  * - you will find coordinate of a cell only once among all the zones
  * - the number of zones will be reduced to the minimum
  */
-export function futureRecomputeZones<Z extends Zone | UnboundedZone>(
-  zones: Z[],
-  zonesToRemove: Z[] = []
-): Z[] {
+export function recomputeZones<T extends UnboundedZone | Zone>(
+  zones: T[],
+  zonesToRemove: (UnboundedZone | Zone)[] = []
+): T[] {
+  if (zones.length <= 1 && zonesToRemove.length === 0) {
+    return zones;
+  }
   const profilesStartingPosition: number[] = [0];
   const profiles = new Map<number, number[]>([[0, []]]);
 
   modifyProfiles(profilesStartingPosition, profiles, zones, false);
   modifyProfiles(profilesStartingPosition, profiles, zonesToRemove, true);
-  return constructZonesFromProfiles(profilesStartingPosition, profiles) as Z[];
+  return constructZonesFromProfiles<T>(profilesStartingPosition, profiles);
 }
 
-export function modifyProfiles( // export for testing only
+export function modifyProfiles<T extends Zone | UnboundedZone>( // export for testing only
   profilesStartingPosition: number[],
   profiles: Map<number, number[]>,
-  zones: UnboundedZone[],
+  zones: T[],
   toRemove: boolean = false
 ) {
   for (const zone of zones) {
@@ -233,7 +236,11 @@ function findIndexAndCreateProfile(
  *
  */
 
-function modifyProfile(profile: number[], zone: UnboundedZone, toRemove: boolean = false): void {
+function modifyProfile(
+  profile: number[],
+  zone: UnboundedZone,
+  toRemove: boolean = false
+): undefined {
   const topValue = zone.top;
   const bottomValue = zone.bottom === undefined ? undefined : zone.bottom + 1;
   const newPoints: number[] = [];
@@ -294,12 +301,12 @@ function removeContiguousProfiles(
   }
 }
 
-function constructZonesFromProfiles(
+function constructZonesFromProfiles<T extends UnboundedZone | Zone>(
   profilesStartingPosition: number[],
   profiles: Map<number, number[]>
-): UnboundedZone[] {
-  const mergedZone: UnboundedZone[] = [];
-  let pendingZones: UnboundedZone[] = [];
+): T[] {
+  const mergedZone: T[] = [];
+  let pendingZones: T[] = [];
   for (let colIndex = 0; colIndex < profilesStartingPosition.length; colIndex++) {
     const left = profilesStartingPosition[colIndex];
     const profile = profiles.get(left);
@@ -314,7 +321,7 @@ function constructZonesFromProfiles(
       right--;
     }
 
-    const nextPendingZones: UnboundedZone[] = [];
+    const nextPendingZones: T[] = [];
     for (let i = 0; i < profile.length; i += 2) {
       const top = profile[i];
       let bottom = profile[i + 1];
@@ -341,7 +348,7 @@ function constructZonesFromProfiles(
         }
       }
       if (!findCorrespondingZone) {
-        nextPendingZones.push(profileZone);
+        nextPendingZones.push(profileZone as T);
       }
     }
 
@@ -349,7 +356,7 @@ function constructZonesFromProfiles(
     pendingZones = nextPendingZones;
   }
   mergedZone.push(...pendingZones);
-  return mergedZone;
+  return mergedZone as T[];
 }
 
 function binaryPredecessorSearch(arr: number[], val: number, start = 0, matchEqual = true) {
@@ -386,21 +393,4 @@ function binarySuccessorSearch(arr: number[], val: number, start = 0, matchEqual
     }
   }
   return result;
-}
-
-/**
- * Compares two arrays.
- * For performance reasons, this function is to be preferred
- * to 'deepEquals' in the case we know that the inputs are arrays.
- */
-export function deepEqualsArray(arr1: unknown[], arr2: unknown[]): boolean {
-  if (arr1.length !== arr2.length) {
-    return false;
-  }
-  for (let i = 0; i < arr1.length; i++) {
-    if (!deepEquals(arr1[i], arr2[i])) {
-      return false;
-    }
-  }
-  return true;
 }

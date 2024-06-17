@@ -1,13 +1,14 @@
 import { Model, setDefaultSheetViewSize, Spreadsheet } from "../../src";
 import { OPEN_CF_SIDEPANEL_ACTION } from "../../src/actions/menu_items_actions";
+import { ComposerStore } from "../../src/components/composer/composer/composer_store";
 import { DEBOUNCE_TIME, getDefaultSheetViewSize } from "../../src/constants";
 import { functionRegistry } from "../../src/functions";
 import { toZone } from "../../src/helpers";
+import { HighlightStore } from "../../src/stores/highlight_store";
 import { SpreadsheetChildEnv } from "../../src/types";
 import {
   addRows,
   createChart,
-  createSheet,
   freezeRows,
   selectCell,
   setCellContent,
@@ -28,7 +29,6 @@ import {
   mountSpreadsheet,
   nextTick,
   restoreDefaultFunctions,
-  spyDispatch,
   startGridComposition,
   typeInComposerGrid,
   typeInComposerTopBar,
@@ -130,11 +130,12 @@ describe("Simple Spreadsheet Component", () => {
 
   test("typing opens composer after toolbar clicked", async () => {
     ({ model, parent, fixture } = await mountSpreadsheet());
+    const composerStore = parent.env.getStore(ComposerStore);
     await simulateClick(`span[title="Bold (Ctrl+B)"]`);
     expect(document.activeElement).not.toBeNull();
     await typeInComposerGrid("d");
-    expect(model.getters.getEditionMode()).toBe("editing");
-    expect(model.getters.getCurrentContent()).toBe("d");
+    expect(composerStore.editionMode).toBe("editing");
+    expect(composerStore.currentContent).toBe("d");
   });
 
   test("can open/close search with ctrl+h", async () => {
@@ -199,7 +200,7 @@ describe("Simple Spreadsheet Component", () => {
     await typeInComposerTopBar("=SUM(A1,A2)");
     const topBarComposerZIndex = getZIndex(".o-topbar-composer");
 
-    createChart(model, {}, "thisIsAnId");
+    createChart(model, { type: "bar" }, "thisIsAnId");
     model.dispatch("SELECT_FIGURE", { id: "thisIsAnId" });
     await nextTick();
     const figureZIndex = getZIndex(".o-figure-wrapper");
@@ -232,27 +233,15 @@ describe("Simple Spreadsheet Component", () => {
     expect(spreadsheetKeyDown).not.toHaveBeenCalled();
   });
 
-  test("The spreadsheet does not render after onbeforeunload", async () => {
-    ({ model, parent, fixture } = await mountSpreadsheet());
-    window.dispatchEvent(new Event("beforeunload", { bubbles: true }));
-    await nextTick();
-    createSheet(model, {});
-    await nextTick();
-    const sheets = fixture.querySelectorAll(".o-all-sheets .o-sheet");
-    expect(sheets).toHaveLength(model.getters.getSheetIds().length - 1);
-  });
-
   test("Insert a function properly sets the edition", async () => {
     ({ model, parent, fixture, env } = await mountSpreadsheet());
-    const dispatch = spyDispatch(parent);
+    const composerStore = env.getStore(ComposerStore);
+    const spyStartEdition = jest.spyOn(composerStore, "startEdition");
+    const spySetCurrentContent = jest.spyOn(composerStore, "setCurrentContent");
     doAction(["insert", "insert_function", "insert_function_sum"], env);
-    expect(dispatch).toHaveBeenCalledWith("START_EDITION", {
-      text: "=SUM(",
-    });
+    expect(spyStartEdition).toHaveBeenCalledWith("=SUM(", undefined);
     doAction(["insert", "insert_function", "insert_function_sum"], env);
-    expect(dispatch).toHaveBeenCalledWith("SET_CURRENT_CONTENT", {
-      content: "=SUM(",
-    });
+    expect(spySetCurrentContent).toHaveBeenCalledWith("=SUM(", undefined);
   });
 });
 
@@ -372,20 +361,26 @@ describe("Composer / selectionInput interactions", () => {
     }));
   });
 
+  jest.setTimeout(500000000);
   test("Switching from selection input to composer should update the highlihts", async () => {
+    const composerStore = env.getStore(ComposerStore);
     //open cf sidepanel
     selectCell(model, "B2");
     OPEN_CF_SIDEPANEL_ACTION(env);
     await nextTick();
     await simulateClick(".o-selection-input input");
 
-    expect(model.getters.getHighlights().map((h) => h.zone)).toEqual([toZone("B2:C4")]);
+    expect(env.getStore(HighlightStore).highlights.map((h) => h.zone)).toEqual([toZone("B2:C4")]);
+    expect(composerStore.highlights).toEqual([]);
     expect(fixture.querySelectorAll(".o-spreadsheet .o-highlight")).toHaveLength(1);
 
     // select Composer
     await simulateClick(".o-spreadsheet-topbar .o-composer");
 
-    expect(model.getters.getHighlights().map((h) => h.zone)).toEqual([toZone("A1"), toZone("A2")]);
+    expect(env.getStore(HighlightStore).highlights.map((h) => h.zone)).toEqual([
+      toZone("A1"),
+      toZone("A2"),
+    ]);
     expect(fixture.querySelectorAll(".o-spreadsheet .o-highlight")).toHaveLength(2);
   });
   test.each(["A", "="])(
@@ -400,23 +395,24 @@ describe("Composer / selectionInput interactions", () => {
 
       // focus selection input
       await simulateClick(".o-selection-input input");
-      expect(model.getters.getEditionMode()).toBe("inactive");
+      expect(env.getStore(ComposerStore).editionMode).toBe("inactive");
     }
   );
 
   test("Switching from composer to selection input should update the highlights and the highlight components", async () => {
+    const highlightStore = env.getStore(HighlightStore);
     selectCell(model, "B2");
     OPEN_CF_SIDEPANEL_ACTION(env);
     await nextTick();
 
     await simulateClick(".o-spreadsheet-topbar .o-composer");
-    expect(model.getters.getHighlights().map((h) => h.zone)).toEqual([toZone("A1"), toZone("A2")]);
+    expect(highlightStore.highlights.map((h) => h.zone)).toEqual([toZone("A1"), toZone("A2")]);
     expect(fixture.querySelectorAll(".o-spreadsheet .o-highlight")).toHaveLength(2);
 
     //open cf sidepanel
     await simulateClick(".o-selection-input input");
 
-    expect(model.getters.getHighlights().map((h) => h.zone)).toEqual([toZone("B2:C4")]);
+    expect(highlightStore.highlights.map((h) => h.zone)).toEqual([toZone("B2:C4")]);
     expect(fixture.querySelectorAll(".o-spreadsheet .o-highlight")).toHaveLength(1);
   });
 
@@ -425,7 +421,7 @@ describe("Composer / selectionInput interactions", () => {
     createChart(
       model,
       {
-        dataSets: ["Sheet1!B1:B4", "Sheet1!C1:C4"],
+        dataSets: [{ dataRange: "Sheet1!B1:B4" }, { dataRange: "Sheet1!C1:C4" }],
         labelRange: "Sheet1!A2:A4",
         type: "bar",
       },
@@ -435,6 +431,16 @@ describe("Composer / selectionInput interactions", () => {
     await simulateClick(".o-figure");
     await clickCell(model, "D1");
     expect(model.getters.getSelectedZones()).toEqual([toZone("D1")]);
+  });
+
+  test("switching to selection input deactivates the autofill", async () => {
+    selectCell(model, "B2");
+    OPEN_CF_SIDEPANEL_ACTION(env);
+    await nextTick();
+
+    expect(fixture.querySelector(".o-autofill")).not.toBeNull();
+    await simulateClick(".o-selection-input input");
+    expect(fixture.querySelector(".o-autofill")).toBeNull();
   });
 });
 test("cell popovers to be closed on clicking outside grid", async () => {

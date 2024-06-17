@@ -11,6 +11,7 @@ import {
   deleteRows,
   redo,
   setCellContent,
+  setFormat,
   setStyle,
   undo,
   updateLocale,
@@ -143,6 +144,17 @@ describe("conditional format", () => {
       fillColor: "orange",
     });
     expect(getStyle(model, "A4")).toEqual({});
+  });
+
+  test("falsy CF attributes do not overwrite cell style in getCellComputedStyle", () => {
+    setCellContent(model, "A1", "1");
+    setStyle(model, "A1", { bold: true, fillColor: "#FF0000" });
+    model.dispatch("ADD_CONDITIONAL_FORMAT", {
+      cf: createEqualCF("1", { bold: false, fillColor: undefined }, "cfId"),
+      ranges: toRangesData(sheetId, "A1"),
+      sheetId,
+    });
+    expect(getStyle(model, "A1")).toEqual({ bold: true, fillColor: "#FF0000" });
   });
 
   test("Add conditional formatting on inactive sheet", () => {
@@ -428,6 +440,20 @@ describe("conditional format", () => {
     setCellContent(model, "A1", "1");
     expect(getStyle(model, "A1")).toEqual({});
     setCellContent(model, "A1", "=A2");
+    expect(getStyle(model, "A1")).toEqual({
+      fillColor: "#FF0000",
+    });
+  });
+
+  test("works after format update that updates a value", () => {
+    setCellContent(model, "A1", '=CELL("format", A2)');
+    model.dispatch("ADD_CONDITIONAL_FORMAT", {
+      cf: createEqualCF("mm/dd/yyyy", { fillColor: "#FF0000" }, "1"),
+      ranges: toRangesData(sheetId, "A1"),
+      sheetId,
+    });
+    expect(getStyle(model, "A1")).toEqual({});
+    setFormat(model, "A2", "mm/dd/yyyy");
     expect(getStyle(model, "A1")).toEqual({
       fillColor: "#FF0000",
     });
@@ -2245,7 +2271,7 @@ describe("conditional formats types", () => {
       expect(getStyle(model, "A2")).toEqual({});
     });
 
-    test("CF is not updated with insert/delete cells", () => {
+    test("CF is updated with insert/delete cells", () => {
       model.dispatch("ADD_CONDITIONAL_FORMAT", {
         cf: createColorScale(
           "1",
@@ -2256,7 +2282,7 @@ describe("conditional formats types", () => {
         sheetId,
       });
       deleteCells(model, "A2:A3", "up");
-      expect(model.getters.getConditionalFormats(sheetId)[0].ranges[0]).toBe("A1:A10");
+      expect(model.getters.getConditionalFormats(sheetId)[0].ranges[0]).toBe("A1:A8");
     });
 
     test("Color scale with error cell in range", () => {

@@ -1,10 +1,11 @@
+import { Cell, CellValue, EvaluatedCell } from "./cells";
+
+import { CommandResult } from "./commands";
 // -----------------------------------------------------------------------------
 // MISC
 // -----------------------------------------------------------------------------
 import { ComponentConstructor } from "@odoo/owl";
 import { Token } from "../formulas";
-import { Cell, CellValue, EvaluatedCell } from "./cells";
-import { CommandResult } from "./commands";
 import { Format } from "./format";
 import { Range } from "./range";
 
@@ -26,7 +27,7 @@ export type UID = string & Alias;
 
 export type SetDecimalStep = 1 | -1;
 export type FilterId = UID & Alias;
-export type FilterTableId = UID & Alias;
+export type TableId = UID & Alias;
 
 /**
  * CSS style color string
@@ -81,6 +82,13 @@ export interface UnboundedZone {
   bottom: HeaderIndex | undefined;
   left: HeaderIndex;
   right: HeaderIndex | undefined;
+  /**
+   * The hasHeader flag is used to determine if the zone has a header (eg. A2:A or C3:3).
+   *
+   * The main issue is that the zone A1:A and A:A have different behavior. The "correct" way to handle this would be to
+   * allow the top/left to be undefined, but this make typing and using unbounded zones VERY annoying. So we use this
+   * boolean instead.
+   */
   hasHeader?: boolean;
 }
 
@@ -157,21 +165,19 @@ export type ReferenceDenormalizer = (
   isMeta: boolean,
   functionName: string,
   paramNumber: number
-) => any | any[][];
+) => FPayload;
 
-export type EnsureRange = (range: Range) => Matrix<ValueAndFormat>;
+export type EnsureRange = (range: Range) => Matrix<FPayload>;
 
-export type NumberParser = (str: string) => number;
-
-export type _CompiledFormula = (
+export type FormulaToExecute = (
   deps: Range[],
   refFn: ReferenceDenormalizer,
   range: EnsureRange,
   ctx: {}
-) => Matrix<ValueAndFormat> | ValueAndFormat;
+) => Matrix<FPayload> | FPayload;
 
 export interface CompiledFormula {
-  execute: _CompiledFormula;
+  execute: FormulaToExecute;
   tokens: Token[];
   dependencies: string[];
 }
@@ -181,13 +187,11 @@ export interface RangeCompiledFormula extends Omit<CompiledFormula, "dependencie
 }
 
 export type Matrix<T = unknown> = T[][];
-export type ValueAndFormat = { value: CellValue; format?: Format };
+export type FPayload = { value: CellValue; format?: Format; message?: string };
+export type FPayloadNumber = { value: number; format?: string };
 
 // FORMULA FUNCTION VALUE AND FORMAT INPUT
-export type Arg = Maybe<ValueAndFormat> | Matrix<ValueAndFormat>; // undefined corresponds to the lack of argument, e.g. =SUM(1,2,,4)
-
-// FORMULA FUNCTION ONLY VALUE INPUT
-export type ArgValue = Maybe<CellValue> | Matrix<CellValue>;
+export type Arg = Maybe<FPayload> | Matrix<FPayload>; // undefined corresponds to the lack of argument, e.g. =SUM(1,2,,4)
 
 export function isMatrix(x: any): x is Matrix<any> {
   return Array.isArray(x) && Array.isArray(x[0]);
@@ -222,13 +226,19 @@ export interface PixelPosition {
 
 export interface Merge extends Zone {
   id: number;
-  topLeft: Position;
 }
 
 export interface Highlight {
   zone: Zone;
   sheetId: UID;
-  color: Color | null;
+  color: Color;
+  interactive?: boolean;
+  thinLine?: boolean;
+  noFill?: boolean;
+  /** transparency of the fill color (0-1) */
+  fillAlpha?: number;
+  noBorder?: boolean;
+  dashed?: boolean;
 }
 
 export interface PaneDivision {
@@ -356,4 +366,14 @@ export type SelectionStep = number | "end";
 export interface Offset {
   col: number;
   row: number;
+}
+
+export type DebouncedFunction<T> = T & {
+  stopDebounce: () => void;
+  isDebouncePending: () => boolean;
+};
+
+export interface GridClickModifiers {
+  addZone: boolean;
+  expandZone: boolean;
 }

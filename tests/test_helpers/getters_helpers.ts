@@ -1,5 +1,4 @@
-import { ClipboardCellsState } from "../../src/helpers/clipboard/clipboard_cells_state";
-import { toCartesian, toXC } from "../../src/helpers/index";
+import { toCartesian, toXC, toZone } from "../../src/helpers/index";
 import { Model } from "../../src/model";
 import { ClipboardPlugin } from "../../src/plugins/ui_stateful";
 import {
@@ -57,7 +56,7 @@ export function getCellError(
   sheetId: UID = model.getters.getActiveSheetId()
 ): string | undefined {
   const cell = getEvaluatedCell(model, xc, sheetId);
-  return cell.type === CellValueType.error ? cell.error.message : undefined;
+  return cell.type === CellValueType.error ? cell.message : undefined;
 }
 
 /**
@@ -71,6 +70,26 @@ export function getCellContent(
 ): string {
   const { col, row } = toCartesian(xc);
   return model.getters.getCellText({ sheetId, col, row }, model.getters.shouldShowFormulas());
+}
+
+/**
+ * Get the string representation of the content of a range of cells
+ */
+export function getEvaluatedGrid(
+  model: Model,
+  range: string,
+  sheetId: UID = model.getters.getActiveSheetId()
+) {
+  const zone = toZone(range);
+  const content: string[][] = [];
+  for (let row = zone.top; row <= zone.bottom; row++) {
+    const rowContent: string[] = [];
+    for (let col = zone.left; col <= zone.right; col++) {
+      rowContent.push(getCellContent(model, toXC(col, row), sheetId));
+    }
+    content.push(rowContent);
+  }
+  return content;
 }
 
 /**
@@ -124,6 +143,18 @@ export function getBorder(
 }
 
 /**
+ * Get the computed borders at the given XC
+ */
+export function getComputedBorder(
+  model: Model,
+  xc: string,
+  sheetId: UID = model.getters.getActiveSheetId()
+): Border | null {
+  const { col, row } = toCartesian(xc);
+  return model.getters.getCellComputedBorder({ sheetId, col, row });
+}
+
+/**
  * Get the list of the merges
  */
 export function getMerges(model: Model): Record<number, Merge> {
@@ -153,13 +184,13 @@ export function automaticSumMulti(
   return model.dispatch("SUM_SELECTION");
 }
 
-export function getFilterTable(
+export function getTable(
   model: Model,
   xc: string,
   sheetId: UID = model.getters.getActiveSheetId()
 ) {
   const { col, row } = toCartesian(xc);
-  return model.getters.getFilterTable({ sheetId, col, row });
+  return model.getters.getTable({ sheetId, col, row });
 }
 
 export function getFilter(
@@ -174,7 +205,7 @@ export function getFilter(
 export function getClipboardVisibleZones(model: Model): Zone[] {
   const clipboardPlugin = getPlugin(model, ClipboardPlugin);
   return clipboardPlugin["status"] === "visible"
-    ? (clipboardPlugin["state"]! as ClipboardCellsState)["zones"]
+    ? clipboardPlugin["copiedData"]?.["zones"] ?? []
     : [];
 }
 

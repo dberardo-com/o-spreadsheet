@@ -4,15 +4,18 @@ import {
   DEFAULT_SCORECARD_BASELINE_COLOR_UP,
   DEFAULT_SCORECARD_BASELINE_MODE,
 } from "../../../constants";
+import { toNumber } from "../../../functions/helpers";
 import { _t } from "../../../translation";
 import {
   AddColumnsRowsCommand,
   ApplyRangeChange,
+  CellValueType,
   Color,
   CommandResult,
   CoreGetters,
   EvaluatedCell,
   Getters,
+  Locale,
   Range,
   RemoveColumnsRowsCommand,
   UID,
@@ -20,24 +23,122 @@ import {
 } from "../../../types";
 import { ChartCreationContext } from "../../../types/chart/chart";
 import {
+  BaselineArrowDirection,
   BaselineMode,
   ScorecardChartDefinition,
   ScorecardChartRuntime,
 } from "../../../types/chart/scorecard_chart";
 import { Validator } from "../../../types/validator";
+import { formatValue, humanizeNumber } from "../../format";
+import { isNumber } from "../../numbers";
 import { createValidRange } from "../../range";
 import { rangeReference } from "../../references";
-import { drawDecoratedText } from "../../text_helper";
+import { clipTextWithEllipsis, drawDecoratedText } from "../../text_helper";
 import { toUnboundedZone, zoneToXc } from "../../zones";
 import { AbstractChart } from "./abstract_chart";
-import {
-  adaptChartRange,
-  copyLabelRangeWithNewSheetId,
-  getBaselineArrowDirection,
-  getBaselineColor,
-  getBaselineText,
-} from "./chart_common";
+import { adaptChartRange, copyLabelRangeWithNewSheetId } from "./chart_common";
 import { ScorecardChartConfig } from "./scorecard_chart_config_builder";
+
+function getBaselineText(
+  baseline: EvaluatedCell | undefined,
+  keyValue: EvaluatedCell | undefined,
+  baselineMode: BaselineMode,
+  humanize: boolean,
+  locale: Locale
+): string {
+  if (!baseline) {
+    return "";
+  } else if (
+    baselineMode === "text" ||
+    keyValue?.type !== CellValueType.number ||
+    baseline.type !== CellValueType.number
+  ) {
+    if (humanize) {
+      return humanizeNumber(baseline, locale);
+    }
+    return baseline.formattedValue;
+  }
+  let { value, format } = baseline;
+  if (baselineMode === "progress") {
+    value = keyValue.value / value;
+    format = "0.0%";
+  } else {
+    value = Math.abs(keyValue.value - value);
+    if (baselineMode === "percentage" && value !== 0) {
+      value = value / baseline.value;
+    }
+    if (baselineMode === "percentage") {
+      format = "0.0%";
+    }
+    if (!format) {
+      value = Math.round(value * 100) / 100;
+    }
+  }
+  if (humanize) {
+    return humanizeNumber({ value, format }, locale);
+  }
+  return formatValue(value, { format, locale });
+}
+
+function getKeyValueText(
+  keyValueCell: EvaluatedCell | undefined,
+  humanize: boolean,
+  locale: Locale
+): string {
+  if (!keyValueCell) {
+    return "";
+  }
+  if (humanize) {
+    return humanizeNumber(keyValueCell, locale);
+  }
+  return keyValueCell.formattedValue ?? String(keyValueCell.value ?? "");
+}
+
+function getBaselineColor(
+  baseline: EvaluatedCell | undefined,
+  baselineMode: BaselineMode,
+  keyValue: EvaluatedCell | undefined,
+  colorUp: Color,
+  colorDown: Color
+): Color | undefined {
+  if (
+    baselineMode === "text" ||
+    baselineMode === "progress" ||
+    baseline?.type !== CellValueType.number ||
+    keyValue?.type !== CellValueType.number
+  ) {
+    return undefined;
+  }
+  const diff = keyValue.value - baseline.value;
+  if (diff > 0) {
+    return colorUp;
+  } else if (diff < 0) {
+    return colorDown;
+  }
+  return undefined;
+}
+
+function getBaselineArrowDirection(
+  baseline: EvaluatedCell | undefined,
+  keyValue: EvaluatedCell | undefined,
+  baselineMode: BaselineMode
+): BaselineArrowDirection {
+  if (
+    baselineMode === "text" ||
+    baseline?.type !== CellValueType.number ||
+    keyValue?.type !== CellValueType.number
+  ) {
+    return "neutral";
+  }
+
+  const diff = keyValue.value - baseline.value;
+  if (diff > 0) {
+    return "up";
+  } else if (diff < 0) {
+    return "down";
+  }
+  return "neutral";
+}
 
 function checkKeyValue(definition: ScorecardChartDefinition): CommandResult {
   return definition.keyValue && !rangeReference.test(definition.keyValue)
@@ -63,10 +164,12 @@ export class ScorecardChart extends AbstractChart {
   readonly baseline?: Range;
   readonly baselineMode: BaselineMode;
   readonly baselineDescr?: string;
+  readonly progressBar: boolean = false;
   readonly background?: Color;
   readonly baselineColorUp: Color;
   readonly baselineColorDown: Color;
   readonly fontColor?: Color;
+  readonly humanize?: boolean;
   readonly type = "scorecard";
 
   constructor(definition: ScorecardChartDefinition, sheetId: UID, getters: CoreGetters) {
@@ -78,6 +181,7 @@ export class ScorecardChart extends AbstractChart {
     this.background = definition.background;
     this.baselineColorUp = definition.baselineColorUp;
     this.baselineColorDown = definition.baselineColorDown;
+    this.humanize = definition.humanize ?? false;
   }
 
   static validateChartDefinition(
@@ -91,8 +195,8 @@ export class ScorecardChart extends AbstractChart {
     return {
       background: context.background,
       type: "scorecard",
-      keyValue: context.range ? context.range[0] : undefined,
-      title: context.title || "",
+      keyValue: context.range ? context.range[0].dataRange : undefined,
+      title: context.title || { text: "" },
       baselineMode: DEFAULT_SCORECARD_BASELINE_MODE,
       baselineColorUp: DEFAULT_SCORECARD_BASELINE_COLOR_UP,
       baselineColorDown: DEFAULT_SCORECARD_BASELINE_COLOR_DOWN,
@@ -138,9 +242,10 @@ export class ScorecardChart extends AbstractChart {
 
   getContextCreation(): ChartCreationContext {
     return {
-      background: this.background,
-      title: this.title,
-      range: this.keyValue ? [this.getters.getRangeString(this.keyValue, this.sheetId)] : undefined,
+      ...this,
+      range: this.keyValue
+        ? [{ dataRange: this.getters.getRangeString(this.keyValue, this.sheetId) }]
+        : undefined,
       auxiliaryRange: this.baseline
         ? this.getters.getRangeString(this.baseline, this.sheetId)
         : undefined,
@@ -166,6 +271,7 @@ export class ScorecardChart extends AbstractChart {
       keyValue: keyValue
         ? this.getters.getRangeString(keyValue, targetSheetId || this.sheetId)
         : undefined,
+      humanize: this.humanize,
     };
   }
 
@@ -196,7 +302,14 @@ export function drawScoreChart(structure: ScorecardChartConfig, canvas: HTMLCanv
   if (structure.title) {
     ctx.font = structure.title.style.font;
     ctx.fillStyle = structure.title.style.color;
-    ctx.fillText(structure.title.text, structure.title.position.x, structure.title.position.y);
+    const baseline = ctx.textBaseline;
+    ctx.textBaseline = "middle";
+    ctx.fillText(
+      clipTextWithEllipsis(ctx, structure.title.text, canvas.width - structure.title.position.x),
+      structure.title.position.x,
+      structure.title.position.y
+    );
+    ctx.textBaseline = baseline;
   }
 
   if (structure.baseline) {
@@ -232,13 +345,16 @@ export function drawScoreChart(structure: ScorecardChartConfig, canvas: HTMLCanv
   }
 
   if (structure.baselineDescr) {
-    ctx.font = structure.baselineDescr.style.font;
-    ctx.fillStyle = structure.baselineDescr.style.color;
-    ctx.fillText(
-      structure.baselineDescr.text,
-      structure.baselineDescr.position.x,
-      structure.baselineDescr.position.y
-    );
+    const descr = structure.baselineDescr[0];
+    ctx.font = descr.style.font;
+    ctx.fillStyle = descr.style.color;
+    for (const description of structure.baselineDescr) {
+      ctx.fillText(
+        clipTextWithEllipsis(ctx, description.text, canvas.width - description.position.x),
+        description.position.x,
+        description.position.y
+      );
+    }
   }
 
   if (structure.key) {
@@ -252,15 +368,52 @@ export function drawScoreChart(structure: ScorecardChartConfig, canvas: HTMLCanv
       structure.key.style.strikethrough
     );
   }
+
+  if (structure.progressBar) {
+    ctx.fillStyle = structure.progressBar.style.backgroundColor;
+    ctx.beginPath();
+    ctx.roundRect(
+      structure.progressBar.position.x,
+      structure.progressBar.position.y,
+      structure.progressBar.dimension.width,
+      structure.progressBar.dimension.height,
+      structure.progressBar.dimension.height / 2
+    );
+    ctx.fill();
+    ctx.fillStyle = structure.progressBar.style.color;
+    ctx.beginPath();
+    if (structure.progressBar.value > 0) {
+      ctx.roundRect(
+        structure.progressBar.position.x,
+        structure.progressBar.position.y,
+        structure.progressBar.dimension.width *
+          Math.max(0, Math.min(1.0, structure.progressBar.value)),
+        structure.progressBar.dimension.height,
+        structure.progressBar.dimension.height / 2
+      );
+    } else {
+      const width =
+        structure.progressBar.dimension.width *
+        Math.max(0, Math.min(1.0, -structure.progressBar.value));
+      ctx.roundRect(
+        structure.progressBar.position.x + structure.progressBar.dimension.width - width,
+        structure.progressBar.position.y,
+        width,
+        structure.progressBar.dimension.height,
+        structure.progressBar.dimension.height / 2
+      );
+    }
+    ctx.fill();
+  }
 }
 
 export function createScorecardChartRuntime(
   chart: ScorecardChart,
   getters: Getters
 ): ScorecardChartRuntime {
-  let keyValue = "";
   let formattedKeyValue = "";
   let keyValueCell: EvaluatedCell | undefined;
+  const locale = getters.getLocale();
   if (chart.keyValue) {
     const keyValuePosition = {
       sheetId: chart.keyValue.sheetId,
@@ -268,16 +421,15 @@ export function createScorecardChartRuntime(
       row: chart.keyValue.zone.top,
     };
     keyValueCell = getters.getEvaluatedCell(keyValuePosition);
-    keyValue = String(keyValueCell.value);
-    formattedKeyValue = keyValueCell.formattedValue;
+    formattedKeyValue = getKeyValueText(keyValueCell, chart.humanize ?? false, locale);
   }
   let baselineCell: EvaluatedCell | undefined;
   const baseline = chart.baseline;
   if (baseline) {
     const baselinePosition = {
-      sheetId: chart.baseline.sheetId,
-      col: chart.baseline.zone.left,
-      row: chart.baseline.zone.top,
+      sheetId: baseline.sheetId,
+      col: baseline.zone.left,
+      row: baseline.zone.top,
     };
     baselineCell = getters.getEvaluatedCell(baselinePosition);
   }
@@ -286,11 +438,24 @@ export function createScorecardChartRuntime(
     chart.keyValue
   );
 
-  const locale = getters.getLocale();
+  const baselineDisplay = getBaselineText(
+    baselineCell,
+    keyValueCell,
+    chart.baselineMode,
+    chart.humanize ?? false,
+    locale
+  );
+  const baselineValue =
+    chart.baselineMode === "progress" && isNumber(baselineDisplay, locale)
+      ? toNumber(baselineDisplay, locale)
+      : 0;
   return {
-    title: _t(chart.title),
-    keyValue: formattedKeyValue || keyValue,
-    baselineDisplay: getBaselineText(baselineCell, keyValueCell, chart.baselineMode, locale),
+    title: {
+      ...chart.title,
+      text: _t(chart.title.text ?? ""),
+    },
+    keyValue: formattedKeyValue,
+    baselineDisplay,
     baselineArrow: getBaselineArrowDirection(baselineCell, keyValueCell, chart.baselineMode),
     baselineColor: getBaselineColor(
       baselineCell,
@@ -299,11 +464,12 @@ export function createScorecardChartRuntime(
       chart.baselineColorUp,
       chart.baselineColorDown
     ),
-    baselineDescr: chart.baselineDescr ? _t(chart.baselineDescr) : "",
+    baselineDescr:
+      chart.baselineMode !== "progress" && chart.baselineDescr ? _t(chart.baselineDescr) : "",
     fontColor,
     background,
     baselineStyle:
-      chart.baselineMode !== "percentage" && baseline
+      chart.baselineMode !== "percentage" && chart.baselineMode !== "progress" && baseline
         ? getters.getCellStyle({
             sheetId: baseline.sheetId,
             col: baseline.zone.left,
@@ -317,5 +483,12 @@ export function createScorecardChartRuntime(
           row: chart.keyValue.zone.top,
         })
       : undefined,
+    progressBar:
+      chart.baselineMode === "progress"
+        ? {
+            value: baselineValue,
+            color: baselineValue > 0 ? chart.baselineColorUp : chart.baselineColorDown,
+          }
+        : undefined,
   };
 }

@@ -1,7 +1,8 @@
 // Helper file for the reference types in Xcs (the $ symbol, eg. A$1)
 import { Token } from "../formulas";
-import { getCanonicalSheetName } from "./misc";
-import { splitReference } from "./references";
+import { EnrichedToken, composerTokenize } from "../formulas/composer_tokenizer";
+import { Locale } from "../types";
+import { getFullReference, splitReference } from "./references";
 
 type FixedReferenceType = "col" | "row" | "colrow" | "none";
 
@@ -17,10 +18,9 @@ export function loopThroughReferenceType(token: Readonly<Token>): Token {
   const { xc, sheetName } = splitReference(token.value);
   const [left, right] = xc.split(":") as [string, string | undefined];
 
-  const sheetRef = sheetName ? `${getCanonicalSheetName(sheetName)}!` : "";
   const updatedLeft = getTokenNextReferenceType(left);
   const updatedRight = right ? `:${getTokenNextReferenceType(right)}` : "";
-  return { ...token, value: sheetRef + updatedLeft + updatedRight };
+  return { ...token, value: getFullReference(sheetName, updatedLeft + updatedRight) };
 }
 
 /**
@@ -32,25 +32,29 @@ export function loopThroughReferenceType(token: Readonly<Token>): Token {
 function getTokenNextReferenceType(xc: string): string {
   switch (getReferenceType(xc)) {
     case "none":
-      xc = setXcToReferenceType(xc, "colrow");
+      xc = setXcToFixedReferenceType(xc, "colrow");
       break;
     case "colrow":
-      xc = setXcToReferenceType(xc, "row");
+      xc = setXcToFixedReferenceType(xc, "row");
       break;
     case "row":
-      xc = setXcToReferenceType(xc, "col");
+      xc = setXcToFixedReferenceType(xc, "col");
       break;
     case "col":
-      xc = setXcToReferenceType(xc, "none");
+      xc = setXcToFixedReferenceType(xc, "none");
       break;
   }
   return xc;
 }
 
 /**
- * Returns the given XC with the given reference type.
+ * Returns the given XC with the given reference type. The XC string should not contain a sheet name.
  */
-function setXcToReferenceType(xc: string, referenceType: FixedReferenceType): string {
+export function setXcToFixedReferenceType(xc: string, referenceType: FixedReferenceType): string {
+  if (xc.includes("!")) {
+    throw new Error("The given XC should not contain a sheet name");
+  }
+
   xc = xc.replace(/\$/g, "");
   let indexOfNumber: number;
   switch (referenceType) {
@@ -97,4 +101,45 @@ function isRowFixed(xc: string) {
 
 function isColAndRowFixed(xc: string) {
   return xc.startsWith("$") && xc.length > 1 && xc.slice(1).includes("$");
+}
+
+/**
+ * Return the cycled reference if any (A1 -> $A$1 -> A$1 -> $A1 -> A1)
+ */
+export function cycleFixedReference(
+  selection: { start: number; end: number },
+  content: string,
+  locale: Locale
+) {
+  const currentTokens: EnrichedToken[] = content.startsWith("=")
+    ? composerTokenize(content, locale)
+    : [];
+
+  const tokens = currentTokens.filter(
+    (t) =>
+      (t.start <= selection.start && t.end >= selection.start) ||
+      (t.start >= selection.start && t.start < selection.end)
+  );
+
+  const refTokens = tokens.filter((token) => token.type === "REFERENCE");
+  if (refTokens.length === 0) {
+    return;
+  }
+
+  const updatedReferences = tokens
+    .map(loopThroughReferenceType)
+    .map((token) => token.value)
+    .join("");
+
+  const start = tokens[0].start;
+  const end = tokens[tokens.length - 1].end;
+  const newContent = content.slice(0, start) + updatedReferences + content.slice(end);
+  const lengthDiff = newContent.length - content.length;
+  const startOfTokens = refTokens[0].start;
+  const endOfTokens = refTokens[refTokens.length - 1].end + lengthDiff;
+  const newSelection = { start: startOfTokens, end: endOfTokens };
+  if (refTokens.length === 1 && selection.start === selection.end) {
+    newSelection.start = newSelection.end;
+  }
+  return { content: newContent, selection: newSelection };
 }

@@ -1,5 +1,6 @@
 import { Alias, ExcelChartDefinition, Format, PaneDivision } from ".";
 import { ExcelImage } from "../types/image";
+import { ExcelFigureSize } from "./figure";
 
 /**
  * Most of the times we tried to create Objects that matched quite closely with the data in the XLSX files.
@@ -33,9 +34,14 @@ import { ExcelImage } from "../types/image";
  *  - images (XLSXImageFile): §20.2.2.5 (pic)
  *  - merge (string): §18.3.1.55 (mergeCell)
  *  - number format (XLSXNumFormat) : §18.8.30 (numFmt)
+ *  - outline properties (XLSXOutlineProperties): §18.3.1.31 (outlinePr)
+ *  - pivot table (XLSXPivotTable): §18.10.1.73 (pivotTableDefinition)
+ *  - pivot table location (XLSXPivotTableLocation): §18.10.1.49 (location)
+ *  - pivot table style info (XLSXPivotTableStyleInfo): §18.10.7.74 (pivotTableStyleInfo)
  *  - rows (XLSXRow): §18.3.1.73 (row)
  *  - sheet (XLSXWorksheet): §18.3.1.99 (worksheet)
  *  - sheet format (XLSXSheetFormat): §18.3.1.81 (sheetFormatPr)
+ *  - sheet properties (XLSXSheetProperties): §18.3.1.82 (sheetPr)
  *  - sheet view (XLSXSheetView): §18.3.1.87 (sheetFormatPr)
  *  - sheet workbook info (XLSXSheetWorkbookInfo): §18.2.19 (sheet)
  *  - style, for cell (XLSXStyle): §18.8.45 (xf)
@@ -218,6 +224,7 @@ export interface XLSXWorksheet {
   isVisible: boolean;
   sheetViews: XLSXSheetView[];
   sheetFormat?: XLSXSheetFormat;
+  sheetProperties?: XLSXSheetProperties;
   cols: XLSXColumn[];
   rows: XLSXRow[];
   cfs: XLSXConditionalFormat[];
@@ -226,6 +233,7 @@ export interface XLSXWorksheet {
   figures: XLSXFigure[];
   hyperlinks: XLSXHyperLink[];
   tables: XLSXTable[];
+  pivotTables: XLSXPivotTable[];
 }
 
 export interface XLSXSheetView {
@@ -250,6 +258,8 @@ export interface XLSXColumn {
   bestFit?: boolean;
   hidden?: boolean;
   styleIndex?: number;
+  outlineLevel?: number;
+  collapsed?: boolean;
 }
 export interface XLSXRow {
   index: number;
@@ -258,6 +268,8 @@ export interface XLSXRow {
   hidden?: boolean;
   cells: XLSXCell[];
   styleIndex?: number;
+  outlineLevel?: number;
+  collapsed?: boolean;
 }
 
 export interface XLSXFormula {
@@ -520,6 +532,7 @@ export interface XLSXFigureSize {
 export interface XLSXFigure {
   anchors: XLSXFigureAnchor[];
   data: ExcelChartDefinition | ExcelImage;
+  figureSize?: ExcelFigureSize;
 }
 
 export const XLSX_CHART_TYPES = [
@@ -539,6 +552,7 @@ export const XLSX_CHART_TYPES = [
   "surfaceChart",
   "surface3DChart",
   "bubbleChart",
+  "comboChart",
 ] as const;
 export type XLSXChartType = (typeof XLSX_CHART_TYPES)[number];
 
@@ -566,6 +580,29 @@ export interface XLSXTableStyleInfo {
   showLastColumn?: boolean;
   showRowStripes?: boolean;
   showColumnStripes?: boolean;
+}
+
+export interface XLSXPivotTable {
+  name: string;
+  rowGrandTotals: boolean;
+  location: XLSXPivotTableLocation;
+  style?: XLSXPivotTableStyleInfo;
+}
+
+export interface XLSXPivotTableLocation {
+  ref: string;
+  firstHeaderRow: number;
+  firstDataRow: number;
+  firstDataCol: number;
+}
+
+export interface XLSXPivotTableStyleInfo {
+  name: string;
+  showRowHeaders: boolean;
+  showColHeaders: boolean;
+  showRowStripes: boolean;
+  showColStripes: boolean;
+  showLastColumn?: boolean;
 }
 
 export interface XLSXTableCol {
@@ -619,4 +656,13 @@ export interface XLSXSheetWorkbookInfo {
   sheetId: string;
   sheetName: string;
   state: XLSXSheetState;
+}
+
+export interface XLSXSheetProperties {
+  outlinePr?: XLSXOutlineProperties;
+}
+
+export interface XLSXOutlineProperties {
+  summaryBelow: boolean;
+  summaryRight: boolean;
 }

@@ -1,4 +1,4 @@
-import { DEFAULT_CELL_HEIGHT, DEFAULT_CELL_WIDTH, INCORRECT_RANGE_STRING } from "../../constants";
+import { DEFAULT_CELL_HEIGHT, DEFAULT_CELL_WIDTH } from "../../constants";
 import {
   isInside,
   isMarkdownLink,
@@ -9,7 +9,8 @@ import {
   toZone,
 } from "../../helpers";
 import { withHttps } from "../../helpers/links";
-import { ExcelSheetData, ExcelWorkbookData, HeaderData } from "../../types";
+import { ExcelHeaderData, ExcelSheetData, ExcelWorkbookData, PLAIN_TEXT_FORMAT } from "../../types";
+import { CellErrorType } from "../../types/errors";
 import { XLSXStructure, XMLAttributes, XMLString } from "../../types/xlsx";
 import { XLSX_RELATION_TYPE } from "../constants";
 import {
@@ -23,7 +24,7 @@ import { escapeXml, formatAttributes, joinXmlNodes } from "../helpers/xml_helper
 import { HeaderIndex } from "./../../types/misc";
 import { addContent, addFormula } from "./cells";
 
-export function addColumns(cols: { [key: number]: HeaderData }): XMLString {
+export function addColumns(cols: { [key: number]: ExcelHeaderData }): XMLString {
   if (!Object.values(cols).length) {
     return escapeXml``;
   }
@@ -37,6 +38,12 @@ export function addColumns(cols: { [key: number]: HeaderData }): XMLString {
       ["customWidth", 1],
       ["hidden", col.isHidden ? 1 : 0],
     ];
+    if (col.outlineLevel) {
+      attributes.push(["outlineLevel", col.outlineLevel]);
+    }
+    if (col.collapsed) {
+      attributes.push(["collapsed", 1]);
+    }
     colNodes.push(escapeXml/*xml*/ `
       <col ${formatAttributes(attributes)}/>
     `);
@@ -57,12 +64,19 @@ export function addRows(
   for (let r = 0; r < sheet.rowNumber; r++) {
     const rowAttrs: XMLAttributes = [["r", r + 1]];
     const row = sheet.rows[r] || {};
-    // Always force our own row height
-    rowAttrs.push(
-      ["ht", convertHeightToExcel(row.size || DEFAULT_CELL_HEIGHT)],
-      ["customHeight", 1],
-      ["hidden", row.isHidden ? 1 : 0]
-    );
+    if (row.size && row.size !== DEFAULT_CELL_HEIGHT) {
+      rowAttrs.push(["ht", convertHeightToExcel(row.size)], ["customHeight", 1]);
+    }
+    if (row.isHidden) {
+      rowAttrs.push(["hidden", 1]);
+    }
+    if (row.outlineLevel) {
+      rowAttrs.push(["outlineLevel", row.outlineLevel]);
+    }
+    if (row.collapsed) {
+      rowAttrs.push(["collapsed", 1]);
+    }
+
     const cellNodes: XMLString[] = [];
     for (let c = 0; c < sheet.colNumber; c++) {
       const xc = toXC(c, r);
@@ -72,7 +86,10 @@ export function addRows(
 
         // style
         const id = normalizeStyle(construct, extractStyle(cell, data));
-        attributes.push(["s", id]);
+        // don't add style if default
+        if (id) {
+          attributes.push(["s", id]);
+        }
 
         let additionalAttrs: XMLAttributes = [];
         let cellNode = escapeXml``;
@@ -88,10 +105,11 @@ export function addRows(
           ({ attrs: additionalAttrs, node: cellNode } = addContent(label, construct.sharedStrings));
         } else if (cell.content && cell.content !== "") {
           const isTableHeader = isCellTableHeader(c, r, sheet);
+          const isPlainText = !!(cell.format && data.formats[cell.format] === PLAIN_TEXT_FORMAT);
           ({ attrs: additionalAttrs, node: cellNode } = addContent(
             cell.content,
             construct.sharedStrings,
-            isTableHeader
+            isTableHeader || isPlainText
           ));
         }
         attributes.push(...additionalAttrs);
@@ -101,7 +119,13 @@ export function addRows(
 </c>`);
       }
     }
-    if (cellNodes.length || row.size !== DEFAULT_CELL_HEIGHT || row.isHidden) {
+    if (
+      cellNodes.length ||
+      row.size !== DEFAULT_CELL_HEIGHT ||
+      row.isHidden ||
+      row.outlineLevel ||
+      row.collapsed
+    ) {
       rowNodes.push(escapeXml/*xml*/ `
         <row ${formatAttributes(rowAttrs)}>
           ${joinXmlNodes(cellNodes)}
@@ -117,7 +141,7 @@ export function addRows(
 }
 
 function isCellTableHeader(col: HeaderIndex, row: HeaderIndex, sheet: ExcelSheetData): boolean {
-  return sheet.filterTables.some((table) => {
+  return sheet.tables.some((table) => {
     const zone = toZone(table.range);
     const headerZone = { ...zone, bottom: zone.top };
     return isInside(col, row, headerZone);
@@ -139,10 +163,10 @@ export function addHyperlinks(
       if (isSheetUrl(url)) {
         const sheetId = parseSheetUrl(url);
         const sheet = data.sheets.find((sheet) => sheet.id === sheetId);
-        const location = sheet ? `${sheet.name}!A1` : INCORRECT_RANGE_STRING;
+        const position = sheet ? `${sheet.name}!A1` : CellErrorType.InvalidReference;
         const hyperlinkAttributes: XMLAttributes = [
           ["display", label],
-          ["location", location],
+          ["location", position],
           ["ref", xc],
         ];
         linkNodes.push(escapeXml/*xml*/ `

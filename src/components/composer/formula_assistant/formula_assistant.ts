@@ -48,6 +48,11 @@ interface AssistantState {
 
 export class FunctionDescriptionProvider extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-FunctionDescriptionProvider";
+  static props = {
+    functionName: String,
+    functionDescription: Object,
+    argToFocus: Number,
+  };
   assistantState: AssistantState = useState({
     allowCellSelectionBehind: false,
   });
@@ -80,9 +85,3 @@ export class FunctionDescriptionProvider extends Component<Props, SpreadsheetChi
     return this.env.model.getters.getLocale().formulaArgSeparator + " ";
   }
 }
-
-FunctionDescriptionProvider.props = {
-  functionName: String,
-  functionDescription: Object,
-  argToFocus: Number,
-};

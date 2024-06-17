@@ -57,7 +57,6 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     "getSheetIds",
     "getVisibleSheetIds",
     "isSheetVisible",
-    "getEvaluationSheets",
     "doesHeaderExist",
     "doesHeadersExist",
     "getCell",
@@ -164,9 +163,6 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     switch (cmd.type) {
       case "SET_GRID_LINES_VISIBILITY":
         this.setGridLinesVisibility(cmd.sheetId, cmd.areGridLinesVisible);
-        break;
-      case "DELETE_CONTENT":
-        this.clearZones(cmd.sheetId, cmd.target);
         break;
       case "CREATE_SHEET":
         const sheet = this.createSheet(
@@ -279,7 +275,7 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
         cells: {},
         conditionalFormats: [],
         figures: [],
-        filterTables: [],
+        tables: [],
         areGridLinesVisible:
           sheet.areGridLinesVisible === undefined ? true : sheet.areGridLinesVisible,
         isVisible: sheet.isVisible,
@@ -357,10 +353,6 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     return this.orderedSheetIds.filter(this.isSheetVisible.bind(this));
   }
 
-  getEvaluationSheets(): Record<UID, Sheet | undefined> {
-    return this.sheets;
-  }
-
   doesHeaderExist(sheetId: UID, dimension: Dimension, index: number) {
     return dimension === "COL"
       ? index >= 0 && index < this.getNumberCols(sheetId)
@@ -369,14 +361,6 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
 
   doesHeadersExist(sheetId: UID, dimension: Dimension, headerIndexes: HeaderIndex[]): boolean {
     return headerIndexes.every((index) => this.doesHeaderExist(sheetId, dimension, index));
-  }
-
-  getRow(sheetId: UID, index: HeaderIndex): Row {
-    const row = this.getSheet(sheetId).rows[index];
-    if (!row) {
-      throw new Error(`Row ${row} not found.`);
-    }
-    return row;
   }
 
   getCell({ sheetId, col, row }: CellPosition): Cell | undefined {
@@ -457,7 +441,7 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     };
   }
 
-  getUnboundedZone(sheetId: UID, zone: Zone): UnboundedZone {
+  getUnboundedZone(sheetId: UID, zone: Zone | UnboundedZone): UnboundedZone {
     const isFullRow = zone.left === 0 && zone.right === this.getNumberCols(sheetId) - 1;
     const isFullCol = zone.top === 0 && zone.bottom === this.getNumberRows(sheetId) - 1;
     return {
@@ -580,24 +564,6 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
 
   private setGridLinesVisibility(sheetId: UID, areGridLinesVisible: boolean) {
     this.history.update("sheets", sheetId, "areGridLinesVisible", areGridLinesVisible);
-  }
-
-  private clearZones(sheetId: UID, zones: Zone[]) {
-    for (let zone of zones) {
-      for (let col = zone.left; col <= zone.right; col++) {
-        for (let row = zone.top; row <= zone.bottom; row++) {
-          const cell = this.sheets[sheetId]!.rows[row].cells[col];
-          if (cell) {
-            this.dispatch("UPDATE_CELL", {
-              sheetId: sheetId,
-              content: "",
-              col,
-              row,
-            });
-          }
-        }
-      }
-    }
   }
 
   private createSheet(

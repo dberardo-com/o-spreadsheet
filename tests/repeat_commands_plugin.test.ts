@@ -23,8 +23,8 @@ import {
 import {
   activateSheet,
   copy,
-  createFilter,
   createSheet,
+  createTable,
   deleteCells,
   insertCells,
   paste,
@@ -44,7 +44,7 @@ import {
   getEvaluatedCell,
   getStyle,
 } from "./test_helpers/getters_helpers";
-import { target, toRangesData } from "./test_helpers/helpers";
+import { makeTestComposerStore, target, toRangesData } from "./test_helpers/helpers";
 
 let model: Model;
 let sheetId: UID;
@@ -65,8 +65,8 @@ describe("Repeat commands basics", () => {
       "SET_FORMATTING",
       "CLEAR_FORMATTING",
       "SET_BORDER",
-      "CREATE_FILTER_TABLE",
-      "REMOVE_FILTER_TABLE",
+      "CREATE_TABLE",
+      "REMOVE_TABLE",
       "ADD_COLUMNS_ROWS",
       "REMOVE_COLUMNS_ROWS",
       "HIDE_COLUMNS_ROWS",
@@ -87,7 +87,6 @@ describe("Repeat commands basics", () => {
 
   test("Repeatable local command list", () => {
     const repeatableCommands = [
-      "STOP_EDITION",
       "PASTE",
       "INSERT_CELL",
       "DELETE_CELL",
@@ -142,8 +141,8 @@ describe("Repeat command transform generics", () => {
     TEST_COMMANDS.SET_FORMATTING,
     TEST_COMMANDS.CLEAR_FORMATTING,
     TEST_COMMANDS.SET_BORDER,
-    TEST_COMMANDS.CREATE_FILTER_TABLE,
-    TEST_COMMANDS.REMOVE_FILTER_TABLE,
+    TEST_COMMANDS.CREATE_TABLE,
+    TEST_COMMANDS.REMOVE_TABLE,
     TEST_COMMANDS.HIDE_SHEET,
   ])("Sheet dependant command are adapted to current sheet %s", (command: CoreCommand) => {
     createSheet(model, { sheetId: "42" });
@@ -164,8 +163,7 @@ describe("Repeat command transform generics", () => {
   test.each([
     TEST_COMMANDS.ADD_MERGE,
     TEST_COMMANDS.REMOVE_MERGE,
-    TEST_COMMANDS.CREATE_FILTER_TABLE,
-    TEST_COMMANDS.REMOVE_FILTER_TABLE,
+    TEST_COMMANDS.REMOVE_TABLE,
     TEST_COMMANDS.SET_FORMATTING,
     TEST_COMMANDS.CLEAR_FORMATTING,
   ])(
@@ -185,6 +183,19 @@ describe("Repeat command transform generics", () => {
       expect(transformed).toMatchObject({ zone: toZone("B2:C4") });
     }
   );
+
+  test("Repeat create table", () => {
+    const toRepeat = TEST_COMMANDS.CREATE_TABLE;
+    createSheet(model, { sheetId: "42" });
+    activateSheet(model, "42");
+    setSelection(model, ["B2:C4"]);
+    const transformed = repeatCoreCommand(model.getters, toRepeat);
+    expect(transformed).toMatchObject({
+      ...TEST_COMMANDS.CREATE_TABLE,
+      sheetId: "42",
+      ranges: toRangesData("42", "B2:C4"),
+    });
+  });
 
   test("Commands not in repeatCommandRegistry aren't repeated", () => {
     const command = { type: "RANDOM_COMMAND", col: 0, row: 0, sheetId } as unknown as CoreCommand;
@@ -378,7 +389,7 @@ describe("Repeat local commands", () => {
       ...TEST_COMMANDS.ADD_CONDITIONAL_FORMAT,
       ranges: toRangesData(sheetId, "A1:A2"),
     });
-    createFilter(model, "A1:A2");
+    createTable(model, "A1:A2");
 
     setSelection(model, ["A1:A2"]);
     copy(model);
@@ -388,7 +399,7 @@ describe("Repeat local commands", () => {
     redo(model);
     expect(getCellContent(model, "C1")).toEqual("A1");
     expect(getCellContent(model, "C2")).toEqual("A2");
-    expect(getStyle(model, "C2")).toEqual({ fillColor: "red" });
+    expect(getStyle(model, "C2")).toMatchObject({ fillColor: "red" });
     expect(model.getters.isFilterHeader({ sheetId, col: 2, row: 0 })).toEqual(true);
     expect(model.getters.getRulesByCell(sheetId, 2, 0)).toBeTruthy();
   });
@@ -459,9 +470,10 @@ describe("Repeat local commands", () => {
   });
 
   test("Repeat stop edition", () => {
-    model.dispatch("START_EDITION");
-    model.dispatch("SET_CURRENT_CONTENT", { content: "kikou" });
-    model.dispatch("STOP_EDITION");
+    const composerStore = makeTestComposerStore(model);
+    composerStore.startEdition();
+    composerStore.setCurrentContent("kikou");
+    composerStore.stopEdition();
     expect(getCellContent(model, "A1")).toEqual("kikou");
 
     setSelection(model, ["B1"]);

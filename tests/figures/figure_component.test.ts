@@ -9,8 +9,9 @@ import {
   SELECTION_BORDER_COLOR,
 } from "../../src/constants";
 import { figureRegistry } from "../../src/registries";
-import { CreateFigureCommand, Figure, Pixel, SpreadsheetChildEnv, UID } from "../../src/types";
+import { CreateFigureCommand, Pixel, SpreadsheetChildEnv, UID } from "../../src/types";
 
+import { FigureComponent } from "../../src/components/figures/figure/figure";
 import {
   activateSheet,
   addColumns,
@@ -96,11 +97,9 @@ const TEMPLATE = xml/* xml */ `
   </div>
 `;
 
-interface Props {
-  figure: Figure;
-}
-class TextFigure extends Component<Props, SpreadsheetChildEnv> {
+class TextFigure extends Component<FigureComponent["props"], SpreadsheetChildEnv> {
   static template = TEMPLATE;
+  static props = FigureComponent.props;
 }
 
 mockChart();
@@ -165,6 +164,15 @@ describe("figures", () => {
     await keyDown({ key: "Delete" });
     expect(fixture.querySelector(".o-figure")).toBeNull();
     expect(getCellContent(model, "A1")).toBe("content");
+  });
+
+  test("Can delete a figure with `Backspace`", async () => {
+    createFigure(model);
+    await nextTick();
+    fixture.querySelector(".o-figure")!;
+    await simulateClick(".o-figure");
+    await keyDown({ key: "Backspace" });
+    expect(fixture.querySelector(".o-figure")).toBeNull();
   });
 
   test("Add a figure on sheet2, scroll down on sheet 1, switch to sheet 2, the figure should be displayed", async () => {
@@ -397,9 +405,9 @@ describe("figures", () => {
         await nextTick();
         const figureEl = fixture.querySelector(".o-figure")!;
 
-        triggerMouseEvent(figureEl, "mousedown");
+        triggerMouseEvent(figureEl, "pointerdown");
         triggerWheelEvent(figureEl, { deltaY: wheelY, deltaX: wheelX });
-        triggerMouseEvent(figureEl, "mouseup");
+        triggerMouseEvent(figureEl, "pointerup");
         await nextTick();
 
         expect(model.getters.getFigure(model.getters.getActiveSheetId(), "someuuid")).toMatchObject(
@@ -422,7 +430,7 @@ describe("figures", () => {
     expect(document.activeElement).not.toBe(figure);
     expect(fixture.querySelector(".o-fig-anchor")).toBeNull();
 
-    triggerMouseEvent(figure, "mousedown", 300, 200);
+    triggerMouseEvent(figure, "pointerdown", 300, 200);
     await nextTick();
     expect(figure.classList).not.toContain("o-dragging");
   });
@@ -650,7 +658,7 @@ describe("figures", () => {
   test("Clicking a figure does not mark it a 'dragging'", async () => {
     createFigure(model);
     await nextTick();
-    triggerMouseEvent(".o-figure", "mousedown", 0, 0);
+    triggerMouseEvent(".o-figure", "pointerdown", 0, 0);
     await nextTick();
     expect(fixture.querySelector(".o-figure")?.classList.contains("o-dragging")).toBeFalsy();
   });
@@ -907,7 +915,7 @@ describe("figures", () => {
         expect(fixture.querySelectorAll(".o-figure-snap-line")).toHaveLength(0);
         await dragElement(".o-figure[data-id=f1]", { x: 50, y: 50 }, undefined, false);
         expect(fixture.querySelectorAll(".o-figure-snap-line")).toHaveLength(2);
-        triggerMouseEvent(".o-figure[data-id=f1]", "mouseup");
+        triggerMouseEvent(".o-figure[data-id=f1]", "pointerup");
         await nextTick();
         expect(fixture.querySelectorAll(".o-figure-snap-line")).toHaveLength(0);
       });

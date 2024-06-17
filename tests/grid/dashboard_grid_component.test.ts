@@ -8,7 +8,7 @@ import {
 import { Model } from "../../src/model";
 import { clickableCellRegistry } from "../../src/registries/cell_clickable_registry";
 import {
-  createFilter,
+  createTable,
   selectCell,
   setCellContent,
   setViewportOffset,
@@ -64,7 +64,7 @@ describe("Grid component in dashboard mode", () => {
   });
 
   test("Filter icon is correctly rendered", async () => {
-    createFilter(model, "B2:C3");
+    createTable(model, "B2:C3");
     model.updateMode("dashboard");
     await nextTick();
     const icons = fixture.querySelectorAll(".o-grid-cell-icon");
@@ -77,7 +77,7 @@ describe("Grid component in dashboard mode", () => {
   });
 
   test("Clicking on a filter icon correctly open the filter popover", async () => {
-    createFilter(model, "A1:A2");
+    createTable(model, "A1:A2");
     model.updateMode("dashboard");
     await nextTick();
     await simulateClick(".o-filter-icon");
@@ -85,7 +85,7 @@ describe("Grid component in dashboard mode", () => {
   });
 
   test("Clicking on a filter icon correctly closes the filter popover", async () => {
-    createFilter(model, "A1:A2");
+    createTable(model, "A1:A2");
     model.updateMode("dashboard");
     await nextTick();
     await simulateClick(".o-filter-icon");
@@ -97,7 +97,7 @@ describe("Grid component in dashboard mode", () => {
   });
 
   test("When filter menu is open, clicking on a random grid correctly closes filter popover", async () => {
-    createFilter(model, "A1:A2");
+    createTable(model, "A1:A2");
     model.updateMode("dashboard");
     await nextTick();
     await simulateClick(".o-filter-icon");
@@ -124,7 +124,9 @@ describe("Grid component in dashboard mode", () => {
   test("Clickable cells actions are properly udpated on viewport scroll", async () => {
     const fn = jest.fn();
     clickableCellRegistry.add("fake", {
-      condition: (position, env) => !!env.model.getters.getCell(position)?.content.startsWith("__"),
+      condition: (position, getters) => {
+        return !!getters.getCell(position)?.content.startsWith("__");
+      },
       execute: (position) => fn(position.col, position.row),
       sequence: 5,
     });

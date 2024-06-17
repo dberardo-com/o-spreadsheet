@@ -1,6 +1,7 @@
 import { Component, onMounted } from "@odoo/owl";
-import { interactiveStopEdition } from "../../../../helpers/ui/stop_edition_interactive";
+import { useStore } from "../../../../store_engine";
 import { DataValidationCriterion, SpreadsheetChildEnv } from "../../../../types";
+import { ComposerStore } from "../../../composer/composer/composer_store";
 
 interface Props<T extends DataValidationCriterion> {
   criterion: T;
@@ -10,9 +11,14 @@ interface Props<T extends DataValidationCriterion> {
 export abstract class DataValidationCriterionForm<
   T extends DataValidationCriterion = DataValidationCriterion
 > extends Component<Props<T>, SpreadsheetChildEnv> {
+  static props = {
+    criterion: Object,
+    onCriterionChanged: Function,
+  };
   setup() {
+    const composerStore = useStore(ComposerStore);
     onMounted(() => {
-      interactiveStopEdition(this.env);
+      composerStore.stopEdition();
     });
   }
 
@@ -24,8 +30,3 @@ export abstract class DataValidationCriterionForm<
     this.props.onCriterionChanged(filteredCriterion);
   }
 }
-
-DataValidationCriterionForm.props = {
-  criterion: Object,
-  onCriterionChanged: Function,
-};

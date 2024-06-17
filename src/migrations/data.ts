@@ -6,9 +6,11 @@ import {
 } from "../constants";
 import { UuidGenerator, getItemId, overlap, toXC, toZone, zoneToXc } from "../helpers/index";
 import { isValidLocale } from "../helpers/locale";
+import { getMaxObjectId } from "../helpers/pivot/pivot_helpers";
 import { StateUpdateMessage } from "../types/collaborative/transport_service";
 import {
   CoreCommand,
+  CustomizedDataSet,
   DEFAULT_LOCALE,
   ExcelSheetData,
   ExcelWorkbookData,
@@ -26,7 +28,7 @@ import { normalizeV9 } from "./legacy_tools";
  * a breaking change is made in the way the state is handled, and an upgrade
  * function should be defined
  */
-export const CURRENT_VERSION = 14;
+export const CURRENT_VERSION = 16;
 const INITIAL_SHEET_ID = "Sheet1";
 
 /**
@@ -40,6 +42,8 @@ export function load(data?: any, verboseImport?: boolean): WorkbookData {
   if (!data) {
     return createEmptyWorkbookData();
   }
+  console.group("Loading data");
+  const start = performance.now();
   if (data["[Content_Types].xml"]) {
     const reader = new XlsxReader(data);
     data = reader.convertXlsx();
@@ -53,10 +57,13 @@ export function load(data?: any, verboseImport?: boolean): WorkbookData {
   // apply migrations, if needed
   if ("version" in data) {
     if (data.version < CURRENT_VERSION) {
+      console.info("Migrating data from version", data.version);
       data = migrate(data);
     }
   }
   data = repairData(data);
+  console.info("Data loaded in", performance.now() - start, "ms");
+  console.groupEnd();
   return data;
 }
 
@@ -72,11 +79,12 @@ interface Migration {
 }
 
 function migrate(data: any): WorkbookData {
+  const start = performance.now();
   const index = MIGRATIONS.findIndex((m) => m.from === data.version);
   for (let i = index; i < MIGRATIONS.length; i++) {
     data = MIGRATIONS[i].applyMigration(data);
   }
-
+  console.info("Data migrated in", performance.now() - start, "ms");
   return data;
 }
 
@@ -349,11 +357,61 @@ const MIGRATIONS: Migration[] = [
     },
   },
   {
-    description: "Fix datafilter duplication (post saas-16.4)",
+    description: "Fix datafilter duplication (post saas-17.1)",
     from: 14,
     to: 14.5,
     applyMigration(data: any): any {
       return fixOverlappingFilters(data);
+    },
+  },
+  {
+    description: "Rename filterTable to tables",
+    from: 14.5,
+    to: 15,
+    applyMigration(data: any): any {
+      for (const sheetData of data.sheets || []) {
+        sheetData.tables = sheetData.tables || sheetData.filterTables || [];
+        delete sheetData.filterTables;
+      }
+      return data;
+    },
+  },
+  {
+    description: "Add pivots",
+    from: 15,
+    to: 16,
+    applyMigration(data: any): any {
+      if (!data.pivots) {
+        data.pivots = {};
+      }
+      if (!data.pivotNextId) {
+        data.pivotNextId = getMaxObjectId(data.pivots) + 1;
+      }
+      return data;
+    },
+  },
+  {
+    description: "transform chart data structure (2)",
+    from: 16,
+    to: 17,
+    applyMigration(data: any): any {
+      for (const sheet of data.sheets || []) {
+        for (const f in sheet.figures || []) {
+          const figure = sheet.figures[f];
+          if ("title" in figure.data && typeof figure.data.title === "string") {
+            figure.data.title = { text: figure.data.title };
+          }
+          const figureType = figure.data.type;
+          if (!["line", "bar", "pie", "scatter", "waterfall", "combo"].includes(figureType)) {
+            continue;
+          }
+          const { dataSets, ...newData } = sheet.figures[f].data;
+          const newDataSets: CustomizedDataSet = dataSets.map((dataRange) => ({ dataRange }));
+          newData.dataSets = newDataSets;
+          sheet.figures[f].data = newData;
+        }
+      }
+      return data;
     },
   },
 ];
@@ -567,7 +625,7 @@ export function createEmptySheet(sheetId: UID, name: string): SheetData {
     merges: [],
     conditionalFormats: [],
     figures: [],
-    filterTables: [],
+    tables: [],
     isVisible: true,
   };
 }
@@ -576,13 +634,15 @@ export function createEmptyWorkbookData(sheetName = "Sheet1"): WorkbookData {
   const data = {
     version: CURRENT_VERSION,
     sheets: [createEmptySheet(INITIAL_SHEET_ID, sheetName)],
-    entities: {},
     styles: {},
     formats: {},
     borders: {},
     revisionId: DEFAULT_REVISION_ID,
     uniqueFigureIds: true,
     settings: { locale: DEFAULT_LOCALE },
+    pivots: {},
+    pivotNextId: 1,
+    customTableStyles: {},
   };
   return data;
 }

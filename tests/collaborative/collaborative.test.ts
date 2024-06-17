@@ -1,23 +1,23 @@
 import { Model, UIPlugin } from "../../src";
 import { DEFAULT_REVISION_ID, MESSAGE_VERSION } from "../../src/constants";
 import { functionRegistry } from "../../src/functions";
-import { getDefaultCellHeight, range, toCartesian, toZone } from "../../src/helpers";
+import { getDefaultCellHeight, range, toZone } from "../../src/helpers";
+import { DEFAULT_TABLE_CONFIG } from "../../src/helpers/table_presets";
 import { featurePluginRegistry } from "../../src/plugins";
 import { Command, CommandResult, CoreCommand, DataValidationCriterion } from "../../src/types";
 import { CollaborationMessage } from "../../src/types/collaborative/transport_service";
 import { MockTransportService } from "../__mocks__/transport_service";
 import {
   activateSheet,
-  addColumns,
   addDataValidation,
   addRows,
   changeCFPriority,
   clearCell,
   copy,
   createChart,
-  createFilter,
   createSheet,
-  deleteColumns,
+  createTable,
+  createTableStyle,
   deleteRows,
   deleteSheet,
   groupHeaders,
@@ -26,11 +26,11 @@ import {
   merge,
   paste,
   redo,
-  selectCell,
   setCellContent,
   setStyle,
   undo,
   ungroupHeaders,
+  updateTableConfig,
 } from "../test_helpers/commands_helpers";
 import {
   getBorder,
@@ -284,13 +284,13 @@ describe("Multi users synchronisation", () => {
 
     expect([alice, bob, charlie]).toHaveSynchronizedValue((user) => getCell(user, "B3"), undefined);
     expect(alice.getters.getMerges(sheetId)).toMatchObject([
-      { bottom: 2, left: 0, top: 0, right: 1, topLeft: toCartesian("A1") },
+      { bottom: 2, left: 0, top: 0, right: 1 },
     ]);
     expect(bob.getters.getMerges(sheetId)).toMatchObject([
-      { bottom: 2, left: 0, top: 0, right: 1, topLeft: toCartesian("A1") },
+      { bottom: 2, left: 0, top: 0, right: 1 },
     ]);
     expect(charlie.getters.getMerges(sheetId)).toMatchObject([
-      { bottom: 2, left: 0, top: 0, right: 1, topLeft: toCartesian("A1") },
+      { bottom: 2, left: 0, top: 0, right: 1 },
     ]);
     undo(bob);
     expect([alice, bob, charlie]).toHaveSynchronizedValue((user) => getCell(user, "B3"), undefined);
@@ -364,10 +364,6 @@ describe("Multi users synchronisation", () => {
         {
           ...toZone("A80:A98"),
           id: 1,
-          topLeft: {
-            col: 0,
-            row: 79,
-          },
         },
       ]
     );
@@ -388,55 +384,6 @@ describe("Multi users synchronisation", () => {
       addRows(alice, "after", 14, 1);
       deleteSheet(bob, "Sheet1");
     });
-  });
-
-  test("Updatecell & composer on different cells", () => {
-    alice.dispatch("START_EDITION");
-    setCellContent(bob, "A2", "A2");
-    alice.dispatch("SET_CURRENT_CONTENT", {
-      content: "Hi",
-    });
-    alice.dispatch("STOP_EDITION");
-    expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => getCellContent(user, "A2"),
-      "A2"
-    );
-    expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => getCellContent(user, "A1"),
-      "Hi"
-    );
-  });
-
-  test("Updatecell & composer on the same cell", () => {
-    alice.dispatch("START_EDITION");
-    alice.dispatch("SET_CURRENT_CONTENT", { content: "bla" });
-    setCellContent(bob, "A1", "A1");
-    expect(alice.getters.getEditionMode()).toBe("editing");
-    expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => getCellContent(user, "A1"),
-      "A1"
-    );
-    alice.dispatch("STOP_EDITION");
-    expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => getCellContent(user, "A1"),
-      "bla"
-    );
-  });
-
-  test("Updatecell & composer on the same cell when cancelling edition", () => {
-    alice.dispatch("START_EDITION");
-    alice.dispatch("SET_CURRENT_CONTENT", { content: "bla" });
-    setCellContent(bob, "A1", "A1");
-    expect(alice.getters.getEditionMode()).toBe("editing");
-    expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => getCellContent(user, "A1"),
-      "A1"
-    );
-    alice.dispatch("CANCEL_EDITION");
-    expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => getCellContent(user, "A1"),
-      "A1"
-    );
   });
 
   test("duplicate sheet does not activate sheet", () => {
@@ -498,38 +445,23 @@ describe("Multi users synchronisation", () => {
     network.concurrent(() => {
       setCellContent(alice, "A1", "hello");
       const spy = jest.spyOn(network, "sendMessage");
-      alice.dispatch("START_EDITION");
+      alice.dispatch("COPY");
       expect(spy).not.toHaveBeenCalled();
     });
-  });
-
-  test("Composer is moved when column is added before it", () => {
-    selectCell(alice, "D2");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    addColumns(bob, "after", "B", 1);
-    alice.dispatch("STOP_EDITION");
-    expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => getCellContent(user, "E2"),
-      "hello"
-    );
-  });
-
-  test("Composer is not moved when column is added after it", () => {
-    selectCell(alice, "A2");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    addColumns(bob, "after", "B", 1);
-    alice.dispatch("STOP_EDITION");
-    expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => getCellContent(user, "A2"),
-      "hello"
-    );
   });
 
   test("duplicated chart are the same", () => {
     createChart(
       alice,
       {
-        dataSets: ["A8:D8", "A9:D9"],
+        dataSets: [
+          {
+            dataRange: "A8:D8",
+          },
+          {
+            dataRange: "A9:D9",
+          },
+        ],
         labelRange: "B7:D7",
         type: "line",
       },
@@ -540,142 +472,6 @@ describe("Multi users synchronisation", () => {
       sheetIdTo: "Sheet2",
     });
     expect([alice, bob, charlie]).toHaveSynchronizedExportedData();
-  });
-
-  test("Composer is moved when column is removed before it", () => {
-    selectCell(alice, "D2");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    deleteColumns(bob, ["B"]);
-    alice.dispatch("STOP_EDITION");
-    expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => getCellContent(user, "C2"),
-      "hello"
-    );
-  });
-
-  test("Composer is not moved when column is removed after it", () => {
-    selectCell(alice, "D2");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    deleteColumns(bob, ["E"]);
-    alice.dispatch("STOP_EDITION");
-    expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => getCellContent(user, "D2"),
-      "hello"
-    );
-  });
-
-  test("Composer is moved when column is removed on it", () => {
-    selectCell(alice, "D2");
-    const spy = jest.spyOn(alice["config"], "raiseBlockingErrorUI");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    deleteColumns(bob, ["D"]);
-    expect(spy).toHaveBeenCalled();
-    expect(alice.getters.getEditionMode()).toBe("inactive");
-  });
-
-  test("Composer is moved when row is added before it", () => {
-    selectCell(alice, "A4");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    addRows(bob, "after", 1, 1);
-    alice.dispatch("STOP_EDITION");
-    expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => getCellContent(user, "A5"),
-      "hello"
-    );
-  });
-
-  test("Composer is not moved when row is added after it", () => {
-    selectCell(alice, "A2");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    addRows(bob, "after", 5, 1);
-    alice.dispatch("STOP_EDITION");
-    expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => getCellContent(user, "A2"),
-      "hello"
-    );
-  });
-
-  test("Composer is moved when row is removed before it", () => {
-    selectCell(alice, "A4");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    deleteRows(bob, [1]);
-    alice.dispatch("STOP_EDITION");
-    expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => getCellContent(user, "A3"),
-      "hello"
-    );
-  });
-
-  test("Composer is not moved when row is removed after it", () => {
-    selectCell(alice, "A4");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    deleteRows(bob, [10]);
-    alice.dispatch("STOP_EDITION");
-    expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => getCellContent(user, "A4"),
-      "hello"
-    );
-  });
-
-  test("Delete row & Don't notify cell is deleted when composer is active", () => {
-    selectCell(alice, "A4");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    const spy = jest.spyOn(alice["config"], "raiseBlockingErrorUI");
-    deleteRows(bob, [3]);
-    expect(spy).toHaveBeenCalled();
-    expect(alice.getters.getEditionMode()).toBe("inactive");
-  });
-
-  test("Delete col & Don't notify cell is deleted when composer is active", () => {
-    selectCell(alice, "A4");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    const spy = jest.spyOn(alice["config"], "raiseBlockingErrorUI");
-    deleteColumns(bob, ["A"]);
-    expect(spy).toHaveBeenCalled();
-    expect(alice.getters.getEditionMode()).toBe("inactive");
-  });
-
-  test("Delete sheet & Don't notify cell is deleted when composer is active", () => {
-    const activeSheetId = alice.getters.getActiveSheetId();
-    createSheet(alice, { sheetId: "42" });
-    selectCell(alice, "A4");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    const spy = jest.spyOn(alice["config"], "raiseBlockingErrorUI");
-    alice.dispatch("DELETE_SHEET", { sheetId: activeSheetId });
-    expect(spy).toHaveBeenCalled();
-    expect(alice.getters.getEditionMode()).toBe("inactive");
-  });
-
-  test("Delete row & Don't notify cell is deleted when composer is not active", () => {
-    selectCell(alice, "A4");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    alice.dispatch("STOP_EDITION");
-    const spy = jest.spyOn(alice["config"], "raiseBlockingErrorUI");
-    deleteRows(bob, [3]);
-    expect(spy).not.toHaveBeenCalled();
-    expect(alice.getters.getEditionMode()).toBe("inactive");
-  });
-
-  test("Delete col & Don't notify cell is deleted when composer is not active", () => {
-    selectCell(alice, "A4");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    alice.dispatch("STOP_EDITION");
-    const spy = jest.spyOn(alice["config"], "raiseBlockingErrorUI");
-    deleteColumns(bob, ["A"]);
-    expect(spy).not.toHaveBeenCalled();
-    expect(alice.getters.getEditionMode()).toBe("inactive");
-  });
-
-  test("Delete sheet & Don't notify cell is deleted when composer is not active", () => {
-    const activeSheetId = alice.getters.getActiveSheetId();
-    createSheet(alice, { sheetId: "42" });
-    selectCell(alice, "A4");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    alice.dispatch("STOP_EDITION");
-    const spy = jest.spyOn(alice["config"], "raiseBlockingErrorUI");
-    alice.dispatch("DELETE_SHEET", { sheetId: activeSheetId });
-    expect(spy).not.toHaveBeenCalled();
-    expect(alice.getters.getEditionMode()).toBe("inactive");
   });
 
   test("Delete the same figure concurrently", () => {
@@ -704,41 +500,6 @@ describe("Multi users synchronisation", () => {
       (user) => user.getters.getFigures(sheetId),
       []
     );
-  });
-
-  test("Composing in a sheet when the sheet is deleted", () => {
-    createSheet(alice, { sheetId: "42" });
-    activateSheet(alice, "42");
-    selectCell(alice, "A4");
-    const spy = jest.spyOn(alice["config"], "raiseBlockingErrorUI");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    bob.dispatch("DELETE_SHEET", { sheetId: "42" });
-    expect(spy).toHaveBeenCalled();
-    expect(alice.getters.getEditionMode()).toBe("inactive");
-  });
-
-  test("Composing in a sheet when a sheet deletion is redone", () => {
-    createSheet(alice, { sheetId: "42" });
-    selectCell(alice, "A4");
-    const spy = jest.spyOn(alice["config"], "raiseBlockingErrorUI");
-    bob.dispatch("DELETE_SHEET", { sheetId: "42" });
-    undo(bob);
-    activateSheet(alice, "42");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    redo(bob);
-    expect(spy).toHaveBeenCalled();
-    expect(alice.getters.getEditionMode()).toBe("inactive");
-  });
-
-  test("Composing in a sheet when a sheet creation is undone", () => {
-    createSheet(bob, { sheetId: "42" });
-    selectCell(alice, "A4");
-    const spy = jest.spyOn(alice["config"], "raiseBlockingErrorUI");
-    activateSheet(alice, "42");
-    alice.dispatch("START_EDITION", { text: "hello" });
-    undo(bob);
-    expect(spy).toHaveBeenCalled();
-    expect(alice.getters.getEditionMode()).toBe("inactive");
   });
 
   test("Do not handle duplicated message", () => {
@@ -934,31 +695,31 @@ describe("Multi users synchronisation", () => {
     });
   });
 
-  test("Create overlapping data filter concurrently", () => {
+  test("Create overlapping tables concurrently", () => {
     const sheetId = alice.getters.getActiveSheetId();
     network.concurrent(() => {
-      createFilter(alice, "A1:B4");
-      createFilter(bob, "B1:C4");
+      createTable(alice, "A1:B4");
+      createTable(bob, "B1:C4");
     });
 
     expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => user.getters.getFilterTables(sheetId).length,
+      (user) => user.getters.getTables(sheetId).length,
       1
     );
     expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => user.getters.getFilterTables(sheetId).map((table) => table.zone),
-      alice.getters.getFilterTables(sheetId).map((table) => table.zone)
+      (user) => user.getters.getTables(sheetId).map((table) => table.range.zone),
+      alice.getters.getTables(sheetId).map((table) => table.range.zone)
     );
   });
 
-  test("Create overlapping data filter then merges concurrently", () => {
+  test("Create overlapping tables then merges concurrently", () => {
     const sheetId = alice.getters.getActiveSheetId();
     network.concurrent(() => {
-      createFilter(alice, "A1:B4");
+      createTable(alice, "A1:B4");
       merge(bob, "B1:C4");
     });
     expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => user.getters.getFilterTables(sheetId).length,
+      (user) => user.getters.getTables(sheetId).length,
       1
     );
     expect([alice, bob, charlie]).toHaveSynchronizedValue(
@@ -967,37 +728,37 @@ describe("Multi users synchronisation", () => {
     );
   });
 
-  test("Create overlapping merges then data filter concurrently", () => {
+  test("Create overlapping merges then tables concurrently", () => {
     const sheetId = alice.getters.getActiveSheetId();
     network.concurrent(() => {
       merge(bob, "B1:C4");
-      createFilter(alice, "A1:B4");
+      createTable(alice, "A1:B4");
     });
     expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => user.getters.getMerges(sheetId),
-      bob.getters.getMerges(sheetId)
+      (user) => user.getters.getMerges(sheetId).length,
+      0
     );
     expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => user.getters.getFilterTables(sheetId).length,
-      0
+      (user) => user.getters.getTables(sheetId).length,
+      1
     );
   });
 
-  test("duplicate sheet and create data filter concurrently", () => {
+  test("duplicate sheet and create tables concurrently", () => {
     const firstSheetId = alice.getters.getActiveSheetId();
     network.concurrent(() => {
       alice.dispatch("DUPLICATE_SHEET", {
         sheetId: "Sheet1",
         sheetIdTo: "sheet2",
       });
-      createFilter(charlie, "A1:B4", firstSheetId);
+      createTable(charlie, "A1:B4", undefined, undefined, firstSheetId);
     });
     expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => user.getters.getFilterTables("sheet2"),
+      (user) => user.getters.getTables("sheet2"),
       []
     );
     expect([alice, bob, charlie]).toHaveSynchronizedValue(
-      (user) => user.getters.getFilterValues({ sheetId: "sheet2", col: 0, row: 0 }),
+      (user) => user.getters.getFilterHiddenValues({ sheetId: "sheet2", col: 0, row: 0 }),
       []
     );
   });
@@ -1070,6 +831,72 @@ describe("Multi users synchronisation", () => {
         { id: "id2", ranges: ["A3:A7"], criterion, isBlocking: false },
       ]
     );
+  });
+
+  describe("Table style", () => {
+    test("Create a table with a style, and delete the style at the same time", () => {
+      createTableStyle(alice, "MyStyle");
+      network.concurrent(() => {
+        alice.dispatch("REMOVE_TABLE_STYLE", { tableStyleId: "MyStyle" });
+        createTable(bob, "A1:B4", { styleId: "MyStyle" });
+      });
+      expect([alice, bob, charlie]).toHaveSynchronizedValue(
+        (user) => user.getters.getTables(user.getters.getActiveSheetId())[0].config.styleId,
+        DEFAULT_TABLE_CONFIG.styleId
+      );
+    });
+
+    test("Update a table with a style, and delete the style at the same time", () => {
+      createTableStyle(alice, "MyStyle");
+      createTable(alice, "A1:B4");
+      network.concurrent(() => {
+        alice.dispatch("REMOVE_TABLE_STYLE", { tableStyleId: "MyStyle" });
+        updateTableConfig(bob, "A1:B4", { styleId: "MyStyle" });
+      });
+      expect([alice, bob, charlie]).toHaveSynchronizedValue(
+        (user) => user.getters.getTables(user.getters.getActiveSheetId())[0].config.styleId,
+        DEFAULT_TABLE_CONFIG.styleId
+      );
+    });
+
+    test("Undo create table style with another user that created a table with this style", () => {
+      createTableStyle(alice, "MyStyle");
+      createTable(bob, "A1:B4", { styleId: "MyStyle" });
+      expect([alice, bob, charlie]).toHaveSynchronizedValue(
+        (user) => user.getters.getTables(user.getters.getActiveSheetId())[0].config.styleId,
+        "MyStyle"
+      );
+
+      undo(alice);
+      expect([alice, bob, charlie]).toHaveSynchronizedValue(
+        (user) => user.getters.getTables(user.getters.getActiveSheetId())[0].config.styleId,
+        DEFAULT_TABLE_CONFIG.styleId
+      );
+
+      redo(alice);
+      expect([alice, bob, charlie]).toHaveSynchronizedValue(
+        (user) => user.getters.getTables(user.getters.getActiveSheetId())[0].config.styleId,
+        "MyStyle"
+      );
+    });
+
+    test("Undo delete table style have synchronized values", () => {
+      createTableStyle(alice, "MyStyle");
+      network.concurrent(() => {
+        alice.dispatch("REMOVE_TABLE_STYLE", { tableStyleId: "MyStyle" });
+        createTable(bob, "A1:B4", { styleId: "MyStyle" });
+      });
+      expect([alice, bob, charlie]).toHaveSynchronizedValue(
+        (user) => user.getters.getTables(user.getters.getActiveSheetId())[0].config.styleId,
+        DEFAULT_TABLE_CONFIG.styleId
+      );
+
+      undo(alice);
+      expect([alice, bob, charlie]).toHaveSynchronizedValue(
+        (user) => user.getters.getTables(user.getters.getActiveSheetId())[0].config.styleId,
+        DEFAULT_TABLE_CONFIG.styleId
+      );
+    });
   });
 });
 

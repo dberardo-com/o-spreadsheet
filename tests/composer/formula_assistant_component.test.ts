@@ -1,6 +1,7 @@
 import { setTranslationMethod } from "../../src";
+import { ComposerStore } from "../../src/components/composer/composer/composer_store";
 import { arg, functionRegistry } from "../../src/functions/index";
-import { Model } from "../../src/model";
+import { Store } from "../../src/store_engine";
 import { _t } from "../../src/translation";
 import { DEFAULT_LOCALE } from "../../src/types";
 import { registerCleanup } from "../setup/jest.setup";
@@ -18,10 +19,10 @@ jest.mock("../../src/components/composer/content_editable_helper.ts", () =>
   require("../__mocks__/content_editable_helper")
 );
 
-let model: Model;
 let composerEl: Element;
 let fixture: HTMLElement;
 let parent: ComposerWrapper;
+let composerStore: Store<ComposerStore>;
 
 async function typeInComposer(text: string, fromScratch: boolean = true) {
   if (fromScratch) {
@@ -31,11 +32,12 @@ async function typeInComposer(text: string, fromScratch: boolean = true) {
 }
 
 beforeEach(async () => {
-  ({ model, fixture, parent } = await mountComposerWrapper());
+  ({ fixture, parent } = await mountComposerWrapper());
   // start composition
   parent.startComposition();
   await nextTick();
   composerEl = fixture.querySelector("div.o-composer")!;
+  composerStore = parent.env.getStore(ComposerStore);
 });
 
 describe("formula assistant", () => {
@@ -217,14 +219,14 @@ describe("formula assistant", () => {
       expect(fixture.querySelectorAll(".o-formula-assistant")).toHaveLength(1);
       await keyDown({ key: "ArrowRight" });
       await keyUp({ key: "ArrowRight" });
-      expect(model.getters.getCurrentContent()).toBe("=FUNC1(1,B1");
+      expect(composerStore.currentContent).toBe("=FUNC1(1,B1");
       expect(fixture.querySelectorAll(".o-formula-assistant")).toHaveLength(0);
     });
 
     test("use arrowKey during 'editing' mode in a function should display formula assistant", async () => {
       await typeInComposer("=FUNC1(1");
       expect(fixture.querySelectorAll(".o-formula-assistant")).toHaveLength(1);
-      expect(model.getters.getEditionMode()).toBe("editing");
+      expect(composerStore.editionMode).toBe("editing");
     });
 
     describe("function definition", () => {
@@ -257,7 +259,7 @@ describe("formula assistant", () => {
       });
 
       test("arguments separator is localized", async () => {
-        updateLocale(model, { ...DEFAULT_LOCALE, formulaArgSeparator: ";" });
+        updateLocale(parent.env.model, { ...DEFAULT_LOCALE, formulaArgSeparator: ";" });
         await typeInComposer("=FUNC1(");
         expect(fixture.querySelectorAll(".o-formula-assistant-head")[0].textContent).toBe(
           "FUNC1 ( f1Arg1; f1Arg2 ) "

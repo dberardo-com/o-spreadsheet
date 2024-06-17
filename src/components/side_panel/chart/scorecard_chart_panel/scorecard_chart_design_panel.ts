@@ -1,41 +1,50 @@
-import { Component, useExternalListener, useState } from "@odoo/owl";
+import { Component } from "@odoo/owl";
 import { _t } from "../../../../translation";
 import { ScorecardChartDefinition } from "../../../../types/chart/scorecard_chart";
 import { Color, DispatchResult, SpreadsheetChildEnv, UID } from "../../../../types/index";
-import { ColorPickerWidget } from "../../../color_picker/color_picker_widget";
+import { Checkbox } from "../../components/checkbox/checkbox";
+import { SidePanelCollapsible } from "../../components/collapsible/side_panel_collapsible";
+import { RoundColorPicker } from "../../components/round_color_picker/round_color_picker";
+import { Section } from "../../components/section/section";
+import { GeneralDesignEditor } from "../building_blocks/general_design/general_design_editor";
 
 type ColorPickerId = undefined | "backgroundColor" | "baselineColorUp" | "baselineColorDown";
 
 interface Props {
   figureId: UID;
   definition: ScorecardChartDefinition;
-  canUpdateChart: (figureId: UID, definition: Partial<ScorecardChartDefinition>) => DispatchResult;
+  canUpdateChart: (figureID: UID, definition: Partial<ScorecardChartDefinition>) => DispatchResult;
   updateChart: (figureId: UID, definition: Partial<ScorecardChartDefinition>) => DispatchResult;
-}
-
-interface PanelState {
-  title: string;
-  openedColorPicker: ColorPickerId;
 }
 
 export class ScorecardChartDesignPanel extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-ScorecardChartDesignPanel";
-  static components = { ColorPickerWidget };
+  static components = {
+    GeneralDesignEditor,
+    RoundColorPicker,
+    SidePanelCollapsible,
+    Section,
+    Checkbox,
+  };
+  static props = {
+    figureId: String,
+    definition: Object,
+    updateChart: Function,
+    canUpdateChart: { type: Function, optional: true },
+  };
 
-  private state: PanelState = useState({
-    title: "",
-    openedColorPicker: undefined,
-  });
-
-  setup() {
-    this.state.title = _t(this.props.definition.title);
-    useExternalListener(window, "click", this.closeMenus);
+  get colorsSectionTitle(): string {
+    return this.props.definition.baselineMode === "progress"
+      ? _t("Progress bar colors")
+      : _t("Baseline colors");
   }
 
-  updateTitle() {
-    this.props.updateChart(this.props.figureId, {
-      title: this.state.title,
-    });
+  get humanizeNumbersLabel(): string {
+    return _t("Humanize numbers");
+  }
+
+  updateHumanizeNumbers(humanize: boolean) {
+    this.props.updateChart(this.props.figureId, { humanize });
   }
 
   translate(term) {
@@ -44,14 +53,6 @@ export class ScorecardChartDesignPanel extends Component<Props, SpreadsheetChild
 
   updateBaselineDescr(ev) {
     this.props.updateChart(this.props.figureId, { baselineDescr: ev.target.value });
-  }
-
-  toggleColorPicker(colorPickerId: ColorPickerId) {
-    if (this.state.openedColorPicker === colorPickerId) {
-      this.state.openedColorPicker = undefined;
-    } else {
-      this.state.openedColorPicker = colorPickerId;
-    }
   }
 
   setColor(color: Color, colorPickerId: ColorPickerId) {
@@ -66,17 +67,5 @@ export class ScorecardChartDesignPanel extends Component<Props, SpreadsheetChild
         this.props.updateChart(this.props.figureId, { baselineColorUp: color });
         break;
     }
-    this.closeMenus();
-  }
-
-  private closeMenus() {
-    this.state.openedColorPicker = undefined;
   }
 }
-
-ScorecardChartDesignPanel.props = {
-  figureId: String,
-  definition: Object,
-  updateChart: Function,
-  canUpdateChart: Function,
-};

@@ -4,6 +4,7 @@ import {
   addDataValidation,
   duplicateSheet,
   setCellContent,
+  setFormat,
 } from "../test_helpers/commands_helpers";
 
 describe("Data validation evaluation", () => {
@@ -123,5 +124,16 @@ describe("Data validation evaluation", () => {
       setCellContent(model, "B2", "1/1/2020");
       expect(model.getters.isDataValidationInvalid({ sheetId, col: 1, row: 1 })).toEqual(false);
     });
+  });
+
+  test("data validation is updated on cell format change", () => {
+    setFormat(model, "A2", "0.00");
+    addDataValidation(model, "A1", "id", { type: "textContains", values: ["m"] });
+
+    setCellContent(model, "A1", '=CELL("format", A2)');
+    expect(model.getters.isDataValidationInvalid(A1)).toEqual(true);
+
+    setFormat(model, "A2", "mm/dd/yyyy");
+    expect(model.getters.isDataValidationInvalid(A1)).toEqual(false);
   });
 });

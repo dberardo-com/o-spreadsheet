@@ -1,12 +1,12 @@
-import { Component, onWillUpdateProps, useState } from "@odoo/owl";
+import { Component } from "@odoo/owl";
 import { ChartSidePanel, chartSidePanelComponentRegistry } from "..";
 import { BACKGROUND_HEADER_COLOR } from "../../../../constants";
-import {
-  getChartDefinitionFromContextCreation,
-  getChartTypes,
-} from "../../../../helpers/figures/charts";
+import { getChartTypes } from "../../../../helpers/figures/charts";
+import { Store, useLocalStore } from "../../../../store_engine";
 import { ChartDefinition, ChartType, SpreadsheetChildEnv, UID } from "../../../../types/index";
 import { css } from "../../../helpers/css";
+import { Section } from "../../components/section/section";
+import { MainChartPanelStore } from "./main_chart_panel_store";
 
 css/* scss */ `
   .o-chart {
@@ -35,43 +35,22 @@ css/* scss */ `
 
 interface Props {
   onCloseSidePanel: () => void;
-}
-
-interface State {
-  panel: "configuration" | "design";
   figureId: UID;
 }
 
 export class ChartPanel extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-ChartPanel";
+  static components = { Section };
+  static props = { onCloseSidePanel: Function, figureId: String };
 
-  private state!: State;
+  store!: Store<MainChartPanelStore>;
 
-  get figureId(): UID {
-    return this.state.figureId;
+  get figureId() {
+    return this.props.figureId;
   }
 
   setup(): void {
-    const selectedFigureId = this.env.model.getters.getSelectedFigureId();
-    if (!selectedFigureId) {
-      this.props.onCloseSidePanel();
-      return;
-    }
-    this.state = useState({
-      panel: "configuration",
-      figureId: selectedFigureId,
-    });
-
-    onWillUpdateProps(() => {
-      const selectedFigureId = this.env.model.getters.getSelectedFigureId();
-      if (selectedFigureId && selectedFigureId !== this.state.figureId) {
-        this.state.figureId = selectedFigureId;
-      }
-      if (!this.env.model.getters.isChartDefined(this.figureId)) {
-        this.props.onCloseSidePanel();
-        return;
-      }
-    });
+    this.store = useLocalStore(MainChartPanelStore);
   }
 
   updateChart<T extends ChartDefinition>(figureId: UID, updateDefinition: Partial<T>) {
@@ -79,7 +58,7 @@ export class ChartPanel extends Component<Props, SpreadsheetChildEnv> {
       return;
     }
     const definition: T = {
-      ...(this.getChartDefinition() as T),
+      ...(this.getChartDefinition(this.figureId) as T),
       ...updateDefinition,
     };
     return this.env.model.dispatch("UPDATE_CHART", {
@@ -94,7 +73,7 @@ export class ChartPanel extends Component<Props, SpreadsheetChildEnv> {
       return;
     }
     const definition: T = {
-      ...(this.getChartDefinition() as T),
+      ...(this.getChartDefinition(this.figureId) as T),
       ...updateDefinition,
     };
     return this.env.model.canDispatch("UPDATE_CHART", {
@@ -105,19 +84,16 @@ export class ChartPanel extends Component<Props, SpreadsheetChildEnv> {
   }
 
   onTypeChange(type: ChartType) {
-    const context = this.env.model.getters.getContextCreationChart(this.figureId);
-    if (!context) {
-      throw new Error("Chart not defined.");
+    if (!this.figureId) {
+      return;
     }
-    const definition = getChartDefinitionFromContextCreation(context, type);
-    this.env.model.dispatch("UPDATE_CHART", {
-      definition,
-      id: this.figureId,
-      sheetId: this.env.model.getters.getFigureSheetId(this.figureId)!,
-    });
+    this.store.changeChartType(this.figureId, type);
   }
 
   get chartPanel(): ChartSidePanel {
+    if (!this.figureId) {
+      throw new Error("Chart not defined.");
+    }
     const type = this.env.model.getters.getChartType(this.figureId);
     if (!type) {
       throw new Error("Chart not defined.");
@@ -129,19 +105,11 @@ export class ChartPanel extends Component<Props, SpreadsheetChildEnv> {
     return chartPanel;
   }
 
-  private getChartDefinition(figureId: UID = this.figureId): ChartDefinition {
+  private getChartDefinition(figureId: UID): ChartDefinition {
     return this.env.model.getters.getChartDefinition(figureId);
   }
 
   get chartTypes() {
     return getChartTypes();
   }
-
-  activatePanel(panel: "configuration" | "design") {
-    this.state.panel = panel;
-  }
 }
-
-ChartPanel.props = {
-  onCloseSidePanel: Function,
-};

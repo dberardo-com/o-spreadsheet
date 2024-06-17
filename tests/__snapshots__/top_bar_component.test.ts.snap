@@ -224,16 +224,13 @@ exports[`TopBar component can set cell format 1`] = `
                 </svg>
               </span>
               
-              <svg
-                class="o-icon"
-                xmlns="http://www.w3.org/2000/svg"
+              <div
+                class="o-icon fa-small"
               >
-                <polygon
-                  fill="currentColor"
-                  points="0 0 4 4 8 0"
-                  transform="translate(5 7)"
+                <i
+                  class="fa fa-caret-down"
                 />
-              </svg>
+              </div>
               
             </span>
             
@@ -248,22 +245,19 @@ exports[`TopBar component can set cell format 1`] = `
                 title="Font Size"
               >
                 <input
-                  class="o-font-size bg-transparent border-0"
+                  class="o-font-size o-number-input bg-transparent border-0"
                   max="400"
                   min="1"
                   type="number"
                 />
                 <span>
-                  <svg
-                    class="o-icon"
-                    xmlns="http://www.w3.org/2000/svg"
+                  <div
+                    class="o-icon fa-small"
                   >
-                    <polygon
-                      fill="currentColor"
-                      points="0 0 4 4 8 0"
-                      transform="translate(5 7)"
+                    <i
+                      class="fa fa-caret-down"
                     />
-                  </svg>
+                  </div>
                 </span>
               </div>
               
@@ -453,16 +447,13 @@ exports[`TopBar component can set cell format 1`] = `
                   </svg>
                 </span>
                 
-                <svg
-                  class="o-icon"
-                  xmlns="http://www.w3.org/2000/svg"
+                <div
+                  class="o-icon fa-small"
                 >
-                  <polygon
-                    fill="currentColor"
-                    points="0 0 4 4 8 0"
-                    transform="translate(5 7)"
+                  <i
+                    class="fa fa-caret-down"
                   />
-                </svg>
+                </div>
                 
               </span>
               
@@ -490,16 +481,13 @@ exports[`TopBar component can set cell format 1`] = `
                   </svg>
                 </span>
                 
-                <svg
-                  class="o-icon"
-                  xmlns="http://www.w3.org/2000/svg"
+                <div
+                  class="o-icon fa-small"
                 >
-                  <polygon
-                    fill="currentColor"
-                    points="0 0 4 4 8 0"
-                    transform="translate(5 7)"
+                  <i
+                    class="fa fa-caret-down"
                   />
-                </svg>
+                </div>
                 
               </span>
               
@@ -527,16 +515,13 @@ exports[`TopBar component can set cell format 1`] = `
                   </svg>
                 </span>
                 
-                <svg
-                  class="o-icon"
-                  xmlns="http://www.w3.org/2000/svg"
+                <div
+                  class="o-icon fa-small"
                 >
-                  <polygon
-                    fill="currentColor"
-                    points="0 0 4 4 8 0"
-                    transform="translate(5 7)"
+                  <i
+                    class="fa fa-caret-down"
                   />
-                </svg>
+                </div>
                 
               </span>
               
@@ -546,26 +531,55 @@ exports[`TopBar component can set cell format 1`] = `
             <div
               class="o-divider"
             />
+            <div
+              class="o-table-widget d-flex align-item-center"
+            >
+              <span
+                class="o-menu-item-button o-hoverable-button"
+                title="Insert table"
+              >
+                <span
+                  style=""
+                >
+                  <svg
+                    height="18"
+                    width="18"
+                    xmlns="http://www.w3.org/2000/svg"
+                  >
+                    <path
+                      d="M2.5 1A1.5 1.5 0 0 0 1 2.5v11A1.5 1.5 0 0 0 2.5 15h5c0-.5 0-1 .5-1.5H7v-2.75h3.5v.75l2.25-2.25H12v-2.5h3.5v.75c1-.7 1.5-.4 1.5-.4V2.5A1.5 1.5 0 0 0 15.5 1m-13 1.5h13v2.75h-13m0 1.5h3v2.5h-3M7 6.75h3.5v2.5H7m-4.5 1.5h3v2.75h-3m7.5-.3c.7-.3 1.5-.1 2.1.6.6.7.8 1.4.5 1.9-.6 1.4-3.7 1.6-4 1.7l-.6.1.3-.5s.5-.8.5-2.1c0-.7.5-1.4 1.1-1.7Zm6.7-5.1a.9.9 0 0 1 1 1c-.1 1.3-2.5 3.7-4.3 5.3a3.9 3.9 0 0 0-.6-1.1c-.4-.4-.8-.7-1.3-.8 1.5-1.7 4-4.3 5.4-4.4"
+                      fill="currentColor"
+                    />
+                  </svg>
+                </span>
+                
+                <div
+                  class="o-icon fa-small"
+                >
+                  <i
+                    class="fa fa-caret-down"
+                  />
+                </div>
+                
+              </span>
+              
+            </div>
+            
+            
             <span
               class="o-menu-item-button o-hoverable-button"
-              title="Create filter"
+              title="Add filters"
             >
               <span
                 style=""
               >
-                <svg
-                  class="o-cf-icon filter-icon-inactive"
-                  focusable="false"
-                  height="10"
-                  viewBox="0 0 512 512"
-                  width="10"
-                  xmlns="http://www.w3.org/2000/svg"
+                <div
+                  class="o-icon filter-icon-active"
                 >
-                  <path
-                    d="M487.976 0H24.028C2.71 0-8.047 25.866 7.058 40.971L192 225.941V432c0 7.831 3.821 15.17 10.237 19.662l80 55.98C298.02 518.69 320 507.493 320 487.98V225.941l184.947-184.97C520.021 25.896 509.338 0 487.976 0z"
-                    fill="currentColor"
+                  <i
+                    class="fa fa-filter"
                   />
-                </svg>
+                </div>
               </span>
               
               
@@ -604,7 +618,7 @@ exports[`TopBar component can set cell format 1`] = `
       >
         
         <div
-          class="o-menu-item"
+          class="o-menu-item d-flex justify-content-between align-items-center"
           data-name="format_number_automatic"
           title="Automatic"
         >
@@ -612,7 +626,7 @@ exports[`TopBar component can set cell format 1`] = `
             class="d-flex w-100"
           >
             <div
-              class="o-menu-item-icon align-middle flex-shrink-0"
+              class="o-menu-item-icon d-flex align-items-center flex-shrink-0"
             >
               <svg
                 class="o-icon"
@@ -620,7 +634,7 @@ exports[`TopBar component can set cell format 1`] = `
                 xmlns="http://www.w3.org/2000/svg"
               >
                 <path
-                  d="M18.707 7.293a1 1 0 0 1 0 1.414L11.414 16a2 2 0 0 1-2.828 0l-3.293-3.293a1 1 0 1 1 1.414-1.414L10 14.586l7.293-7.293a1 1 0 0 1 1.414 0z"
+                  d="M18.707 7.293a1 1 0 0 1 0 1.414L11.414 16a1.8 2 0 0 1-2.828 0l-3.293-3.293a1 1 0 1 1 1.414-1.414L10 14.586l7.293-7.293a1 1 0 0 1 1.414 0z"
                   fill="currentColor"
                 />
               </svg>
@@ -633,6 +647,30 @@ exports[`TopBar component can set cell format 1`] = `
             </div>
             
             
+            
+          </div>
+        </div>
+        
+        <div
+          class="o-menu-item d-flex justify-content-between align-items-center"
+          data-name="format_number_plain_text"
+          title="Plain text"
+        >
+          <div
+            class="d-flex w-100"
+          >
+            <div
+              class="o-menu-item-icon d-flex align-items-center flex-shrink-0"
+            />
+            
+            <div
+              class="o-menu-item-name align-middle text-truncate"
+            >
+              Plain text
+            </div>
+            
+            
+            
           </div>
         </div>
         <div
@@ -641,7 +679,7 @@ exports[`TopBar component can set cell format 1`] = `
         
         
         <div
-          class="o-menu-item"
+          class="o-menu-item d-flex justify-content-between align-items-center"
           data-name="format_number_number"
           title="Number"
         >
@@ -649,7 +687,7 @@ exports[`TopBar component can set cell format 1`] = `
             class="d-flex w-100"
           >
             <div
-              class="o-menu-item-icon align-middle flex-shrink-0"
+              class="o-menu-item-icon d-flex align-items-center flex-shrink-0"
             />
             
             <div
@@ -664,11 +702,12 @@ exports[`TopBar component can set cell format 1`] = `
             </div>
             
             
+            
           </div>
         </div>
         
         <div
-          class="o-menu-item"
+          class="o-menu-item d-flex justify-content-between align-items-center"
           data-name="format_number_percent"
           title="Percent"
         >
@@ -676,7 +715,7 @@ exports[`TopBar component can set cell format 1`] = `
             class="d-flex w-100"
           >
             <div
-              class="o-menu-item-icon align-middle flex-shrink-0"
+              class="o-menu-item-icon d-flex align-items-center flex-shrink-0"
             />
             
             <div
@@ -691,6 +730,7 @@ exports[`TopBar component can set cell format 1`] = `
             </div>
             
             
+            
           </div>
         </div>
         <div
@@ -699,7 +739,7 @@ exports[`TopBar component can set cell format 1`] = `
         
         
         <div
-          class="o-menu-item"
+          class="o-menu-item d-flex justify-content-between align-items-center"
           data-name="format_number_currency"
           title="Currency"
         >
@@ -707,7 +747,7 @@ exports[`TopBar component can set cell format 1`] = `
             class="d-flex w-100"
           >
             <div
-              class="o-menu-item-icon align-middle flex-shrink-0"
+              class="o-menu-item-icon d-flex align-items-center flex-shrink-0"
             />
             
             <div
@@ -722,11 +762,12 @@ exports[`TopBar component can set cell format 1`] = `
             </div>
             
             
+            
           </div>
         </div>
         
         <div
-          class="o-menu-item"
+          class="o-menu-item d-flex justify-content-between align-items-center"
           data-name="format_number_currency_rounded"
           title="Currency rounded"
         >
@@ -734,7 +775,7 @@ exports[`TopBar component can set cell format 1`] = `
             class="d-flex w-100"
           >
             <div
-              class="o-menu-item-icon align-middle flex-shrink-0"
+              class="o-menu-item-icon d-flex align-items-center flex-shrink-0"
             />
             
             <div
@@ -749,11 +790,12 @@ exports[`TopBar component can set cell format 1`] = `
             </div>
             
             
+            
           </div>
         </div>
         
         <div
-          class="o-menu-item"
+          class="o-menu-item d-flex justify-content-between align-items-center"
           data-name="format_custom_currency"
           title="Custom currency"
         >
@@ -761,7 +803,7 @@ exports[`TopBar component can set cell format 1`] = `
             class="d-flex w-100"
           >
             <div
-              class="o-menu-item-icon align-middle flex-shrink-0"
+              class="o-menu-item-icon d-flex align-items-center flex-shrink-0"
             />
             
             <div
@@ -769,6 +811,7 @@ exports[`TopBar component can set cell format 1`] = `
             >
               Custom currency
             </div>
+            
             
             
           </div>
@@ -779,7 +822,7 @@ exports[`TopBar component can set cell format 1`] = `
         
         
         <div
-          class="o-menu-item"
+          class="o-menu-item d-flex justify-content-between align-items-center"
           data-name="format_number_date"
           title="Date"
         >
@@ -787,7 +830,7 @@ exports[`TopBar component can set cell format 1`] = `
             class="d-flex w-100"
           >
             <div
-              class="o-menu-item-icon align-middle flex-shrink-0"
+              class="o-menu-item-icon d-flex align-items-center flex-shrink-0"
             />
             
             <div
@@ -802,11 +845,12 @@ exports[`TopBar component can set cell format 1`] = `
             </div>
             
             
+            
           </div>
         </div>
         
         <div
-          class="o-menu-item"
+          class="o-menu-item d-flex justify-content-between align-items-center"
           data-name="format_number_time"
           title="Time"
         >
@@ -814,7 +858,7 @@ exports[`TopBar component can set cell format 1`] = `
             class="d-flex w-100"
           >
             <div
-              class="o-menu-item-icon align-middle flex-shrink-0"
+              class="o-menu-item-icon d-flex align-items-center flex-shrink-0"
             />
             
             <div
@@ -829,11 +873,12 @@ exports[`TopBar component can set cell format 1`] = `
             </div>
             
             
+            
           </div>
         </div>
         
         <div
-          class="o-menu-item"
+          class="o-menu-item d-flex justify-content-between align-items-center"
           data-name="format_number_date_time"
           title="Date time"
         >
@@ -841,7 +886,7 @@ exports[`TopBar component can set cell format 1`] = `
             class="d-flex w-100"
           >
             <div
-              class="o-menu-item-icon align-middle flex-shrink-0"
+              class="o-menu-item-icon d-flex align-items-center flex-shrink-0"
             />
             
             <div
@@ -856,11 +901,12 @@ exports[`TopBar component can set cell format 1`] = `
             </div>
             
             
+            
           </div>
         </div>
         
         <div
-          class="o-menu-item"
+          class="o-menu-item d-flex justify-content-between align-items-center"
           data-name="format_number_duration"
           title="Duration"
         >
@@ -868,7 +914,7 @@ exports[`TopBar component can set cell format 1`] = `
             class="d-flex w-100"
           >
             <div
-              class="o-menu-item-icon align-middle flex-shrink-0"
+              class="o-menu-item-icon d-flex align-items-center flex-shrink-0"
             />
             
             <div
@@ -883,6 +929,7 @@ exports[`TopBar component can set cell format 1`] = `
             </div>
             
             
+            
           </div>
         </div>
         <div
@@ -891,7 +938,7 @@ exports[`TopBar component can set cell format 1`] = `
         
         
         <div
-          class="o-menu-item"
+          class="o-menu-item d-flex justify-content-between align-items-center"
           data-name="more_formats"
           title="More date formats"
         >
@@ -899,7 +946,7 @@ exports[`TopBar component can set cell format 1`] = `
             class="d-flex w-100"
           >
             <div
-              class="o-menu-item-icon align-middle flex-shrink-0"
+              class="o-menu-item-icon d-flex align-items-center flex-shrink-0"
             />
             
             <div
@@ -907,6 +954,7 @@ exports[`TopBar component can set cell format 1`] = `
             >
               More date formats
             </div>
+            
             
             
           </div>
@@ -1139,16 +1187,13 @@ exports[`TopBar component simple rendering 1`] = `
             </svg>
           </span>
           
-          <svg
-            class="o-icon"
-            xmlns="http://www.w3.org/2000/svg"
+          <div
+            class="o-icon fa-small"
           >
-            <polygon
-              fill="currentColor"
-              points="0 0 4 4 8 0"
-              transform="translate(5 7)"
+            <i
+              class="fa fa-caret-down"
             />
-          </svg>
+          </div>
           
         </span>
         
@@ -1163,22 +1208,19 @@ exports[`TopBar component simple rendering 1`] = `
             title="Font Size"
           >
             <input
-              class="o-font-size bg-transparent border-0"
+              class="o-font-size o-number-input bg-transparent border-0"
               max="400"
               min="1"
               type="number"
             />
             <span>
-              <svg
-                class="o-icon"
-                xmlns="http://www.w3.org/2000/svg"
+              <div
+                class="o-icon fa-small"
               >
-                <polygon
-                  fill="currentColor"
-                  points="0 0 4 4 8 0"
-                  transform="translate(5 7)"
+                <i
+                  class="fa fa-caret-down"
                 />
-              </svg>
+              </div>
             </span>
           </div>
           
@@ -1368,16 +1410,13 @@ exports[`TopBar component simple rendering 1`] = `
               </svg>
             </span>
             
-            <svg
-              class="o-icon"
-              xmlns="http://www.w3.org/2000/svg"
+            <div
+              class="o-icon fa-small"
             >
-              <polygon
-                fill="currentColor"
-                points="0 0 4 4 8 0"
-                transform="translate(5 7)"
+              <i
+                class="fa fa-caret-down"
               />
-            </svg>
+            </div>
             
           </span>
           
@@ -1405,16 +1444,13 @@ exports[`TopBar component simple rendering 1`] = `
               </svg>
             </span>
             
-            <svg
-              class="o-icon"
-              xmlns="http://www.w3.org/2000/svg"
+            <div
+              class="o-icon fa-small"
             >
-              <polygon
-                fill="currentColor"
-                points="0 0 4 4 8 0"
-                transform="translate(5 7)"
+              <i
+                class="fa fa-caret-down"
               />
-            </svg>
+            </div>
             
           </span>
           
@@ -1442,16 +1478,13 @@ exports[`TopBar component simple rendering 1`] = `
               </svg>
             </span>
             
-            <svg
-              class="o-icon"
-              xmlns="http://www.w3.org/2000/svg"
+            <div
+              class="o-icon fa-small"
             >
-              <polygon
-                fill="currentColor"
-                points="0 0 4 4 8 0"
-                transform="translate(5 7)"
+              <i
+                class="fa fa-caret-down"
               />
-            </svg>
+            </div>
             
           </span>
           
@@ -1461,26 +1494,55 @@ exports[`TopBar component simple rendering 1`] = `
         <div
           class="o-divider"
         />
+        <div
+          class="o-table-widget d-flex align-item-center"
+        >
+          <span
+            class="o-menu-item-button o-hoverable-button"
+            title="Insert table"
+          >
+            <span
+              style=""
+            >
+              <svg
+                height="18"
+                width="18"
+                xmlns="http://www.w3.org/2000/svg"
+              >
+                <path
+                  d="M2.5 1A1.5 1.5 0 0 0 1 2.5v11A1.5 1.5 0 0 0 2.5 15h5c0-.5 0-1 .5-1.5H7v-2.75h3.5v.75l2.25-2.25H12v-2.5h3.5v.75c1-.7 1.5-.4 1.5-.4V2.5A1.5 1.5 0 0 0 15.5 1m-13 1.5h13v2.75h-13m0 1.5h3v2.5h-3M7 6.75h3.5v2.5H7m-4.5 1.5h3v2.75h-3m7.5-.3c.7-.3 1.5-.1 2.1.6.6.7.8 1.4.5 1.9-.6 1.4-3.7 1.6-4 1.7l-.6.1.3-.5s.5-.8.5-2.1c0-.7.5-1.4 1.1-1.7Zm6.7-5.1a.9.9 0 0 1 1 1c-.1 1.3-2.5 3.7-4.3 5.3a3.9 3.9 0 0 0-.6-1.1c-.4-.4-.8-.7-1.3-.8 1.5-1.7 4-4.3 5.4-4.4"
+                  fill="currentColor"
+                />
+              </svg>
+            </span>
+            
+            <div
+              class="o-icon fa-small"
+            >
+              <i
+                class="fa fa-caret-down"
+              />
+            </div>
+            
+          </span>
+          
+        </div>
+        
+        
         <span
           class="o-menu-item-button o-hoverable-button"
-          title="Create filter"
+          title="Add filters"
         >
           <span
             style=""
           >
-            <svg
-              class="o-cf-icon filter-icon-inactive"
-              focusable="false"
-              height="10"
-              viewBox="0 0 512 512"
-              width="10"
-              xmlns="http://www.w3.org/2000/svg"
+            <div
+              class="o-icon filter-icon-active"
             >
-              <path
-                d="M487.976 0H24.028C2.71 0-8.047 25.866 7.058 40.971L192 225.941V432c0 7.831 3.821 15.17 10.237 19.662l80 55.98C298.02 518.69 320 507.493 320 487.98V225.941l184.947-184.97C520.021 25.896 509.338 0 487.976 0z"
-                fill="currentColor"
+              <i
+                class="fa fa-filter"
               />
-            </svg>
+            </div>
           </span>
           
           

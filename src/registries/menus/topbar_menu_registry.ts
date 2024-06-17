@@ -4,6 +4,8 @@ import * as ACTION_FORMAT from "../../actions/format_actions";
 import * as ACTION_INSERT from "../../actions/insert_actions";
 import * as ACTIONS from "../../actions/menu_items_actions";
 import * as ACTION_VIEW from "../../actions/view_actions";
+import { getPivotHighlights } from "../../helpers/pivot/pivot_highlight";
+import { HighlightStore } from "../../stores/highlight_store";
 import { _t } from "../../translation";
 import { MenuItemRegistry } from "../menu_items_registry";
 import { formatNumberMenuItemSpec } from "./number_format_menu_registry";
@@ -69,6 +71,11 @@ topbarMenuRegistry
     ...ACTION_EDIT.pasteSpecialFormat,
     sequence: 20,
   })
+  .addChild("edit_table", ["edit"], {
+    ...ACTION_EDIT.editTable,
+    isVisible: ACTIONS.SELECTION_CONTAINS_SINGLE_TABLE,
+    sequence: 60,
+  })
   .addChild("find_and_replace", ["edit"], {
     ...ACTION_EDIT.findAndReplace,
     sequence: 65,
@@ -76,7 +83,7 @@ topbarMenuRegistry
   })
   .addChild("delete", ["edit"], {
     name: _t("Delete"),
-    icon: "o-spreadsheet-Icon.DELETE",
+    icon: "o-spreadsheet-Icon.TRASH",
     sequence: 70,
   })
   .addChild("edit_delete_cell_values", ["edit", "delete"], {
@@ -182,13 +189,18 @@ topbarMenuRegistry
     isVisible: (env) => ACTION_VIEW.canUngroupHeaders(env, "ROW"),
     sequence: 20,
   })
-  .addChild("view_gridlines", ["view"], {
-    ...ACTION_VIEW.viewGridlines,
-    sequence: 15,
+  .addChild("show", ["view"], {
+    name: _t("Show"),
+    sequence: 1,
+    icon: "o-spreadsheet-Icon.SHOW",
   })
-  .addChild("view_formulas", ["view"], {
+  .addChild("view_gridlines", ["view", "show"], {
+    ...ACTION_VIEW.viewGridlines,
+    sequence: 5,
+  })
+  .addChild("view_formulas", ["view", "show"], {
     ...ACTION_VIEW.viewFormulas,
-    sequence: 20,
+    sequence: 10,
   })
 
   // ---------------------------------------------------------------------
@@ -225,7 +237,7 @@ topbarMenuRegistry
   })
   .addChild("insert_cell", ["insert"], {
     ...ACTION_INSERT.insertCell,
-    sequence: 43,
+    sequence: 30,
   })
   .addChild("insert_cell_down", ["insert", "insert_cell"], {
     ...ACTION_INSERT.insertCellShiftDown,
@@ -239,16 +251,24 @@ topbarMenuRegistry
   })
   .addChild("insert_sheet", ["insert"], {
     ...ACTION_INSERT.insertSheet,
-    sequence: 80,
+    sequence: 40,
     separator: true,
   })
   .addChild("insert_chart", ["insert"], {
     ...ACTION_INSERT.insertChart,
     sequence: 50,
   })
+  .addChild("insert_pivot", ["insert"], {
+    ...ACTION_INSERT.insertPivot,
+    sequence: 52,
+  })
   .addChild("insert_image", ["insert"], {
     ...ACTION_INSERT.insertImage,
     sequence: 55,
+  })
+  .addChild("insert_table", ["insert"], {
+    ...ACTION_INSERT.insertTable,
+    sequence: 57,
   })
   .addChild("insert_function", ["insert"], {
     ...ACTION_INSERT.insertFunction,
@@ -288,6 +308,15 @@ topbarMenuRegistry
     ...ACTION_INSERT.insertLink,
     separator: true,
     sequence: 70,
+  })
+  .addChild("insert_checkbox", ["insert"], {
+    ...ACTION_INSERT.insertCheckbox,
+    sequence: 80,
+  })
+  .addChild("insert_dropdown", ["insert"], {
+    ...ACTION_INSERT.insertDropdown,
+    separator: true,
+    sequence: 90,
   })
 
   // ---------------------------------------------------------------------
@@ -428,7 +457,31 @@ topbarMenuRegistry
     separator: true,
   })
   .addChild("add_remove_data_filter", ["data"], {
-    ...ACTION_DATA.addRemoveDataFilter,
+    ...ACTION_DATA.createRemoveFilter,
     sequence: 40,
     separator: true,
+  })
+  .addChild("data_sources_data", ["data"], (env) => {
+    const sequence = 50;
+    return env.model.getters.getPivotIds().map((pivotId, index) => {
+      const highlightProvider = {
+        get highlights() {
+          return getPivotHighlights(env.model.getters, pivotId);
+        },
+      };
+      return {
+        id: `item_pivot_${env.model.getters.getPivotFormulaId(pivotId)}`,
+        name: env.model.getters.getPivotDisplayName(pivotId),
+        sequence: sequence + index,
+        execute: (env) => env.openSidePanel("PivotSidePanel", { pivotId }),
+        onStartHover: (env) => env.getStore(HighlightStore).register(highlightProvider),
+        onStopHover: (env) => env.getStore(HighlightStore).unRegister(highlightProvider),
+        icon: "o-spreadsheet-Icon.PIVOT",
+        separator: index === env.model.getters.getPivotIds().length - 1,
+        secondaryIcon: (env) =>
+          env.model.getters.isPivotUnused(pivotId)
+            ? "o-spreadsheet-Icon.UNUSED_PIVOT_WARNING"
+            : undefined,
+      };
+    });
   });

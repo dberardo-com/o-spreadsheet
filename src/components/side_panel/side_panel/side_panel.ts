@@ -1,8 +1,10 @@
-import { Component, onWillUpdateProps, useState } from "@odoo/owl";
+import { Component, useEffect } from "@odoo/owl";
 import { BACKGROUND_HEADER_COLOR, FILTERS_COLOR } from "../../../constants";
-import { SidePanelContent, sidePanelRegistry } from "../../../registries/side_panel_registry";
+import { sidePanelRegistry } from "../../../registries/side_panel_registry";
+import { Store, useStore } from "../../../store_engine";
 import { SpreadsheetChildEnv } from "../../../types";
 import { css } from "../../helpers/css";
+import { SidePanelStore } from "./side_panel_store";
 
 css/* scss */ `
   .o-sidePanel {
@@ -12,6 +14,16 @@ css/* scss */ `
     background-color: white;
     border: 1px solid darkgray;
     user-select: none;
+
+    .btn-link {
+      text-decoration: none;
+      color: #017e84;
+      font-weight: 500;
+      &:hover {
+        color: #01585c;
+      }
+    }
+
     .o-sidePanelHeader {
       padding: 6px;
       height: 30px;
@@ -113,14 +125,6 @@ css/* scss */ `
       text-align: left;
     }
 
-    .o-checkbox {
-      display: flex;
-      justify-items: center;
-      input {
-        margin-right: 5px;
-      }
-    }
-
     .o-inflection {
       table {
         table-layout: fixed;
@@ -160,38 +164,35 @@ css/* scss */ `
   }
 `;
 
-interface Props {
-  component: string;
-  panelProps: any;
-  onCloseSidePanel: () => void;
-}
-
-interface State {
-  panel: SidePanelContent;
-}
-
-export class SidePanel extends Component<Props, SpreadsheetChildEnv> {
+export class SidePanel extends Component<{}, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-SidePanel";
-  state!: State;
+  static props = {};
+  sidePanelStore!: Store<SidePanelStore>;
 
   setup() {
-    this.state = useState({
-      panel: sidePanelRegistry.get(this.props.component),
-    });
-    onWillUpdateProps(
-      (nextProps: Props) => (this.state.panel = sidePanelRegistry.get(nextProps.component))
+    this.sidePanelStore = useStore(SidePanelStore);
+    useEffect(
+      (isOpen) => {
+        if (!isOpen) {
+          this.sidePanelStore.close();
+        }
+      },
+      () => [this.sidePanelStore.isOpen]
     );
   }
 
+  get panel() {
+    return sidePanelRegistry.get(this.sidePanelStore.componentTag);
+  }
+
+  close() {
+    this.sidePanelStore.close();
+  }
+
   getTitle() {
-    return typeof this.state.panel.title === "function"
-      ? this.state.panel.title(this.env)
-      : this.state.panel.title;
+    const panel = this.panel;
+    return typeof panel.title === "function"
+      ? panel.title(this.env, this.sidePanelStore.panelProps)
+      : panel.title;
   }
 }
-
-SidePanel.props = {
-  component: String,
-  panelProps: { type: Object, optional: true },
-  onCloseSidePanel: Function,
-};

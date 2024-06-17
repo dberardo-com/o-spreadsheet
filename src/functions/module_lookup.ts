@@ -1,23 +1,26 @@
-import { getCanonicalSheetName, toXC, toZone } from "../helpers/index";
+import { getFullReference, range, toXC, toZone } from "../helpers/index";
+import { supportedPivotExplodedFormulaRegistry } from "../helpers/pivot/pivot_exploded_formula_registry";
 import { _t } from "../translation";
-import {
-  AddFunctionDescription,
-  CellValue,
-  Matrix,
-  Maybe,
-  ValueAndFormat,
-  isMatrix,
-} from "../types";
-import { NotAvailableError } from "../types/errors";
+import { AddFunctionDescription, CellPosition, FPayload, Matrix, Maybe } from "../types";
+import { CellErrorType, EvaluationError, InvalidReferenceError } from "../types/errors";
 import { arg } from "./arguments";
 import {
+  addPivotDependencies,
+  assertDomainLength,
+  assertMeasureExist,
+  getPivotId,
+} from "./helper_lookup";
+import {
+  LinearSearchMode,
   assert,
   assertNumberGreaterThanOrEqualToOne,
   dichotomicSearch,
   expectNumberRangeError,
+  isEvaluationError,
   linearSearch,
   strictToInteger,
   toBoolean,
+  toMatrix,
   toNumber,
   toString,
 } from "./helpers";
@@ -27,12 +30,11 @@ const DEFAULT_MATCH_MODE = 0;
 const DEFAULT_SEARCH_MODE = 1;
 const DEFAULT_ABSOLUTE_RELATIVE_MODE = 1;
 
-function assertAvailable(variable, searchKey) {
-  if (variable === undefined) {
-    throw new NotAvailableError(
-      _t("Did not find value '%s' in [[FUNCTION_NAME]] evaluation.", toString(searchKey))
-    );
-  }
+function valueNotAvailable(searchKey: Maybe<FPayload>): FPayload {
+  return {
+    value: CellErrorType.NotAvailable,
+    message: _t("Did not find value '%s' in [[FUNCTION_NAME]] evaluation.", toString(searchKey)),
+  };
 }
 
 // -----------------------------------------------------------------------------
@@ -66,11 +68,11 @@ export const ADDRESS = {
   ],
   returns: ["STRING"],
   compute: function (
-    row: Maybe<CellValue>,
-    column: Maybe<CellValue>,
-    absoluteRelativeMode: Maybe<CellValue> = DEFAULT_ABSOLUTE_RELATIVE_MODE,
-    useA1Notation: Maybe<CellValue> = true,
-    sheet: Maybe<CellValue> | undefined
+    row: Maybe<FPayload>,
+    column: Maybe<FPayload>,
+    absoluteRelativeMode: Maybe<FPayload> = { value: DEFAULT_ABSOLUTE_RELATIVE_MODE },
+    useA1Notation: Maybe<FPayload> = { value: true },
+    sheet: Maybe<FPayload> | undefined
   ): string {
     const rowNumber = strictToInteger(row, this.locale);
     const colNumber = strictToInteger(column, this.locale);
@@ -95,7 +97,7 @@ export const ADDRESS = {
       cellReference = rowPart + colPart;
     }
     if (sheet !== undefined) {
-      return `${getCanonicalSheetName(toString(sheet))}!${cellReference}`;
+      return getFullReference(toString(sheet), cellReference);
     }
     return cellReference;
   },
@@ -117,8 +119,12 @@ export const COLUMN = {
     ),
   ],
   returns: ["NUMBER"],
-  compute: function (cellReference: string): number {
-    const _cellReference = cellReference || this.__originCellXC?.();
+  compute: function (cellReference: Maybe<{ value: string }>): number {
+    if (isEvaluationError(cellReference?.value)) {
+      throw cellReference;
+    }
+    const _cellReference =
+      cellReference === undefined ? this.__originCellXC?.() : cellReference.value;
     assert(
       () => !!_cellReference,
       "In this context, the function [[FUNCTION_NAME]] needs to have a cell or range in parameter."
@@ -137,8 +143,11 @@ export const COLUMNS = {
   description: _t("Number of columns in a specified array or range."),
   args: [arg("range (meta)", _t("The range whose column count will be returned."))],
   returns: ["NUMBER"],
-  compute: function (range: string): number {
-    const zone = toZone(range);
+  compute: function (range: { value: string }): number {
+    if (isEvaluationError(range?.value)) {
+      throw range;
+    }
+    const zone = toZone(range.value);
     return zone.right - zone.left + 1;
   },
   isExported: true,
@@ -170,35 +179,32 @@ export const HLOOKUP = {
     ),
   ],
   returns: ["ANY"],
-  computeValueAndFormat: function (
-    searchKey: Maybe<ValueAndFormat>,
-    range: Matrix<ValueAndFormat>,
-    index: Maybe<ValueAndFormat>,
-    isSorted: Maybe<ValueAndFormat> = { value: DEFAULT_IS_SORTED }
-  ): ValueAndFormat {
+  compute: function (
+    searchKey: Maybe<FPayload>,
+    range: Matrix<FPayload>,
+    index: Maybe<FPayload>,
+    isSorted: Maybe<FPayload> = { value: DEFAULT_IS_SORTED }
+  ): FPayload {
     const _index = Math.trunc(toNumber(index?.value, this.locale));
 
     assert(
       () => 1 <= _index && _index <= range[0].length,
       _t("[[FUNCTION_NAME]] evaluates to an out of bounds range.")
     );
+    if (searchKey && isEvaluationError(searchKey.value)) {
+      return searchKey;
+    }
 
-    const getValueFromRange = (range: Matrix<ValueAndFormat>, index: number) =>
-      range[index][0].value;
+    const getValueFromRange = (range: Matrix<FPayload>, index: number) => range[index][0].value;
 
     const _isSorted = toBoolean(isSorted.value);
     const colIndex = _isSorted
-      ? dichotomicSearch(
-          range,
-          searchKey?.value,
-          "nextSmaller",
-          "asc",
-          range.length,
-          getValueFromRange
-        )
-      : linearSearch(range, searchKey?.value, "strict", range.length, getValueFromRange);
+      ? dichotomicSearch(range, searchKey, "nextSmaller", "asc", range.length, getValueFromRange)
+      : linearSearch(range, searchKey, "wildcard", range.length, getValueFromRange);
     const col = range[colIndex];
-    assertAvailable(col, searchKey?.value);
+    if (col === undefined) {
+      return valueNotAvailable(searchKey);
+    }
     return col[_index - 1];
   },
   isExported: true,
@@ -221,12 +227,12 @@ export const INDEX: AddFunctionDescription = {
     ),
   ],
   returns: ["ANY"],
-  computeValueAndFormat: function (
-    reference: Matrix<ValueAndFormat>,
-    row: Maybe<ValueAndFormat> = { value: 0 },
-    column: Maybe<ValueAndFormat> = { value: 0 }
-  ): any {
-    const _reference = isMatrix(reference) ? reference : [[reference]];
+  compute: function (
+    reference: Matrix<FPayload>,
+    row: Maybe<FPayload> = { value: 0 },
+    column: Maybe<FPayload> = { value: 0 }
+  ): FPayload | Matrix<FPayload> {
+    const _reference = toMatrix(reference);
     const _row = toNumber(row.value, this.locale);
     const _column = toNumber(column.value, this.locale);
     assert(
@@ -247,6 +253,71 @@ export const INDEX: AddFunctionDescription = {
       return _reference.map((col) => [col[_row - 1]]);
     }
     return _reference[_column - 1][_row - 1];
+  },
+  isExported: true,
+};
+
+// -----------------------------------------------------------------------------
+// INDEX
+// -----------------------------------------------------------------------------
+export const INDIRECT: AddFunctionDescription = {
+  description: _t("Returns the content of a cell, specified by a string."),
+  args: [
+    arg("reference (string)", _t("The range of cells from which the values are returned.")),
+    arg(
+      "use_a1_notation (boolean, default=TRUE)",
+      _t(
+        "A boolean indicating whether to use A1 style notation (TRUE) or R1C1 style notation (FALSE)."
+      )
+    ),
+  ],
+  returns: ["ANY"],
+  compute: function (
+    reference: Maybe<FPayload>,
+    useA1Notation: Maybe<FPayload> = { value: true }
+  ): FPayload | Matrix<FPayload> {
+    let _reference = reference?.value?.toString();
+    if (!_reference) {
+      throw new InvalidReferenceError(_t("Reference should be defined."));
+    }
+    const _useA1Notation = toBoolean(useA1Notation);
+    if (!_useA1Notation) {
+      throw new EvaluationError(_t("R1C1 notation is not supported."));
+    }
+    const sheetId = this.__originSheetId;
+    let originPosition: CellPosition | undefined;
+    const __originCellXC = this.__originCellXC?.();
+    if (__originCellXC) {
+      const cellZone = toZone(__originCellXC);
+      originPosition = {
+        sheetId,
+        col: cellZone.left,
+        row: cellZone.top,
+      };
+      // The following line is used to reset the dependencies of the cell, to avoid
+      // keeping dependencies from previous evaluation of the INDIRECT formula (i.e.
+      // in case the reference has been changed).
+      this.updateDependencies?.(originPosition);
+    }
+
+    const range = this.getters.getRangeFromSheetXC(sheetId, _reference);
+    if (range === undefined || range.invalidXc || range.invalidSheetName) {
+      throw new InvalidReferenceError();
+    }
+    if (originPosition) {
+      this.addDependencies?.(originPosition, [range]);
+    }
+
+    const values: FPayload[][] = [];
+    for (let col = range.zone.left; col <= range.zone.right; col++) {
+      const colValues: FPayload[] = [];
+      for (let row = range.zone.top; row <= range.zone.bottom; row++) {
+        const position = { sheetId: range.sheetId, col, row };
+        colValues.push(this.getters.getEvaluatedCell(position));
+      }
+      values.push(colValues);
+    }
+    return values.length === 1 && values[0].length === 1 ? values[0][0] : values;
   },
   isExported: true,
 };
@@ -273,33 +344,35 @@ export const LOOKUP = {
     ),
   ],
   returns: ["ANY"],
-  computeValueAndFormat: function (
-    searchKey: Maybe<ValueAndFormat>,
-    searchArray: Matrix<ValueAndFormat>,
-    resultRange: Matrix<ValueAndFormat> | undefined
-  ): ValueAndFormat {
+  compute: function (
+    searchKey: Maybe<FPayload>,
+    searchArray: Matrix<FPayload>,
+    resultRange: Matrix<FPayload> | undefined
+  ): FPayload {
     let nbCol = searchArray.length;
     let nbRow = searchArray[0].length;
 
     const verticalSearch = nbRow >= nbCol;
     const getElement = verticalSearch
-      ? (range: Matrix<ValueAndFormat>, index: number) => range[0][index].value
-      : (range: Matrix<ValueAndFormat>, index: number) => range[index][0].value;
+      ? (range: Matrix<FPayload>, index: number) => range[0][index].value
+      : (range: Matrix<FPayload>, index: number) => range[index][0].value;
     const rangeLength = verticalSearch ? nbRow : nbCol;
     const index = dichotomicSearch(
       searchArray,
-      searchKey?.value,
+      searchKey,
       "nextSmaller",
       "asc",
       rangeLength,
       getElement
     );
 
-    if (index === -1) assertAvailable(undefined, searchKey?.value);
-
-    verticalSearch
-      ? assertAvailable(searchArray[0][index], searchKey?.value)
-      : assertAvailable(searchArray[index][nbRow - 1], searchKey?.value);
+    if (
+      index === -1 ||
+      (verticalSearch && searchArray[0][index] === undefined) ||
+      (!verticalSearch && searchArray[index][nbRow - 1] === undefined)
+    ) {
+      return valueNotAvailable(searchKey);
+    }
 
     if (resultRange === undefined) {
       return verticalSearch ? searchArray[nbCol - 1][index] : searchArray[index][nbRow - 1];
@@ -348,10 +421,10 @@ export const MATCH = {
   ],
   returns: ["NUMBER"],
   compute: function (
-    searchKey: Maybe<CellValue>,
-    range: Matrix<CellValue>,
-    searchType: Maybe<CellValue> = DEFAULT_SEARCH_TYPE
-  ): number {
+    searchKey: Maybe<FPayload>,
+    range: Matrix<FPayload>,
+    searchType: Maybe<FPayload> = { value: DEFAULT_SEARCH_TYPE }
+  ) {
     let _searchType = toNumber(searchType, this.locale);
     const nbCol = range.length;
     const nbRow = range[0].length;
@@ -365,8 +438,8 @@ export const MATCH = {
 
     const getElement =
       nbCol === 1
-        ? (range: Matrix<CellValue>, index: number) => range[0][index]
-        : (range: Matrix<CellValue>, index: number) => range[index][0];
+        ? (range: Matrix<FPayload>, index: number) => range[0][index].value
+        : (range: Matrix<FPayload>, index: number) => range[index][0].value;
 
     const rangeLen = nbCol === 1 ? range[0].length : range.length;
     _searchType = Math.sign(_searchType);
@@ -375,15 +448,18 @@ export const MATCH = {
         index = dichotomicSearch(range, searchKey, "nextSmaller", "asc", rangeLen, getElement);
         break;
       case 0:
-        index = linearSearch(range, searchKey, "strict", rangeLen, getElement);
+        index = linearSearch(range, searchKey, "wildcard", rangeLen, getElement);
         break;
       case -1:
         index = dichotomicSearch(range, searchKey, "nextGreater", "desc", rangeLen, getElement);
         break;
     }
-
-    assertAvailable(nbCol === 1 ? range[0][index] : range[index], searchKey);
-
+    if (
+      (nbCol === 1 && range[0][index] === undefined) ||
+      (nbCol !== 1 && range[index] === undefined)
+    ) {
+      return valueNotAvailable(searchKey);
+    }
     return index + 1;
   },
   isExported: true,
@@ -404,13 +480,17 @@ export const ROW = {
     ),
   ],
   returns: ["NUMBER"],
-  compute: function (cellReference?: string): number {
-    cellReference = cellReference || this.__originCellXC?.();
+  compute: function (cellReference: Maybe<{ value: string }>): number {
+    if (isEvaluationError(cellReference?.value)) {
+      throw cellReference;
+    }
+    const _cellReference =
+      cellReference === undefined ? this.__originCellXC?.() : cellReference.value;
     assert(
-      () => !!cellReference,
+      () => !!_cellReference,
       "In this context, the function [[FUNCTION_NAME]] needs to have a cell or range in parameter."
     );
-    const zone = toZone(cellReference!);
+    const zone = toZone(_cellReference!);
     return zone.top + 1;
   },
   isExported: true,
@@ -424,8 +504,11 @@ export const ROWS = {
   description: _t("Number of rows in a specified array or range."),
   args: [arg("range (meta)", _t("The range whose row count will be returned."))],
   returns: ["NUMBER"],
-  compute: function (range: string): number {
-    const zone = toZone(range);
+  compute: function (range: { value: string }): number {
+    if (isEvaluationError(range?.value)) {
+      throw range;
+    }
+    const zone = toZone(range.value);
     return zone.bottom - zone.top + 1;
   },
   isExported: true,
@@ -459,35 +542,32 @@ export const VLOOKUP = {
     ),
   ],
   returns: ["ANY"],
-  computeValueAndFormat: function (
-    searchKey: Maybe<ValueAndFormat>,
-    range: Matrix<ValueAndFormat>,
-    index: Maybe<ValueAndFormat>,
-    isSorted: Maybe<ValueAndFormat> = { value: DEFAULT_IS_SORTED }
-  ): ValueAndFormat {
+  compute: function (
+    searchKey: Maybe<FPayload>,
+    range: Matrix<FPayload>,
+    index: Maybe<FPayload>,
+    isSorted: Maybe<FPayload> = { value: DEFAULT_IS_SORTED }
+  ): FPayload {
     const _index = Math.trunc(toNumber(index?.value, this.locale));
     assert(
       () => 1 <= _index && _index <= range.length,
       _t("[[FUNCTION_NAME]] evaluates to an out of bounds range.")
     );
+    if (searchKey && isEvaluationError(searchKey.value)) {
+      return searchKey;
+    }
 
-    const getValueFromRange = (range: Matrix<ValueAndFormat>, index: number) =>
-      range[0][index].value;
+    const getValueFromRange = (range: Matrix<FPayload>, index: number) => range[0][index].value;
 
     const _isSorted = toBoolean(isSorted.value);
     const rowIndex = _isSorted
-      ? dichotomicSearch(
-          range,
-          searchKey?.value,
-          "nextSmaller",
-          "asc",
-          range[0].length,
-          getValueFromRange
-        )
-      : linearSearch(range, searchKey?.value, "strict", range[0].length, getValueFromRange);
+      ? dichotomicSearch(range, searchKey, "nextSmaller", "asc", range[0].length, getValueFromRange)
+      : linearSearch(range, searchKey, "wildcard", range[0].length, getValueFromRange);
 
     const value = range[_index - 1][rowIndex];
-    assertAvailable(value, searchKey);
+    if (value === undefined) {
+      return valueNotAvailable(searchKey);
+    }
     return value;
   },
   isExported: true,
@@ -496,6 +576,14 @@ export const VLOOKUP = {
 // -----------------------------------------------------------------------------
 // XLOOKUP
 // -----------------------------------------------------------------------------
+
+const MATCH_MODE: { [mode: number]: LinearSearchMode } = {
+  "0": "strict",
+  "1": "nextGreater",
+  "-1": "nextSmaller",
+  "2": "wildcard",
+};
+
 export const XLOOKUP = {
   description: _t(
     "Search a range for a match and return the corresponding item from a second range."
@@ -510,14 +598,14 @@ export const XLOOKUP = {
       "return_range (any, range)",
       _t("The range containing the return value. Should have the same dimensions as lookup_range.")
     ),
-    arg(
-      "if_not_found (any, lazy, optional)",
-      _t("If a valid match is not found, return this value.")
-    ),
+    arg("if_not_found (any, optional)", _t("If a valid match is not found, return this value.")),
     arg(
       `match_mode (any, default=${DEFAULT_MATCH_MODE})`,
       _t(
-        "(0) Exact match. (-1) Return next smaller item if no match. (1) Return next greater item if no match."
+        "(0) Exact match. \
+        (-1) Return next smaller item if no match. \
+        (1) Return next greater item if no match. \
+        (2) Wildcard match."
       )
     ),
     arg(
@@ -532,14 +620,14 @@ export const XLOOKUP = {
     ),
   ],
   returns: ["ANY"],
-  computeValueAndFormat: function (
-    searchKey: Maybe<ValueAndFormat>,
-    lookupRange: Matrix<ValueAndFormat>,
-    returnRange: Matrix<ValueAndFormat>,
-    defaultValue?: () => Maybe<ValueAndFormat>,
-    matchMode: Maybe<ValueAndFormat> = { value: DEFAULT_MATCH_MODE },
-    searchMode: Maybe<ValueAndFormat> = { value: DEFAULT_SEARCH_MODE }
-  ): Matrix<ValueAndFormat> {
+  compute: function (
+    searchKey: Maybe<FPayload>,
+    lookupRange: Matrix<FPayload>,
+    returnRange: Matrix<FPayload>,
+    defaultValue: Maybe<FPayload>,
+    matchMode: Maybe<FPayload> = { value: DEFAULT_MATCH_MODE },
+    searchMode: Maybe<FPayload> = { value: DEFAULT_SEARCH_MODE }
+  ) {
     const _matchMode = Math.trunc(toNumber(matchMode.value, this.locale));
     const _searchMode = Math.trunc(toNumber(searchMode.value, this.locale));
 
@@ -549,11 +637,19 @@ export const XLOOKUP = {
     );
     assert(
       () => [-1, 1, -2, 2].includes(_searchMode),
-      _t("searchMode should be a value in [-1, 1, -2, 2].")
+      _t("search_mode should be a value in [-1, 1, -2, 2].")
     );
-    assert(() => [-1, 0, 1].includes(_matchMode), _t("matchMode should be a value in [-1, 0, 1]."));
+    assert(
+      () => [-1, 0, 1, 2].includes(_matchMode),
+      _t("match_mode should be a value in [-1, 0, 1, 2].")
+    );
 
     const lookupDirection = lookupRange.length === 1 ? "col" : "row";
+
+    assert(
+      () => !(_matchMode === 2 && [-2, 2].includes(_searchMode)),
+      _t("the search and match mode combination is not supported for XLOOKUP evaluation.")
+    );
 
     assert(
       () =>
@@ -563,37 +659,202 @@ export const XLOOKUP = {
       _t("return_range should have the same dimensions as lookup_range.")
     );
 
+    if (searchKey && isEvaluationError(searchKey.value)) {
+      return [[searchKey]];
+    }
+
     const getElement =
       lookupDirection === "col"
-        ? (range: Matrix<ValueAndFormat>, index: number) => range[0][index].value
-        : (range: Matrix<ValueAndFormat>, index: number) => range[index][0].value;
+        ? (range: Matrix<FPayload>, index: number) => range[0][index].value
+        : (range: Matrix<FPayload>, index: number) => range[index][0].value;
 
     const rangeLen = lookupDirection === "col" ? lookupRange[0].length : lookupRange.length;
-
-    const mode = _matchMode === 0 ? "strict" : _matchMode === 1 ? "nextGreater" : "nextSmaller";
+    const mode = MATCH_MODE[_matchMode];
     const reverseSearch = _searchMode === -1;
 
     const index =
       _searchMode === 2 || _searchMode === -2
         ? dichotomicSearch(
             lookupRange,
-            searchKey?.value,
-            mode,
+            searchKey,
+            mode as "strict" | "nextGreater" | "nextSmaller",
             _searchMode === 2 ? "asc" : "desc",
             rangeLen,
             getElement
           )
-        : linearSearch(lookupRange, searchKey?.value, mode, rangeLen, getElement, reverseSearch);
+        : linearSearch(lookupRange, searchKey, mode, rangeLen, getElement, reverseSearch);
 
     if (index !== -1) {
       return lookupDirection === "col"
         ? returnRange.map((col) => [col[index]])
         : [returnRange[index]];
     }
-
-    const _defaultValue = defaultValue?.();
-    assertAvailable(_defaultValue, searchKey);
-    return [[_defaultValue!]];
+    if (defaultValue === undefined) {
+      return valueNotAvailable(searchKey);
+    }
+    return [[defaultValue]];
   },
   isExported: true,
+} satisfies AddFunctionDescription;
+
+//--------------------------------------------------------------------------
+// Pivot functions
+//--------------------------------------------------------------------------
+
+export const PIVOT_VALUE = {
+  description: _t("Get the value from a pivot."),
+  args: [
+    arg("pivot_id (string)", _t("ID of the pivot.")),
+    arg("measure_name (string)", _t("Name of the measure.")),
+    arg("domain_field_name (string,optional,repeating)", _t("Field name.")),
+    arg("domain_value (string,optional,repeating)", _t("Value.")),
+  ],
+  compute: function (
+    formulaId: Maybe<FPayload>,
+    measureName: Maybe<FPayload>,
+    ...domain: Maybe<FPayload>[]
+  ) {
+    const _pivotFormulaId = toString(formulaId);
+    const measure = toString(measureName);
+    const domainArgs = domain.map(toString);
+    const pivotId = getPivotId(_pivotFormulaId, this.getters);
+    assertMeasureExist(pivotId, measure, this.getters);
+    assertDomainLength(domainArgs);
+    const pivot = this.getters.getPivot(pivotId);
+    const coreDefinition = this.getters.getPivotCoreDefinition(pivotId);
+    if (!supportedPivotExplodedFormulaRegistry.get(coreDefinition.type)) {
+      return {
+        value: CellErrorType.GenericError,
+        message: _t("This pivot does not support PIVOT.VALUE formula"),
+      };
+    }
+    addPivotDependencies(this, coreDefinition);
+    const error = pivot.assertIsValid({ throwOnError: false });
+    if (error) {
+      return error;
+    }
+    const { value, format } = pivot.getPivotCellValueAndFormat(measure, domainArgs);
+    if (!value && !this.getters.areDomainArgsFieldsValid(pivotId, domainArgs)) {
+      return {
+        value: CellErrorType.GenericError,
+        message: _t("Dimensions don't match the pivot definition"),
+      };
+    }
+    return { value, format };
+  },
+  returns: ["NUMBER", "STRING"],
+} satisfies AddFunctionDescription;
+
+export const PIVOT_HEADER = {
+  description: _t("Get the header of a pivot."),
+  args: [
+    arg("pivot_id (string)", _t("ID of the pivot.")),
+    arg("domain_field_name (string,optional,repeating)", _t("Field name.")),
+    arg("domain_value (string,optional,repeating)", _t("Value.")),
+  ],
+  compute: function (pivotId: Maybe<FPayload>, ...domain: Maybe<FPayload>[]) {
+    const _pivotFormulaId = toString(pivotId);
+    const domainArgs = domain.map(toString);
+    const _pivotId = getPivotId(_pivotFormulaId, this.getters);
+    assertDomainLength(domainArgs);
+    const pivot = this.getters.getPivot(_pivotId);
+    const coreDefinition = this.getters.getPivotCoreDefinition(_pivotId);
+    if (!supportedPivotExplodedFormulaRegistry.get(coreDefinition.type)) {
+      return {
+        value: CellErrorType.GenericError,
+        message: _t("This pivot does not support PIVOT.VALUE formula"),
+      };
+    }
+    addPivotDependencies(this, coreDefinition);
+    const error = pivot.assertIsValid({ throwOnError: false });
+    if (error) {
+      return error;
+    }
+    const fieldName = domainArgs.at(-2);
+    const valueArg = domainArgs.at(-1);
+    if (
+      !this.getters.areDomainArgsFieldsValid(
+        _pivotId,
+        fieldName === "measure" ? domainArgs.slice(0, -2) : domainArgs
+      )
+    ) {
+      return {
+        value: CellErrorType.GenericError,
+        message: _t("Dimensions don't match the pivot definition"),
+      };
+    }
+    const { value, format } = pivot.getPivotHeaderValueAndFormat(domainArgs);
+    return {
+      value,
+      format: !fieldName || fieldName === "measure" || valueArg === "false" ? undefined : format,
+    };
+  },
+  returns: ["NUMBER", "STRING"],
+} satisfies AddFunctionDescription;
+
+export const PIVOT = {
+  description: _t("Get a pivot table."),
+  args: [
+    arg("pivot_id (string)", _t("ID of the pivot.")),
+    arg("row_count (number, optional, default=10000)", _t("number of rows")),
+    arg("include_total (boolean, default=TRUE)", _t("Whether to include total/sub-totals or not.")),
+    arg(
+      "include_column_titles (boolean, default=TRUE)",
+      _t("Whether to include the column titles or not.")
+    ),
+  ],
+  compute: function (
+    pivotId: Maybe<FPayload>,
+    rowCount: Maybe<FPayload> = { value: 10000 },
+    includeTotal: Maybe<FPayload> = { value: true },
+    includeColumnHeaders: Maybe<FPayload> = { value: true }
+  ) {
+    const _pivotFormulaId = toString(pivotId);
+    const _pivotId = getPivotId(_pivotFormulaId, this.getters);
+    const pivot = this.getters.getPivot(_pivotId);
+    const coreDefinition = this.getters.getPivotCoreDefinition(_pivotId);
+    addPivotDependencies(this, coreDefinition);
+    pivot.init({ reload: pivot.needsReevaluation });
+    const error = pivot.assertIsValid({ throwOnError: false });
+    if (error) {
+      return error;
+    }
+    const table = pivot.getTableStructure();
+    const _includeColumnHeaders = toBoolean(includeColumnHeaders);
+    const cells = table.getPivotCells(toBoolean(includeTotal), _includeColumnHeaders);
+    const headerRows = _includeColumnHeaders ? table.columns.length : 0;
+    const pivotTitle = this.getters.getPivotDisplayName(_pivotId);
+    const _rowCount = toNumber(rowCount, this.locale);
+    if (_rowCount < 0) {
+      throw new EvaluationError(_t("The number of rows must be positive."));
+    }
+    const end = Math.min(headerRows + _rowCount, cells[0].length);
+    if (end === 0) {
+      return [[{ value: pivotTitle }]];
+    }
+    const tableWidth = cells.length;
+    const tableRows = range(0, end);
+    const result: Matrix<FPayload> = [];
+    for (const col of range(0, tableWidth)) {
+      result[col] = [];
+      for (const row of tableRows) {
+        const pivotCell = cells[col][row];
+        if (!pivotCell.domain) {
+          result[col].push({ value: "", format: undefined });
+        } else if (pivotCell.isHeader) {
+          result[col].push(pivot.getPivotHeaderValueAndFormat(pivotCell.domain));
+        } else {
+          if (!pivotCell.measure) {
+            throw new Error("Measure is missing");
+          }
+          result[col].push(pivot.getPivotCellValueAndFormat(pivotCell.measure, pivotCell.domain));
+        }
+      }
+    }
+    if (_includeColumnHeaders) {
+      result[0][0] = { value: pivotTitle };
+    }
+    return result;
+  },
+  returns: ["RANGE<ANY>"],
 } satisfies AddFunctionDescription;
