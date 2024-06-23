@@ -1,3 +1,4 @@
+import { handleError } from "../../../functions";
 import { toNumber } from "../../../functions/helpers";
 import { ModelConfig } from "../../../model";
 import { _t } from "../../../translation";
@@ -187,7 +188,8 @@ export class SpreadsheetPivot implements Pivot<SpreadsheetPivotRuntimeDefinition
     if (!finalCell) {
       return { value: "" };
     }
-    if (finalCell.value === null) {
+    // Value can be null but stringified (e.g. an empty date, as for now every date is stringified)
+    if (finalCell.value === null || finalCell.value === `${null}`) {
       return { value: _t("(Undefined)") };
     }
     if (dimension.type === "date") {
@@ -224,10 +226,15 @@ export class SpreadsheetPivot implements Pivot<SpreadsheetPivotRuntimeDefinition
     if (!operator) {
       throw new Error(`Aggregator ${aggregator} does not exist`);
     }
-    return {
-      value: values.length ? operator.fn([values], this.getters.getLocale()) : "",
-      format: operator.format(values[0]),
-    };
+
+    try {
+      return {
+        value: values.length ? operator.fn([values], this.getters.getLocale()) : "",
+        format: operator.format(values[0]),
+      };
+    } catch (e) {
+      return handleError(e, aggregator.toUpperCase());
+    }
   }
 
   getPossibleFieldValues(groupBy: string): { value: string | number | boolean; label: string }[] {

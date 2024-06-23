@@ -3,6 +3,7 @@ import {
   tokenColors,
 } from "../../src/components/composer/composer/composer";
 import { ComposerStore } from "../../src/components/composer/composer/composer_store";
+import { DEFAULT_CELL_HEIGHT, DEFAULT_CELL_WIDTH } from "../../src/constants";
 import { colors, toCartesian, toZone } from "../../src/helpers/index";
 import { Model } from "../../src/model";
 import { Store } from "../../src/store_engine";
@@ -12,6 +13,7 @@ import {
   createFilter,
   createSheet,
   createSheetWithName,
+  createTable,
   merge,
   resizeAnchorZone,
   selectCell,
@@ -32,6 +34,7 @@ import {
   getEvaluatedCell,
   getFilterTable,
   getSelectionAnchorCellXc,
+  getTable,
 } from "../test_helpers/getters_helpers";
 import {
   ComposerWrapper,
@@ -519,8 +522,8 @@ describe("composer", () => {
       0.5 * DEFAULT_CELL_WIDTH,
       0.5 * DEFAULT_CELL_HEIGHT
     );
-    createFilter(model, "A1");
-    expect(getFilterTable(model, "A1")).toBeTruthy();
+    createTable(model, "A1");
+    expect(getTable(model, "A1")).toBeTruthy();
   });
 
   test("edit link cell changes the label", async () => {
@@ -1046,7 +1049,7 @@ describe("composer highlights color", () => {
     expect(highlights[1].zone).toEqual({ left: 0, right: 0, top: 0, bottom: 0 });
   });
 
-  test.skip("grid composer is resized when top bar composer grows", async () => {});
+  test.skip("grid composer is resized when top bar composer grows", async () => { });
 });
 
 describe("Composer string is correctly translated to HtmlContents[][] for the contentEditableHelper", () => {
