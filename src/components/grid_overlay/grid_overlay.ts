@@ -96,10 +96,15 @@ function useCellHovered(
 
   useExternalListener(window, "click", handleGlobalClick);
   function handleGlobalClick(e: MouseEvent) {
-    const target = e.target as HTMLElement;
-    const grid = gridRef.el!;
-    if (!grid.contains(target)) {
-      setPosition(undefined, undefined);
+    try {
+      const target = e.target as HTMLElement;
+      const grid = gridRef.el!;
+      if (!grid.contains(target)) {
+        setPosition(undefined, undefined);
+      }
+
+    } catch (error) {
+      console.warn(error)
     }
   }
 
@@ -172,12 +177,12 @@ export class GridOverlay extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-GridOverlay";
   static components = { FiguresContainer, DataValidationOverlay, GridAddRowsFooter };
   static defaultProps = {
-    onCellHovered: () => {},
-    onCellDoubleClicked: () => {},
-    onCellClicked: () => {},
-    onCellRightClicked: () => {},
-    onGridResized: () => {},
-    onFigureDeleted: () => {},
+    onCellHovered: () => { },
+    onCellDoubleClicked: () => { },
+    onCellClicked: () => { },
+    onCellRightClicked: () => { },
+    onGridResized: () => { },
+    onFigureDeleted: () => { },
   };
   private gridOverlay: Ref<HTMLElement> = useRef("gridOverlay");
   private gridOverlayRect = useAbsoluteBoundingRect(this.gridOverlay);
