@@ -190,16 +190,25 @@ export class GridOverlay extends Component<Props, SpreadsheetChildEnv> {
   setup() {
     useCellHovered(this.env, this.gridOverlay, this.props.onCellHovered);
     const resizeObserver = new ResizeObserver(() => {
-      const boundingRect = this.gridOverlayEl.getBoundingClientRect();
-      this.props.onGridResized({
-        x: boundingRect.left,
-        y: boundingRect.top,
-        height: this.gridOverlayEl.clientHeight,
-        width: this.gridOverlayEl.clientWidth,
-      });
+      try {
+        const boundingRect = this.gridOverlayEl.getBoundingClientRect();
+        this.props.onGridResized({
+          x: boundingRect.left,
+          y: boundingRect.top,
+          height: this.gridOverlayEl.clientHeight,
+          width: this.gridOverlayEl.clientWidth,
+        });
+      } catch (error) {
+
+      }
     });
     onMounted(() => {
-      resizeObserver.observe(this.gridOverlayEl);
+      try {
+        resizeObserver.observe(this.gridOverlayEl);
+
+      } catch (error) {
+
+      }
     });
     onWillUnmount(() => {
       resizeObserver.disconnect();
