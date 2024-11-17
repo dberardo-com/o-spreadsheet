@@ -10,11 +10,11 @@ import { useAbsoluteBoundingRect } from "../helpers/position_hook";
 import { useWheelHandler } from "../helpers/wheel_hook";
 import { CellPopoverStore } from "../popover";
 import { Popover } from "../popover/popover";
-import { HorizontalScrollBar, VerticalScrollBar } from "../scrollbar/";
+import { HorizontalScrollBar } from "../scrollbar/scrollbar_horizontal";
+import { VerticalScrollBar } from "../scrollbar/scrollbar_vertical";
 import { ClickableCell, ClickableCellsStore } from "./clickable_cell_store";
 
-
-interface Props { }
+interface Props {}
 
 css/* scss */ `
   .o-dashboard-clickable-cell {
