@@ -1,12 +1,18 @@
 import { Model } from "../../src";
+import { CellComposerStore } from "../../src/components/composer/composer/cell_composer_store";
 import {
   DEFAULT_CELL_HEIGHT,
   DEFAULT_CELL_WIDTH,
   GRID_ICON_EDGE_LENGTH,
   GRID_ICON_MARGIN,
 } from "../../src/constants";
-import { IsValueInListCriterion, UID } from "../../src/types";
-import { addDataValidation, setCellContent, setSelection } from "../test_helpers/commands_helpers";
+import { IsValueInListCriterion, SpreadsheetChildEnv, UID } from "../../src/types";
+import {
+  addDataValidation,
+  createTable,
+  setCellContent,
+  setSelection,
+} from "../test_helpers/commands_helpers";
 import { click, keyDown, setInputValueAndTrigger } from "../test_helpers/dom_helper";
 import { getCellContent } from "../test_helpers/getters_helpers";
 import {
@@ -26,6 +32,7 @@ jest.mock("../../src/components/composer/content_editable_helper", () =>
 let model: Model;
 let fixture: HTMLElement;
 let sheetId: UID;
+let env: SpreadsheetChildEnv;
 
 beforeEach(async () => {
   model = new Model();
@@ -184,12 +191,19 @@ describe("autocomplete in composer", () => {
       expect(values[2].textContent).toBe("okay");
     });
 
-    test("Data validation autocomplete is not show when editing formula", async () => {
+    test("Data validation autocomplete is not shown when editing formula", async () => {
       ({ fixture, parent } = await mountComposerWrapper(model));
       await typeInComposer("=S");
       const values = fixture.querySelectorAll<HTMLElement>(".o-autocomplete-value");
       expect(values.length).toBeGreaterThan(3);
       expect(values[0].textContent).not.toBe("ok");
+    });
+
+    test("Data validation autocomplete is not shown with only =", async () => {
+      ({ fixture, parent } = await mountComposerWrapper(model));
+      await typeInComposer("=");
+      const values = fixture.querySelectorAll<HTMLElement>(".o-autocomplete-value");
+      expect(values.length).toBe(0);
     });
 
     test("Values displayed are filtered based on composer content", async () => {
@@ -203,16 +217,17 @@ describe("autocomplete in composer", () => {
 
     test("Values displayed are not filtered when the user opens the composer with a valid value", async () => {
       setCellContent(model, "A1", "hello");
-      model.dispatch("START_EDITION", {});
-      ({ fixture, parent } = await mountComposerWrapper(model, { focus: "cellFocus" }));
-      await nextTick();
+      ({ fixture, parent } = await mountComposerWrapper(model));
+      const composerStore = parent.env.getStore(CellComposerStore);
+      await typeInComposer("");
+      expect(composerStore.currentContent).toBe("hello");
       expect(fixture.querySelectorAll<HTMLElement>(".o-autocomplete-value")).toHaveLength(3);
     });
 
-    test("Values displayed are not filtered when the input has no match in valid values", async () => {
+    test("Values displayed are filtered when the input has no match in valid values", async () => {
       ({ fixture, parent } = await mountComposerWrapper(model));
       await typeInComposer("this is not a valid value");
-      expect(fixture.querySelectorAll<HTMLElement>(".o-autocomplete-value")).toHaveLength(3);
+      expect(fixture.querySelectorAll<HTMLElement>(".o-autocomplete-value")).toHaveLength(0);
     });
 
     test("Can select values with arrows", async () => {
@@ -226,12 +241,13 @@ describe("autocomplete in composer", () => {
 
     test("Enter overwrite composer content with selected value and stops edition", async () => {
       ({ fixture, parent } = await mountComposerWrapper(model));
+      const composerStore = parent.env.getStore(CellComposerStore);
       await typeInComposer("hel");
       await keyDown({ key: "ArrowDown" });
       await keyDown({ key: "Enter" });
       expect(fixture.querySelector(".o-autocomplete-value")).toBeNull();
       expect(getCellContent(model, "A1")).toBe("hello");
-      expect(model.getters.getEditionMode()).toBe("inactive");
+      expect(composerStore.editionMode).toBe("inactive");
     });
   });
 
@@ -253,6 +269,41 @@ describe("autocomplete in composer", () => {
     expect(values[0].textContent).toBe("hello");
     expect(values[1].textContent).toBe("ok");
     expect(values[2].textContent).toBe("thing");
+  });
+
+  test("Duplicate values will be removed before sending proposals to the autocomplete dropdown in data validation with range", async () => {
+    setCellContent(model, "A2", "ok");
+    setCellContent(model, "A3", "hello");
+    setCellContent(model, "A4", "ok");
+    addDataValidation(model, "A1", "id", {
+      type: "isValueInRange",
+      values: ["A2:A4"],
+      displayStyle: "arrow",
+    });
+
+    ({ fixture, parent } = await mountComposerWrapper(model));
+    await typeInComposer("");
+
+    const values = fixture.querySelectorAll<HTMLElement>(".o-autocomplete-value");
+    expect(values).toHaveLength(2);
+    expect(values[0].textContent).toBe("ok");
+    expect(values[1].textContent).toBe("hello");
+  });
+
+  test("Duplicate values will be removed before sending proposals to the autocomplete dropdown in data validation with list", async () => {
+    addDataValidation(model, "A1", "id", {
+      type: "isValueInList",
+      values: ["ok", "hello", "ok", "hello"],
+      displayStyle: "arrow",
+    });
+
+    ({ fixture, parent } = await mountComposerWrapper(model));
+    await typeInComposer("");
+
+    const values = fixture.querySelectorAll<HTMLElement>(".o-autocomplete-value");
+    expect(values).toHaveLength(2);
+    expect(values[0].textContent).toBe("ok");
+    expect(values[1].textContent).toBe("hello");
   });
 });
 
@@ -278,12 +329,19 @@ describe("Selection arrow icon in grid", () => {
     );
   });
 
-  test("Clicking on the icon opens the composer", async () => {
+  test("Clicking on the icon opens the composer with suggestions", async () => {
     setSelection(model, ["B2"]);
-    ({ fixture } = await mountSpreadsheet({ model }));
+    ({ fixture, env } = await mountSpreadsheet({ model }));
+    const composerStore = env.getStore(CellComposerStore);
     await click(fixture, ".o-dv-list-icon");
-    expect(model.getters.getEditionMode()).toBe("editing");
-    expect(model.getters.getCurrentEditedCell()).toEqual({ sheetId, col: 0, row: 0 });
+    await nextTick();
+    expect(composerStore.editionMode).toBe("editing");
+    expect(composerStore.currentEditedCell).toEqual({ sheetId, col: 0, row: 0 });
+    const suggestions = fixture.querySelectorAll(".o-autocomplete-dropdown .o-autocomplete-value");
+    expect(suggestions.length).toBe(3);
+    expect(suggestions[0].textContent).toBe("ok");
+    expect(suggestions[1].textContent).toBe("hello");
+    expect(suggestions[2].textContent).toBe("okay");
   });
 
   test("Icon is not displayed when display style is plainText", async () => {
@@ -293,7 +351,7 @@ describe("Selection arrow icon in grid", () => {
       displayStyle: "plainText",
     });
     ({ fixture } = await mountSpreadsheet({ model }));
-    expect(fixture.querySelector(".o-grid-cell-icon")).toBeNull();
+    expect(fixture.querySelector(".o-dv-list-icon")).toBeNull();
   });
 
   test("Icon is not displayed in dashboard", async () => {
@@ -301,9 +359,22 @@ describe("Selection arrow icon in grid", () => {
     addDataValidation(model, "A1", "id", {
       type: "isValueInList",
       values: ["ok", "hello", "okay"],
-      displayStyle: "plainText",
+      displayStyle: "arrow",
     });
     ({ fixture } = await mountSpreadsheet({ model }));
-    expect(fixture.querySelector(".o-grid-cell-icon")).toBeNull();
+    expect(fixture.querySelector(".o-dv-list-icon")).toBeNull();
+  });
+
+  test("Icon is not displayed if there is a filter icon", async () => {
+    addDataValidation(model, "A1", "id", {
+      type: "isValueInList",
+      values: ["ok", "hello", "okay"],
+      displayStyle: "arrow",
+    });
+    createTable(model, "A1:A4");
+
+    ({ fixture } = await mountSpreadsheet({ model }));
+    expect(fixture.querySelector(".o-dv-list-icon")).toBeNull();
+    expect(fixture.querySelector(".o-filter-icon")).not.toBeNull();
   });
 });

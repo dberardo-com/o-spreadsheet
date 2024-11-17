@@ -4,7 +4,7 @@
       t-foreach="getFilterHeadersPositions()"
       t-as="position"
       t-key="'filter'+position.col + '_' + position.row">
-      <GridCellIcon cellPosition="position" offset="props.gridPosition" horizontalAlign="'right'">
+      <GridCellIcon cellPosition="position" horizontalAlign="'right'">
         <FilterIcon cellPosition="position"/>
       </GridCellIcon>
     </t>

@@ -1,12 +1,8 @@
-import {
-  DEFAULT_BORDER_DESC,
-  DEFAULT_CELL_HEIGHT,
-  DEFAULT_CELL_WIDTH,
-  INCORRECT_RANGE_STRING,
-} from "../../src/constants";
-import { lettersToNumber, toCartesian, toXC, toZone } from "../../src/helpers";
+import { DEFAULT_BORDER_DESC, DEFAULT_CELL_HEIGHT, DEFAULT_CELL_WIDTH } from "../../src/constants";
+import { lettersToNumber, toXC, toZone } from "../../src/helpers";
 import { Model } from "../../src/model";
 import { Border, CommandResult } from "../../src/types";
+import { CellErrorType } from "../../src/types/errors";
 import {
   activateSheet,
   addColumns,
@@ -23,6 +19,7 @@ import {
   selectCell,
   setCellContent,
   setSelection,
+  setStyle,
   setZoneBorders,
   undo,
   unfreezeColumns,
@@ -40,7 +37,6 @@ import {
   getCellsObject,
   getMergeCellMap,
   makeTestFixture,
-  target,
   testUndoRedo,
 } from "../test_helpers/helpers";
 let model: Model;
@@ -76,15 +72,24 @@ const fullData = {
       colNumber: 5,
       rowNumber: 4,
       cells: {
-        A1: { content: "1", style: 1, border: 1 },
-        A2: { content: "2", style: 1, border: 1 },
-        A3: { content: "3", style: 1, border: 1 },
-        A4: { content: "4", style: 1, border: 1 },
-        B1: { content: "1", style: 1, border: 1 },
-        B2: { content: "2", style: 1 },
-        B3: { content: "3", border: 1 },
+        A1: { content: "1" },
+        A2: { content: "2" },
+        A3: { content: "3" },
+        A4: { content: "4" },
+        B1: { content: "1" },
+        B2: { content: "2" },
+        B3: { content: "3" },
         C1: { content: "1" },
         C3: { content: "3" },
+      },
+      styles: {
+        "A1:A4": 1,
+        "B1:B2": 1,
+      },
+      borders: {
+        "A1:A4": 1,
+        B1: 1,
+        B3: 1,
       },
       merges: ["A4:D4", "C1:D2"],
       cols: { 1: { size: 42 } },
@@ -111,10 +116,17 @@ describe("Clear columns", () => {
             A1: { content: "A1" },
             A2: { content: "A2" },
             A3: { content: "A3" },
-            B1: { content: "B1", style: 1, border: 1 },
+            B1: { content: "B1" },
             B2: { content: "B2" },
-            C1: { content: "C1", style: 1 },
-            C2: { content: "C2", border: 1 },
+            C1: { content: "C1" },
+            C2: { content: "C2" },
+          },
+          styles: {
+            "B1:C1": 1,
+          },
+          borders: {
+            B1: 1,
+            C2: 1,
           },
         },
       ],
@@ -125,9 +137,7 @@ describe("Clear columns", () => {
     clearColumns(["B", "C"]);
     const style = { textColor: "#fe0000" };
     expect(getCell(model, "B2")).toBeUndefined();
-    expect(
-      Object.keys(model.getters.getEvaluatedCells(model.getters.getActiveSheetId()))
-    ).toHaveLength(5);
+    expect(Object.keys(model.getters.getCells(model.getters.getActiveSheetId()))).toHaveLength(5);
     expect(getCell(model, "A1")).toMatchObject({ content: "A1" });
     expect(getCell(model, "A2")).toMatchObject({ content: "A2" });
     expect(getCell(model, "A3")).toMatchObject({ content: "A3" });
@@ -154,12 +164,19 @@ describe("Clear rows", () => {
           rowNumber: 3,
           cells: {
             A1: { content: "A1" },
-            A2: { content: "A2", style: 1, border: 1 },
-            A3: { content: "A3", border: 1 },
+            A2: { content: "A2" },
+            A3: { content: "A3" },
             B1: { content: "B1" },
             B2: { content: "B2" },
             C1: { content: "C1" },
-            C2: { content: "C2", style: 1 },
+            C2: { content: "C2" },
+          },
+          styles: {
+            A2: 1,
+            C2: 1,
+          },
+          borders: {
+            "A2:A3": 1,
           },
         },
       ],
@@ -171,9 +188,7 @@ describe("Clear rows", () => {
     clearRows([1, 2]);
     const style = { textColor: "#fe0000" };
     expect(getCell(model, "B2")).toBeUndefined();
-    expect(
-      Object.keys(model.getters.getEvaluatedCells(model.getters.getActiveSheetId()))
-    ).toHaveLength(5);
+    expect(Object.keys(model.getters.getCells(model.getters.getActiveSheetId()))).toHaveLength(5);
     expect(getCell(model, "A1")).toMatchObject({ content: "A1" });
     expect(getCell(model, "A2")).toMatchObject({ style });
     expect(getBorder(model, "A2")).toEqual(border);
@@ -271,9 +286,9 @@ describe("Columns", () => {
     test("On deletion", () => {
       deleteColumns(model, ["B", "D"]);
       expect(getMerges(model)).toEqual({
-        1: { id: 1, topLeft: toCartesian("A1"), top: 0, bottom: 0, left: 0, right: 2 },
-        2: { id: 2, topLeft: toCartesian("B2"), top: 1, bottom: 1, left: 1, right: 2 },
-        3: { id: 3, topLeft: toCartesian("B3"), top: 2, bottom: 2, left: 1, right: 2 },
+        1: { id: 1, top: 0, bottom: 0, left: 0, right: 2 },
+        2: { id: 2, top: 1, bottom: 1, left: 1, right: 2 },
+        3: { id: 3, top: 2, bottom: 2, left: 1, right: 2 },
       });
       expect(getMergeCellMap(model)).toEqual(
         XCToMergeCellMap(model, ["A1", "B1", "C1", "B2", "C2", "B3", "C3"])
@@ -284,10 +299,10 @@ describe("Columns", () => {
       addColumns(model, "before", "B", 1);
       addColumns(model, "after", "A", 1);
       expect(getMerges(model)).toEqual({
-        1: { id: 1, topLeft: toCartesian("A1"), top: 0, bottom: 0, left: 0, right: 6 },
-        2: { id: 2, topLeft: toCartesian("D2"), top: 1, bottom: 1, left: 3, right: 6 },
-        3: { id: 3, topLeft: toCartesian("E3"), top: 2, bottom: 2, left: 4, right: 6 },
-        4: { id: 4, topLeft: toCartesian("D4"), top: 3, bottom: 3, left: 3, right: 5 },
+        1: { id: 1, top: 0, bottom: 0, left: 0, right: 6 },
+        2: { id: 2, top: 1, bottom: 1, left: 3, right: 6 },
+        3: { id: 3, top: 2, bottom: 2, left: 4, right: 6 },
+        4: { id: 4, top: 3, bottom: 3, left: 3, right: 5 },
       });
       // prettier-ignore
       expect(getMergeCellMap(model)).toEqual(
@@ -307,8 +322,8 @@ describe("Columns", () => {
       model = new Model({
         sheets: [
           {
-            cells: {
-              A2: { border: 1 },
+            borders: {
+              A2: 1,
             },
           },
         ],
@@ -336,12 +351,12 @@ describe("Columns", () => {
       model = new Model({
         sheets: [
           {
-            cells: {
-              A2: { border: 1 },
-              B2: { border: 1 },
-              A4: { border: 2 },
-              B4: { border: 2 },
-              C4: { border: 2 },
+            borders: {
+              A2: 1,
+              B2: 1,
+              A4: 2,
+              B4: 2,
+              C4: 2,
             },
           },
         ],
@@ -425,17 +440,21 @@ describe("Columns", () => {
             id: "sheet1",
             colNumber: 4,
             rowNumber: 4,
-            cells: {
-              A1: { style: 1 },
-              A2: { border: 1 },
-              A3: { style: 1, border: 1 },
-              B1: { style: 1 },
-              B2: { border: 1 },
-              B3: { style: 1, border: 1, format: 1 },
-              B4: { style: 1, border: 1 },
-              D1: { style: 1 },
-              D2: { border: 1 },
-              D3: { style: 1, border: 1 },
+            borders: {
+              "A2:A3": 1,
+              "B2:B4": 1,
+              "D2:D3": 1,
+            },
+            styles: {
+              A1: 1,
+              A3: 1,
+              B1: 1,
+              "B3:B4": 1,
+              D1: 1,
+              D3: 1,
+            },
+            formats: {
+              B3: 1,
             },
             merges: ["B4:C4"],
           },
@@ -516,7 +535,6 @@ describe("Columns", () => {
       expect(Object.values(getMerges(model))[0]).toMatchObject({
         left: 2,
         right: 5,
-        topLeft: toCartesian("C4"),
       });
     });
   });
@@ -653,7 +671,7 @@ describe("Columns", () => {
       deleteColumns(model, ["F"]);
       expect(getCellText(model, "A2")).toBe("=SUM(#REF)");
       deleteColumns(model, ["B", "C", "D", "E"]);
-      expect(getCellText(model, "A1", "s1")).toBe(`=SUM(${INCORRECT_RANGE_STRING})`);
+      expect(getCellText(model, "A1", "s1")).toBe(`=SUM(${CellErrorType.InvalidReference})`);
     });
     test("update cross sheet range on column deletion", () => {
       model = new Model({
@@ -875,7 +893,7 @@ describe("Rows", () => {
       deleteRows(model, [5]);
       expect(getCellText(model, "B1")).toBe("=SUM(#REF)");
       deleteRows(model, [1, 2, 3, 4]);
-      expect(getCellText(model, "A1")).toBe(`=SUM(${INCORRECT_RANGE_STRING})`);
+      expect(getCellText(model, "A1")).toBe(`=SUM(${CellErrorType.InvalidReference})`);
     });
     test("update cross sheet range on row deletion", () => {
       model = new Model({
@@ -1001,9 +1019,9 @@ describe("Rows", () => {
     test("On deletion", () => {
       deleteRows(model, [1, 3]);
       expect(getMerges(model)).toEqual({
-        1: { id: 1, topLeft: toCartesian("A1"), top: 0, bottom: 2, left: 0, right: 0 },
-        2: { id: 2, topLeft: toCartesian("B2"), top: 1, bottom: 2, left: 1, right: 1 },
-        3: { id: 3, topLeft: toCartesian("C2"), top: 1, bottom: 2, left: 2, right: 2 },
+        1: { id: 1, top: 0, bottom: 2, left: 0, right: 0 },
+        2: { id: 2, top: 1, bottom: 2, left: 1, right: 1 },
+        3: { id: 3, top: 1, bottom: 2, left: 2, right: 2 },
       });
       expect(getMergeCellMap(model)).toEqual(
         XCToMergeCellMap(model, ["A1", "A2", "A3", "B2", "B3", "C2", "C3"])
@@ -1013,10 +1031,10 @@ describe("Rows", () => {
       addRows(model, "before", 1, 1);
       addRows(model, "after", 0, 1);
       expect(getMerges(model)).toEqual({
-        1: { id: 1, topLeft: toCartesian("A1"), top: 0, bottom: 6, left: 0, right: 0 },
-        2: { id: 2, topLeft: toCartesian("B4"), top: 3, bottom: 6, left: 1, right: 1 },
-        3: { id: 3, topLeft: toCartesian("C5"), top: 4, bottom: 6, left: 2, right: 2 },
-        4: { id: 4, topLeft: toCartesian("D4"), top: 3, bottom: 5, left: 3, right: 3 },
+        1: { id: 1, top: 0, bottom: 6, left: 0, right: 0 },
+        2: { id: 2, top: 3, bottom: 6, left: 1, right: 1 },
+        3: { id: 3, top: 4, bottom: 6, left: 2, right: 2 },
+        4: { id: 4, top: 3, bottom: 5, left: 3, right: 3 },
       });
       // prettier-ignore
       expect(getMergeCellMap(model)).toEqual(
@@ -1041,17 +1059,22 @@ describe("Rows", () => {
             id: "sheet1",
             colNumber: 4,
             rowNumber: 4,
-            cells: {
-              A1: { style: 1 },
-              A2: { style: 1 },
-              A4: { style: 1 },
-              B1: { border: 1 },
-              B2: { border: 1 },
-              B4: { border: 1 },
-              C1: { style: 1, border: 1 },
-              C2: { style: 1, border: 1, format: 1 },
-              C4: { style: 1, border: 1 },
-              D2: { style: 1, border: 1 },
+            borders: {
+              "B1:B2": 1,
+              B4: 1,
+              "C1:C2": 1,
+              C4: 1,
+              D2: 1,
+            },
+            styles: {
+              "A1:A2": 1,
+              A4: 1,
+              "C1:C2": 1,
+              C4: 1,
+              D2: 1,
+            },
+            formats: {
+              C2: 1,
             },
             merges: ["D2:D3"],
           },
@@ -1065,12 +1088,12 @@ describe("Rows", () => {
       const s = { style: "thin", color: "#000000" };
       const style = { textColor: "#fe0000" };
       const sheetId = model.getters.getActiveSheetId();
-      expect(Object.keys(model.getters.getEvaluatedCells(sheetId))).toHaveLength(8); // 7 NumberCells + 1 emptyCell in merge with style
+      expect(Object.keys(model.getters.getCells(sheetId))).toHaveLength(8); // 7 NumberCells + 1 emptyCell in merge with style
       deleteRows(model, [1]);
       expect(getCell(model, "A2")).toBeUndefined();
       expect(getCell(model, "B2")).toBeUndefined();
       expect(getCell(model, "C2")).toBeUndefined();
-      expect(Object.values(model.getters.getEvaluatedCells(sheetId))).toHaveLength(5); // 4 NumberCells +1 emptyCell with no merge, but with style
+      expect(Object.values(model.getters.getCells(sheetId))).toHaveLength(5); // 4 NumberCells +1 emptyCell with no merge, but with style
       expect(getCell(model, "A1")).toMatchObject({ style });
       expect(getCell(model, "A3")).toMatchObject({ style });
       expect(getBorder(model, "B1")).toEqual({ top: s, bottom: s });
@@ -1128,7 +1151,6 @@ describe("Rows", () => {
       expect(Object.values(getMerges(model))[0]).toMatchObject({
         top: 2,
         bottom: 5,
-        topLeft: toCartesian("D3"),
       });
     });
 
@@ -1555,12 +1577,7 @@ describe("Delete cell", () => {
 
   test("Undo/redo is correctly supported", () => {
     setCellContent(model, "A2", "=A3");
-    const sheetId = model.getters.getActiveSheetId();
-    model.dispatch("SET_FORMATTING", {
-      sheetId,
-      target: target("A3"),
-      style: { fillColor: "orange" },
-    });
+    setStyle(model, "A3", { fillColor: "orange" });
     testUndoRedo(model, expect, "DELETE_CELL", { zone: toZone("A1"), dimension: "ROW" });
   });
 
@@ -1653,12 +1670,7 @@ describe("Insert cell", () => {
 
   test("Undo/redo is correctly supported", () => {
     setCellContent(model, "A2", "=A3");
-    const sheetId = model.getters.getActiveSheetId();
-    model.dispatch("SET_FORMATTING", {
-      sheetId,
-      target: target("A3"),
-      style: { fillColor: "orange" },
-    });
+    setStyle(model, "A3", { fillColor: "orange" });
     testUndoRedo(model, expect, "INSERT_CELL", { zone: toZone("A1"), dimension: "ROW" });
   });
 });

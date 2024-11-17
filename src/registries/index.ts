@@ -1,3 +1,4 @@
+export * from "./auto_completes/index";
 export * from "./autofill_modifiers";
 export * from "./autofill_rules";
 export * from "./cell_popovers_registry";
@@ -7,5 +8,5 @@ export * from "./figure_registry";
 export * from "./inverse_command_registry";
 export * from "./menus/index";
 export * from "./ot_registry";
-export * from "./side_panel_registry";
+export * from "./side_panel_registry_entries";
 export * from "./topbar_component_registry";

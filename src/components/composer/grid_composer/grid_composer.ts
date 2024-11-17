@@ -1,18 +1,19 @@
-import { Component, onMounted, onWillUpdateProps, useRef, useState } from "@odoo/owl";
-import { ComponentsImportance, SELECTION_BORDER_COLOR } from "../../../constants";
+import { Component, onWillUpdateProps } from "@odoo/owl";
+import { ComponentsImportance, DEFAULT_FONT, SELECTION_BORDER_COLOR } from "../../../constants";
 import {
   deepEquals,
   fontSizeInPixels,
-  getCanonicalSheetName,
+  getFullReference,
   positionToZone,
   toXC,
 } from "../../../helpers";
-import { ComposerSelection } from "../../../plugins/ui_stateful/edition";
-import { DOMDimension, Rect, Ref, SpreadsheetChildEnv, Zone } from "../../../types/index";
+import { Store, useStore } from "../../../store_engine";
+import { ComposerFocusType, DOMDimension, Rect, SpreadsheetChildEnv } from "../../../types/index";
 import { getTextDecoration } from "../../helpers";
 import { css, cssPropertiesToCss } from "../../helpers/css";
-import { ComposerFocusType } from "../../spreadsheet/spreadsheet";
-import { Composer } from "../composer/composer";
+import { CellComposerStore } from "../composer/cell_composer_store";
+import { CellComposerProps, Composer } from "../composer/composer";
+import { ComposerFocusStore, ComposerInterface } from "../composer_focus_store";
 
 const COMPOSER_BORDER_WIDTH = 3 * 0.4 * window.devicePixelRatio || 1;
 const GRID_CELL_REFERENCE_TOP_OFFSET = 28;
@@ -23,6 +24,7 @@ css/* scss */ `
     box-sizing: border-box;
     position: absolute;
     border: ${COMPOSER_BORDER_WIDTH}px solid ${SELECTION_BORDER_COLOR};
+    font-family: ${DEFAULT_FONT};
 
     display: flex;
     align-items: center;
@@ -40,16 +42,9 @@ css/* scss */ `
   }
 `;
 
-interface ComposerState {
-  rect?: Rect;
-  delimitation?: DOMDimension;
-}
-
 interface Props {
-  focus: ComposerFocusType;
-  onComposerUnmounted: () => void;
-  onComposerContentFocused: (selection: ComposerSelection) => void;
   gridDims: DOMDimension;
+  onInputContextMenu: (event: MouseEvent) => void;
 }
 
 /**
@@ -58,53 +53,42 @@ interface Props {
  */
 export class GridComposer extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-GridComposer";
+  static props = {
+    gridDims: Object,
+    onInputContextMenu: Function,
+  };
   static components = { Composer };
 
-  private gridComposerRef!: Ref<HTMLElement>;
+  private rect: Rect = this.defaultRect;
+  private isEditing: boolean = false;
+  private isCellReferenceVisible: boolean = false;
 
-  private zone!: Zone;
-  private rect!: Rect;
-  private isCellReferenceVisible!: boolean;
+  private composerStore!: Store<CellComposerStore>;
+  composerFocusStore!: Store<ComposerFocusStore>;
 
-  private composerState!: ComposerState;
+  private composerInterface!: ComposerInterface;
+
+  get defaultRect() {
+    return { x: 0, y: 0, width: 0, height: 0 };
+  }
 
   setup() {
-    this.gridComposerRef = useRef("gridComposer");
-    this.composerState = useState({
-      rect: undefined,
-      delimitation: undefined,
-    });
-    const { sheetId, col, row } = this.env.model.getters.getActivePosition();
-    this.zone = this.env.model.getters.expandZone(sheetId, positionToZone({ col, row }));
-    this.rect = this.env.model.getters.getVisibleRect(this.zone);
-    this.isCellReferenceVisible = false;
-    onMounted(() => {
-      const el = this.gridComposerRef.el!;
-
-      this.composerState.rect = {
-        x: this.rect.x,
-        y: this.rect.y,
-        width: el!.clientWidth,
-        height: el!.clientHeight,
-      };
-      this.composerState.delimitation = {
-        width: this.props.gridDims.width,
-        height: this.props.gridDims.height,
-      };
-    });
+    const composerStore = useStore(CellComposerStore);
+    this.composerStore = composerStore;
+    this.composerFocusStore = useStore(ComposerFocusStore);
+    this.composerInterface = {
+      id: "gridComposer",
+      get editionMode() {
+        return composerStore.editionMode;
+      },
+      startEdition: this.composerStore.startEdition,
+      setCurrentContent: this.composerStore.setCurrentContent,
+      stopEdition: this.composerStore.stopEdition,
+    };
+    this.composerFocusStore.focusComposer(this.composerInterface, { focusMode: "inactive" });
     onWillUpdateProps(() => {
-      if (this.isCellReferenceVisible) {
-        return;
-      }
-      const sheetId = this.env.model.getters.getActiveSheetId();
-      const zone = this.env.model.getters.getSelectedZone();
-      const rect = this.env.model.getters.getVisibleRect(zone);
-      if (
-        !deepEquals(rect, this.rect) ||
-        sheetId !== this.env.model.getters.getCurrentEditedCell().sheetId
-      ) {
-        this.isCellReferenceVisible = true;
-      }
+      this.updateComponentPosition();
+      this.updateCellReferenceVisibility();
     });
   }
 
@@ -113,11 +97,12 @@ export class GridComposer extends Component<Props, SpreadsheetChildEnv> {
   }
 
   get cellReference(): string {
-    const { col, row, sheetId } = this.env.model.getters.getCurrentEditedCell();
+    const { col, row, sheetId } = this.composerStore.currentEditedCell;
     const prefixSheet = sheetId !== this.env.model.getters.getActiveSheetId();
-    return `${
-      prefixSheet ? getCanonicalSheetName(this.env.model.getters.getSheetName(sheetId)) + "!" : ""
-    }${toXC(col, row)}`;
+    return getFullReference(
+      prefixSheet ? this.env.model.getters.getSheetName(sheetId) : undefined,
+      toXC(col, row)
+    );
   }
 
   get cellReferenceStyle(): string {
@@ -128,8 +113,43 @@ export class GridComposer extends Component<Props, SpreadsheetChildEnv> {
     });
   }
 
+  get focus(): ComposerFocusType {
+    const focus =
+      this.composerFocusStore.activeComposer === this.composerInterface
+        ? this.composerFocusStore.focusMode
+        : "inactive";
+    return focus;
+  }
+
+  get composerProps(): CellComposerProps {
+    const { width, height } = this.env.model.getters.getSheetViewDimensionWithHeaders();
+    return {
+      rect: { ...this.rect },
+      delimitation: {
+        width,
+        height,
+      },
+      focus: this.focus,
+      isDefaultFocus: true,
+      onComposerContentFocused: () =>
+        this.composerFocusStore.focusComposer(this.composerInterface, {
+          focusMode: "contentFocus",
+        }),
+      onComposerCellFocused: (content: string) =>
+        this.composerFocusStore.focusComposer(this.composerInterface, {
+          focusMode: "cellFocus",
+          content,
+        }),
+      onInputContextMenu: this.props.onInputContextMenu,
+      composerStore: this.composerStore,
+    };
+  }
+
   get containerStyle(): string {
-    const isFormula = this.env.model.getters.getCurrentContent().startsWith("=");
+    if (this.composerStore.editionMode === "inactive") {
+      return `z-index: -1000;`;
+    }
+    const isFormula = this.composerStore.currentContent.startsWith("=");
     const cell = this.env.model.getters.getActiveCell();
     const position = this.env.model.getters.getActivePosition();
     const style = this.env.model.getters.getCellComputedStyle(position);
@@ -154,6 +174,9 @@ export class GridComposer extends Component<Props, SpreadsheetChildEnv> {
       textAlign = style.align || cell.defaultAlign;
     }
 
+    const maxHeight = this.props.gridDims.height - this.rect.y;
+    const maxWidth = this.props.gridDims.width - this.rect.x;
+
     /**
      * min-size is on the container, not the composer element, because we want to have the same size as the cell by default,
      * including all the paddings/margins of the composer
@@ -166,6 +189,8 @@ export class GridComposer extends Component<Props, SpreadsheetChildEnv> {
 
       "min-width": `${width + 1}px`,
       "min-height": `${height + 1}px`,
+      "max-width": `${maxWidth}px`,
+      "max-height": `${maxHeight}px`,
 
       background,
       color,
@@ -177,20 +202,41 @@ export class GridComposer extends Component<Props, SpreadsheetChildEnv> {
     });
   }
 
-  get composerStyle(): string {
-    const maxHeight = this.props.gridDims.height - this.rect.y;
-    const maxWidth = this.props.gridDims.width - this.rect.x;
+  private updateComponentPosition() {
+    const isEditing = this.composerFocusStore.activeComposer.editionMode !== "inactive";
+    if (!isEditing && this.composerFocusStore.activeComposer !== this.composerInterface) {
+      this.composerFocusStore.focusComposer(this.composerInterface, { focusMode: "inactive" });
+    }
 
-    return cssPropertiesToCss({
-      "max-width": `${maxWidth}px`,
-      "max-height": `${maxHeight}px`,
-    });
+    if (this.isEditing !== isEditing) {
+      this.isEditing = isEditing;
+      if (!isEditing) {
+        this.rect = this.defaultRect;
+        return;
+      }
+      const position = this.env.model.getters.getActivePosition();
+      const zone = this.env.model.getters.expandZone(position.sheetId, positionToZone(position));
+      this.rect = this.env.model.getters.getVisibleRect(zone);
+    }
+  }
+
+  private updateCellReferenceVisibility() {
+    if (this.composerStore.editionMode === "inactive") {
+      this.isCellReferenceVisible = false;
+      return;
+    }
+    if (this.isCellReferenceVisible) {
+      return;
+    }
+    const sheetId = this.env.model.getters.getActiveSheetId();
+    const zone = this.env.model.getters.getSelectedZone();
+    const rect = this.env.model.getters.getVisibleRect(zone);
+    if (!deepEquals(rect, this.rect) || sheetId !== this.composerStore.currentEditedCell.sheetId) {
+      this.isCellReferenceVisible = true;
+    }
+  }
+
+  onFocus() {
+    this.composerFocusStore.focusComposer(this.composerInterface, { focusMode: "contentFocus" });
   }
 }
-
-GridComposer.props = {
-  focus: { validate: (value: string) => ["inactive", "cellFocus", "contentFocus"].includes(value) },
-  onComposerUnmounted: Function,
-  onComposerContentFocused: Function,
-  gridDims: Object,
-};

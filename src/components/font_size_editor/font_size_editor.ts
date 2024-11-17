@@ -24,13 +24,6 @@ css/* scss */ `
       height: 20px;
       width: 23px;
     }
-    input[type="number"] {
-      -moz-appearance: textfield;
-    }
-    input::-webkit-outer-spin-button,
-    input::-webkit-inner-spin-button {
-      -webkit-appearance: none;
-    }
   }
   .o-text-options > div {
     cursor: pointer;
@@ -44,6 +37,11 @@ css/* scss */ `
 
 export class FontSizeEditor extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-FontSizeEditor";
+  static props = {
+    onToggle: Function,
+    dropdownStyle: String,
+    class: String,
+  };
   static components = {};
   fontSizes = FONT_SIZES;
 
@@ -111,9 +109,3 @@ export class FontSizeEditor extends Component<Props, SpreadsheetChildEnv> {
     }
   }
 }
-
-FontSizeEditor.props = {
-  onToggle: Function,
-  dropdownStyle: String,
-  class: String,
-};

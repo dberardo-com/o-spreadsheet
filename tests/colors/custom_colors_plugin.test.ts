@@ -1,8 +1,10 @@
 import { Model } from "../../src";
-import { UID } from "../../src/types";
+import { TABLE_PRESETS } from "../../src/helpers/table_presets";
+import { TableStyle, UID } from "../../src/types";
 import {
   createChart,
   createScorecardChart,
+  createTable,
   redo,
   setStyle,
   undo,
@@ -95,7 +97,8 @@ describe("custom colors are correctly handled when editing charts", () => {
     createChart(
       model,
       {
-        dataSets: ["A1:A10"],
+        type: "bar",
+        dataSets: [{ dataRange: "A1:A10" }],
         labelRange: "A1",
         background: "#123456",
       },
@@ -107,12 +110,11 @@ describe("custom colors are correctly handled when editing charts", () => {
       sheetId,
       id: "1",
       definition: {
-        title: "a title",
+        title: { text: "a title" },
         dataSets: [],
         type: "bar",
         stacked: false,
         dataSetsHaveTitle: false,
-        verticalAxisPosition: "left",
         legendPosition: "none",
         background: "#112233",
         aggregated: false,
@@ -132,7 +134,7 @@ describe("custom colors are correctly handled when editing charts", () => {
       sheetId,
       id: "1",
       definition: {
-        title: "a title",
+        title: { text: "a title" },
         type: "gauge",
         dataRange: "B1:B4",
         sectionRule: {
@@ -146,10 +148,12 @@ describe("custom colors are correctly handled when editing charts", () => {
           lowerInflectionPoint: {
             type: "number" as const,
             value: "33",
+            operator: "<=" as const,
           },
           upperInflectionPoint: {
             type: "number" as const,
             value: "66",
+            operator: "<=" as const,
           },
         },
       },
@@ -170,18 +174,83 @@ describe("custom colors are correctly handled when editing charts", () => {
     expect(model.getters.getCustomColors()).toEqual(["#112233", "#123456"]);
   });
 
+  test("Chart data series colors are taken into account", () => {
+    expect(model.getters.getCustomColors()).toEqual([]);
+    createChart(
+      model,
+      {
+        type: "bar",
+        dataSets: [
+          {
+            dataRange: "A1:A10",
+            backgroundColor: "#112233",
+            trend: { type: "polynomial", order: 2, color: "#123456" },
+          },
+        ],
+      },
+      "1"
+    );
+    expect(model.getters.getCustomColors()).toEqual(["#112233", "#123456"]);
+  });
+
   test("duplicated colors on cell and chart only appears once", () => {
     setStyle(model, "A1", { fillColor: "#123456" });
     createChart(
       model,
       {
-        dataSets: ["A1:A10"],
+        type: "bar",
+        dataSets: [{ dataRange: "A1:A10" }],
         labelRange: "A1",
         background: "#123456",
       },
       "1",
       sheetId
     );
+    expect(model.getters.getCustomColors()).toEqual(["#123456"]);
+  });
+
+  test("custom colors from model imported data", () => {
+    setStyle(model, "A1", { fillColor: "#123456" });
+    createChart(model, { type: "bar", background: "#654987" }, "1", sheetId);
+    const importedModel = new Model(model.exportData());
+    expect(importedModel.getters.getCustomColors()).toEqual(["#654987", "#123456"]);
+  });
+});
+
+test("custom colors from config", () => {
+  const data = {};
+  const model = new Model(data, { customColors: ["#875A7B", "not a valid color"] });
+  expect(model.getters.getCustomColors()).toEqual(["#875A7B"]);
+});
+
+describe("Custom colors with table styles", () => {
+  let model: Model;
+  const customStyle: TableStyle = {
+    wholeTable: { border: { bottom: { color: "#123456", style: "thin" } } },
+    firstColumn: { style: { fillColor: "#234567" } },
+    totalRow: { style: { textColor: "#345678" } },
+    category: "dark",
+    displayName: "customStyle",
+    templateName: "dark",
+    primaryColor: "#123456",
+  };
+
+  beforeEach(() => {
+    TABLE_PRESETS["customStyle"] = customStyle;
+    model = new Model();
+  });
+
+  afterEach(() => {
+    delete TABLE_PRESETS["customStyle"];
+  });
+
+  test("Custom colors are added from table styles", () => {
+    createTable(model, "A1:B2", { styleId: "customStyle", totalRow: true, firstColumn: true });
+    expect(model.getters.getCustomColors()).toEqual(["#345678", "#234567", "#123456"]);
+  });
+
+  test("Table elements that are not displayed are not added to custom colors", () => {
+    createTable(model, "A1:B2", { styleId: "customStyle", totalRow: false, firstColumn: false });
     expect(model.getters.getCustomColors()).toEqual(["#123456"]);
   });
 });

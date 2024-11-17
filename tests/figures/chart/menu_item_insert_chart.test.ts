@@ -110,15 +110,14 @@ describe("Insert chart menu item", () => {
       id: expect.any(String),
       sheetId: expect.any(String),
       definition: {
-        dataSets: ["A1"],
+        dataSets: [{ dataRange: "A1", yAxisId: "y" }],
         dataSetsHaveTitle: false,
         labelRange: undefined,
         legendPosition: "none",
         stacked: false,
         aggregated: false,
-        title: expect.any(String),
+        title: {},
         type: "bar",
-        verticalAxisPosition: "left",
       },
     };
   });
@@ -336,7 +335,7 @@ describe("Insert chart menu item", () => {
     setSelection(model, ["B2:B5"]);
     insertChart();
     const payload = { ...defaultPayload };
-    payload.definition.dataSets = ["B2:B5"];
+    payload.definition.dataSets = [{ dataRange: "B2:B5", yAxisId: "y" }];
     payload.definition.labelRange = undefined;
     expect(dispatchSpy).toHaveBeenCalledWith("CREATE_CHART", payload);
   });
@@ -345,7 +344,7 @@ describe("Insert chart menu item", () => {
     setSelection(model, ["B1:B5"]);
     insertChart();
     const payload = { ...defaultPayload };
-    payload.definition.dataSets = ["B1:B5"];
+    payload.definition.dataSets = [{ dataRange: "B1:B5", yAxisId: "y" }];
     payload.definition.labelRange = undefined;
     payload.definition.dataSetsHaveTitle = true;
     expect(dispatchSpy).toHaveBeenCalledWith("CREATE_CHART", payload);
@@ -355,7 +354,7 @@ describe("Insert chart menu item", () => {
     setSelection(model, ["A2:B5"]);
     insertChart();
     const payload = { ...defaultPayload };
-    payload.definition.dataSets = ["B2:B5"];
+    payload.definition.dataSets = [{ dataRange: "B2:B5", yAxisId: "y" }];
     payload.definition.labelRange = "A2:A5";
     expect(dispatchSpy).toHaveBeenCalledWith("CREATE_CHART", payload);
   });
@@ -364,56 +363,17 @@ describe("Insert chart menu item", () => {
     setSelection(model, ["A1:B5"]);
     insertChart();
     const payload = { ...defaultPayload };
-    payload.definition.dataSets = ["B1:B5"];
+    payload.definition.dataSets = [{ dataRange: "B1:B5", yAxisId: "y" }];
     payload.definition.labelRange = "A1:A5";
     payload.definition.dataSetsHaveTitle = true;
     expect(dispatchSpy).toHaveBeenCalledWith("CREATE_CHART", payload);
   });
 
-  test("Chart title should be set by default if dataset have any", () => {
-    setSelection(model, ["B1:C4"]);
-    insertChart();
-    const payload = { ...defaultPayload };
-    payload.definition.dataSets = ["C1:C4"];
-    payload.definition.legendPosition = "none";
-    payload.definition.title = "";
-    payload.definition.dataSetsHaveTitle = false;
-    payload.definition.labelRange = "B1:B4";
-    expect(dispatchSpy).toHaveBeenCalledWith("CREATE_CHART", payload);
-  });
-  test("Chart title should only generate string and numerical values", async () => {
-    setSelection(model, ["C1:G4"]);
-    insertChart();
-    const payload = { ...defaultPayload };
-    payload.definition.dataSets = ["D1:G4"];
-    payload.definition.legendPosition = "top";
-    payload.definition.title = "Title1 and 3";
-    payload.definition.dataSetsHaveTitle = true;
-    payload.definition.labelRange = "C1:C4";
-    payload.definition.type = "line";
-    payload.definition.cumulative = false;
-    payload.definition.labelsAsText = false;
-    expect(dispatchSpy).toHaveBeenCalledWith("CREATE_CHART", payload);
-  });
-  test("Chart title should only append and prefix to last title", () => {
-    setSelection(model, ["C1:H4"]);
-    insertChart();
-    const payload = { ...defaultPayload };
-    payload.definition.dataSets = ["D1:H4"];
-    payload.definition.legendPosition = "top";
-    payload.definition.title = "Title1, 3 and Title2";
-    payload.definition.dataSetsHaveTitle = true;
-    payload.definition.labelRange = "C1:C4";
-    payload.definition.type = "line";
-    payload.definition.cumulative = false;
-    payload.definition.labelsAsText = false;
-    expect(dispatchSpy).toHaveBeenCalledWith("CREATE_CHART", payload);
-  });
   test("[Case 1] Chart is inserted with proper legend position", () => {
     setSelection(model, ["A1:B5"]);
     insertChart();
     const payload = { ...defaultPayload };
-    payload.definition.dataSets = ["B1:B5"];
+    payload.definition.dataSets = [{ dataRange: "B1:B5", yAxisId: "y" }];
     payload.definition.labelRange = "A1:A5";
     payload.definition.dataSetsHaveTitle = true;
     payload.definition.legendPosition = "none";
@@ -423,7 +383,7 @@ describe("Insert chart menu item", () => {
     setSelection(model, ["F1:I5"]);
     insertChart();
     const payload = { ...defaultPayload };
-    payload.definition.dataSets = ["G1:I5"];
+    payload.definition.dataSets = [{ dataRange: "G1:I5", yAxisId: "y" }];
     payload.definition.dataSetsHaveTitle = true;
     payload.definition.labelRange = "F1:F5";
     payload.definition.legendPosition = "top";
@@ -440,7 +400,7 @@ describe("Insert chart menu item", () => {
     const payload = { ...defaultPayload };
     payload.definition = {
       keyValue: "K5",
-      title: expect.any(String),
+      title: {},
       type: "scorecard",
       baselineColorDown: DEFAULT_SCORECARD_BASELINE_COLOR_DOWN,
       baselineColorUp: DEFAULT_SCORECARD_BASELINE_COLOR_UP,
@@ -453,7 +413,7 @@ describe("Insert chart menu item", () => {
     setSelection(model, ["K5"]);
     insertChart();
     const payload = { ...defaultPayload };
-    payload.definition.dataSets = ["K5"];
+    payload.definition.dataSets = [{ dataRange: "K5", yAxisId: "y" }];
     expect(dispatchSpy).toHaveBeenCalledWith("CREATE_CHART", payload);
   });
 
@@ -461,7 +421,7 @@ describe("Insert chart menu item", () => {
     setSelection(model, ["A2"]);
     insertChart();
     const payload = { ...defaultPayload };
-    payload.definition.dataSets = ["B1:H5"];
+    payload.definition.dataSets = [{ dataRange: "B1:H5", yAxisId: "y" }];
     payload.definition.labelRange = "A1:A5";
     payload.definition.dataSetsHaveTitle = true;
     payload.definition.legendPosition = "top";
@@ -480,7 +440,7 @@ describe("Insert chart menu item", () => {
     setSelection(model, ["K1"]);
     insertChart();
     const payload = { ...defaultPayload };
-    payload.definition.dataSets = ["L1:L3"];
+    payload.definition.dataSets = [{ dataRange: "L1:L3", yAxisId: "y" }];
     payload.definition.labelRange = "K1:K3";
     payload.definition.type = "line";
     payload.definition.cumulative = false;
@@ -500,12 +460,37 @@ describe("Insert chart menu item", () => {
     setSelection(model, ["K1"]);
     insertChart();
     const payload = { ...defaultPayload };
-    payload.definition.dataSets = ["L1:L3"];
+    payload.definition.dataSets = [{ dataRange: "L1:L3", yAxisId: "y" }];
     payload.definition.labelRange = "K1:K3";
     payload.definition.type = "line";
     payload.definition.cumulative = false;
     payload.definition.labelsAsText = false;
     expect(dispatchSpy).toHaveBeenCalledWith("CREATE_CHART", payload);
     expect(zoneToXc(model.getters.getSelectedZone())).toBe("K1:L3");
+  });
+
+  test("Chart with only one column of text cells is a count pie chart", () => {
+    setCellContent(model, "K1", "London");
+    setCellContent(model, "K2", "Berlin");
+    setCellContent(model, "K3", "Paris");
+    setCellContent(model, "K4", "Paris");
+    setCellContent(model, "K5", "Paris");
+    setCellContent(model, "K6", "London");
+
+    setSelection(model, ["K1:K6"]);
+    insertChart();
+    const payload = {
+      ...defaultPayload,
+      definition: {
+        dataSets: [{ dataRange: "K1:K6" }],
+        labelRange: "K1:K6",
+        aggregated: true,
+        legendPosition: "top",
+        type: "pie",
+        dataSetsHaveTitle: false,
+        title: {},
+      },
+    };
+    expect(dispatchSpy).toHaveBeenCalledWith("CREATE_CHART", payload);
   });
 });

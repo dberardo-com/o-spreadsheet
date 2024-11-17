@@ -5,10 +5,12 @@ import {
   getUnquotedSheetName,
   groupConsecutive,
   includesAll,
+  isColorValid,
   isDefined,
   isZoneInside,
   isZoneValid,
-  positions,
+  largeMax,
+  largeMin,
   range,
   toCartesian,
 } from "../../helpers/index";
@@ -56,7 +58,6 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     "getSheetIds",
     "getVisibleSheetIds",
     "isSheetVisible",
-    "getEvaluationSheets",
     "doesHeaderExist",
     "doesHeadersExist",
     "getCell",
@@ -69,7 +70,6 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     "getNumberHeaders",
     "getGridLinesVisibility",
     "getNextSheetName",
-    "isEmpty",
     "getSheetSize",
     "getSheetZone",
     "getPaneDivisions",
@@ -117,6 +117,10 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
         }
       case "RENAME_SHEET":
         return this.isRenameAllowed(cmd);
+      case "COLOR_SHEET":
+        return !cmd.color || isColorValid(cmd.color)
+          ? CommandResult.Success
+          : CommandResult.InvalidColor;
       case "DELETE_SHEET":
         return this.orderedSheetIds.length > 1
           ? CommandResult.Success
@@ -129,8 +133,8 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
         }
         return CommandResult.Success;
       case "REMOVE_COLUMNS_ROWS": {
-        const min = Math.min(...cmd.elements);
-        const max = Math.max(...cmd.elements);
+        const min = largeMin(cmd.elements);
+        const max = largeMax(cmd.elements);
         if (min < 0 || !this.doesHeaderExist(cmd.sheetId, cmd.dimension, max)) {
           return CommandResult.InvalidHeaderIndex;
         } else if (
@@ -165,9 +169,6 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
       case "SET_GRID_LINES_VISIBILITY":
         this.setGridLinesVisibility(cmd.sheetId, cmd.areGridLinesVisible);
         break;
-      case "DELETE_CONTENT":
-        this.clearZones(cmd.sheetId, cmd.target);
-        break;
       case "CREATE_SHEET":
         const sheet = this.createSheet(
           cmd.sheetId,
@@ -183,6 +184,9 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
         break;
       case "RENAME_SHEET":
         this.renameSheet(this.sheets[cmd.sheetId]!, cmd.name!);
+        break;
+      case "COLOR_SHEET":
+        this.history.update("sheets", cmd.sheetId, "color", cmd.color);
         break;
       case "HIDE_SHEET":
         this.hideSheet(cmd.sheetId);
@@ -259,6 +263,7 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
           xSplit: sheetData.panes?.xSplit || 0,
           ySplit: sheetData.panes?.ySplit || 0,
         },
+        color: sheetData.color,
       };
       this.orderedSheetIds.push(sheet.id);
       this.sheets[sheet.id] = sheet;
@@ -277,12 +282,16 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
         cols: {},
         merges: [],
         cells: {},
+        styles: {},
+        formats: {},
+        borders: {},
         conditionalFormats: [],
         figures: [],
-        filterTables: [],
+        tables: [],
         areGridLinesVisible:
           sheet.areGridLinesVisible === undefined ? true : sheet.areGridLinesVisible,
         isVisible: sheet.isVisible,
+        color: sheet.color,
       };
       if (sheet.panes.xSplit || sheet.panes.ySplit) {
         sheetData.panes = sheet.panes;
@@ -357,10 +366,6 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     return this.orderedSheetIds.filter(this.isSheetVisible.bind(this));
   }
 
-  getEvaluationSheets(): Record<UID, Sheet | undefined> {
-    return this.sheets;
-  }
-
   doesHeaderExist(sheetId: UID, dimension: Dimension, index: number) {
     return dimension === "COL"
       ? index >= 0 && index < this.getNumberCols(sheetId)
@@ -369,14 +374,6 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
 
   doesHeadersExist(sheetId: UID, dimension: Dimension, headerIndexes: HeaderIndex[]): boolean {
     return headerIndexes.every((index) => this.doesHeaderExist(sheetId, dimension, index));
-  }
-
-  getRow(sheetId: UID, index: HeaderIndex): Row {
-    const row = this.getSheet(sheetId).rows[index];
-    if (!row) {
-      throw new Error(`Row ${row} not found.`);
-    }
-    return row;
   }
 
   getCell({ sheetId, col, row }: CellPosition): Cell | undefined {
@@ -457,7 +454,7 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     };
   }
 
-  getUnboundedZone(sheetId: UID, zone: Zone): UnboundedZone {
+  getUnboundedZone(sheetId: UID, zone: Zone | UnboundedZone): UnboundedZone {
     const isFullRow = zone.left === 0 && zone.right === this.getNumberCols(sheetId) - 1;
     const isFullCol = zone.top === 0 && zone.bottom === this.getNumberRows(sheetId) - 1;
     return {
@@ -507,15 +504,6 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
   // Row/Col manipulation
   // ---------------------------------------------------------------------------
 
-  /**
-   * Check if a zone only contains empty cells
-   */
-  isEmpty(sheetId: UID, zone: Zone): boolean {
-    return positions(zone)
-      .map(({ col, row }) => this.getCell({ sheetId, col, row }))
-      .every((cell) => !cell || cell.content === "");
-  }
-
   getCommandZones(cmd: Command): Zone[] {
     const zones: Zone[] = [];
     if ("zone" in cmd) {
@@ -551,7 +539,7 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     return CommandResult.Success;
   }
 
-  private updateCellPosition(cmd: UpdateCellPositionCommand) {
+  private updateCellPosition(cmd: Omit<UpdateCellPositionCommand, "type">) {
     const { sheetId, cellId, col, row } = cmd;
     if (cellId) {
       this.setNewPosition(cellId, sheetId, col, row);
@@ -589,24 +577,6 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
 
   private setGridLinesVisibility(sheetId: UID, areGridLinesVisible: boolean) {
     this.history.update("sheets", sheetId, "areGridLinesVisible", areGridLinesVisible);
-  }
-
-  private clearZones(sheetId: UID, zones: Zone[]) {
-    for (let zone of zones) {
-      for (let col = zone.left; col <= zone.right; col++) {
-        for (let row = zone.top; row <= zone.bottom; row++) {
-          const cell = this.sheets[sheetId]!.rows[row].cells[col];
-          if (cell) {
-            this.dispatch("UPDATE_CELL", {
-              sheetId: sheetId,
-              content: "",
-              col,
-              row,
-            });
-          }
-        }
-      }
-    }
   }
 
   private createSheet(
@@ -856,11 +826,13 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     rows.sort((a, b) => b - a);
 
     for (let group of groupConsecutive(rows)) {
+      // indexes are sorted in the descending order
+      const from = group[group.length - 1];
+      const to = group[0];
       // Move the cells.
-      this.moveCellOnRowsDeletion(sheet, group[group.length - 1], group[0]);
-
-      // Effectively delete the element and recompute the left-right/top-bottom.
-      group.map((row) => this.updateRowsStructureOnDeletion(row, sheet));
+      this.moveCellOnRowsDeletion(sheet, from, to);
+      // Effectively delete the rows
+      this.updateRowsStructureOnDeletion(sheet, from, to);
     }
     const count = rows.filter((row) => row < sheet.panes.ySplit).length;
     if (count) {
@@ -892,34 +864,32 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     // Move the cells.
     this.moveCellsOnAddition(sheet, index, quantity, "rows");
 
-    // Recompute the left-right/top-bottom.
-    this.updateRowsStructureOnAddition(sheet, row, quantity);
     if (index < sheet.panes.ySplit) {
       this.setPaneDivisions(sheet.id, sheet.panes.ySplit + quantity, "ROW");
     }
   }
 
   private moveCellOnColumnsDeletion(sheet: Sheet, deletedColumn: number) {
+    this.dispatch("CLEAR_CELLS", {
+      sheetId: sheet.id,
+      target: [
+        {
+          left: deletedColumn,
+          top: 0,
+          right: deletedColumn,
+          bottom: sheet.rows.length - 1,
+        },
+      ],
+    });
+
     for (let rowIndex = 0; rowIndex < sheet.rows.length; rowIndex++) {
       const row = sheet.rows[rowIndex];
       for (let i in row.cells) {
         const colIndex = Number(i);
         const cellId = row.cells[i];
         if (cellId) {
-          if (colIndex === deletedColumn) {
-            this.dispatch("CLEAR_CELL", {
-              sheetId: sheet.id,
-              col: colIndex,
-              row: rowIndex,
-            });
-          }
           if (colIndex > deletedColumn) {
-            this.dispatch("UPDATE_CELL_POSITION", {
-              sheetId: sheet.id,
-              cellId: cellId,
-              col: colIndex - 1,
-              row: rowIndex,
-            });
+            this.setNewPosition(cellId, sheet.id, colIndex - 1, rowIndex);
           }
         }
       }
@@ -935,7 +905,7 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     quantity: number,
     dimension: "rows" | "columns"
   ) {
-    const commands: UpdateCellPositionCommand[] = [];
+    const updates: UpdateCellPositionCommand[] = [];
     for (let rowIndex = 0; rowIndex < sheet.rows.length; rowIndex++) {
       const row = sheet.rows[rowIndex];
       if (dimension !== "rows" || rowIndex >= addedElement) {
@@ -944,20 +914,20 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
           const cellId = row.cells[i];
           if (cellId) {
             if (dimension === "rows" || colIndex >= addedElement) {
-              commands.push({
-                type: "UPDATE_CELL_POSITION",
+              updates.push({
                 sheetId: sheet.id,
                 cellId: cellId,
                 col: colIndex + (dimension === "columns" ? quantity : 0),
                 row: rowIndex + (dimension === "rows" ? quantity : 0),
+                type: "UPDATE_CELL_POSITION",
               });
             }
           }
         }
       }
     }
-    for (let cmd of commands.reverse()) {
-      this.dispatch(cmd.type, cmd);
+    for (let update of updates.reverse()) {
+      this.updateCellPosition(update);
     }
   }
 
@@ -974,69 +944,49 @@ export class SheetPlugin extends CorePlugin<SheetState> implements SheetState {
     deleteFromRow: HeaderIndex,
     deleteToRow: HeaderIndex
   ) {
+    this.dispatch("CLEAR_CELLS", {
+      sheetId: sheet.id,
+      target: [
+        {
+          left: 0,
+          top: deleteFromRow,
+          right: this.getters.getNumberCols(sheet.id),
+          bottom: deleteToRow,
+        },
+      ],
+    });
+
     const numberRows = deleteToRow - deleteFromRow + 1;
     for (let rowIndex = 0; rowIndex < sheet.rows.length; rowIndex++) {
       const row = sheet.rows[rowIndex];
-      if (rowIndex >= deleteFromRow && rowIndex <= deleteToRow) {
-        for (let i in row.cells) {
-          const colIndex = Number(i);
-          const cellId = row.cells[i];
-          if (cellId) {
-            this.dispatch("CLEAR_CELL", {
-              sheetId: sheet.id,
-              col: colIndex,
-              row: rowIndex,
-            });
-          }
-        }
-      }
       if (rowIndex > deleteToRow) {
         for (let i in row.cells) {
           const colIndex = Number(i);
           const cellId = row.cells[i];
           if (cellId) {
-            this.dispatch("UPDATE_CELL_POSITION", {
-              sheetId: sheet.id,
-              cellId: cellId,
-              col: colIndex,
-              row: rowIndex - numberRows,
-            });
+            this.setNewPosition(cellId, sheet.id, colIndex, rowIndex - numberRows);
           }
         }
       }
     }
   }
 
-  private updateRowsStructureOnDeletion(index: HeaderIndex, sheet: Sheet) {
+  private updateRowsStructureOnDeletion(
+    sheet: Sheet,
+    deleteFromRow: HeaderIndex,
+    deleteToRow: HeaderIndex
+  ) {
     const rows: Row[] = [];
-    const cellsQueue = sheet.rows.map((row) => row.cells);
+    const cellsQueue = sheet.rows.map((row) => row.cells).reverse();
     for (let i in sheet.rows) {
-      if (Number(i) === index) {
+      const row = Number(i);
+      if (row >= deleteFromRow && row <= deleteToRow) {
         continue;
       }
       rows.push({
-        cells: cellsQueue.shift()!,
+        cells: cellsQueue.pop()!,
       });
     }
-    this.history.update("sheets", sheet.id, "rows", rows);
-  }
-
-  /**
-   * Update the rows of the sheet after an addition:
-   * - Rename the rows
-   *
-   * @param sheet Sheet on which the deletion occurs
-   * @param addedRow Index of the added row
-   * @param rowsToAdd Number of the rows to add
-   */
-  private updateRowsStructureOnAddition(sheet: Sheet, addedRow: HeaderIndex, rowsToAdd: number) {
-    const rows: Row[] = [];
-    const cellsQueue = sheet.rows.map((row) => row.cells);
-    sheet.rows.forEach(() =>
-      rows.push({
-        cells: cellsQueue.shift()!,
-      })
-    );
     this.history.update("sheets", sheet.id, "rows", rows);
   }
 

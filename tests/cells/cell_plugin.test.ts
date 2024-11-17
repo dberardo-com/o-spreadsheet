@@ -6,6 +6,8 @@ import { CellValueType, CommandResult } from "../../src/types";
 import {
   addColumns,
   addRows,
+  clearCell,
+  clearCells,
   copy,
   createSheet,
   deleteColumns,
@@ -15,6 +17,7 @@ import {
   renameSheet,
   setCellContent,
   setCellFormat,
+  setStyle,
   undo,
 } from "../test_helpers/commands_helpers";
 import {
@@ -67,15 +70,175 @@ describe("getCellText", () => {
     expect(result).toBeCancelledBecause(CommandResult.TargetOutOfSheet);
   });
 
-  test("clear cell outside of sheet", () => {
+  test("update cell outside of sheet (without any modification)", () => {
     const model = new Model();
     const sheetId = model.getters.getActiveSheetId();
-    const result = model.dispatch("CLEAR_CELL", {
+    const result = model.dispatch("UPDATE_CELL", {
       sheetId,
       col: 9999,
       row: 9999,
     });
-    expect(result).toBeCancelledBecause(CommandResult.TargetOutOfSheet);
+    expect(result).toBeCancelledBecause(CommandResult.TargetOutOfSheet, CommandResult.NoChanges);
+  });
+
+  test("update cell without any modification", () => {
+    const model = new Model();
+    const sheetId = model.getters.getActiveSheetId();
+    const result = model.dispatch("UPDATE_CELL", {
+      sheetId,
+      col: 0,
+      row: 0,
+    });
+    expect(result).toBeCancelledBecause(CommandResult.NoChanges);
+  });
+
+  test("update cell with only the same content as before", () => {
+    const model = new Model();
+    const sheetId = model.getters.getActiveSheetId();
+    setCellContent(model, "A1", "hello");
+    setCellFormat(model, "A1", "#,##0.0");
+    setStyle(model, "A1", { bold: true });
+    const result = model.dispatch("UPDATE_CELL", {
+      sheetId,
+      col: 0,
+      row: 0,
+      content: "hello",
+    });
+    expect(result).toBeCancelledBecause(CommandResult.NoChanges);
+  });
+
+  test("update cell with only the same format as before", () => {
+    const model = new Model();
+    const sheetId = model.getters.getActiveSheetId();
+    setCellContent(model, "A1", "0");
+    setCellFormat(model, "A1", "#,##0.0");
+    setStyle(model, "A1", { bold: true });
+    const result = model.dispatch("UPDATE_CELL", {
+      sheetId,
+      col: 0,
+      row: 0,
+      format: "#,##0.0",
+    });
+    expect(result).toBeCancelledBecause(CommandResult.NoChanges);
+  });
+
+  test("update cell with only the same style as before", () => {
+    const model = new Model();
+    const sheetId = model.getters.getActiveSheetId();
+    setCellContent(model, "A1", "0");
+    setCellFormat(model, "A1", "#,##0.0");
+    setStyle(model, "A1", { bold: true });
+    const result = model.dispatch("UPDATE_CELL", {
+      sheetId,
+      col: 0,
+      row: 0,
+      style: { bold: true },
+    });
+    expect(result).toBeCancelledBecause(CommandResult.NoChanges);
+  });
+
+  test("update cell with the same style, content and format as before", () => {
+    const model = new Model();
+    const sheetId = model.getters.getActiveSheetId();
+    setCellContent(model, "A1", "hello");
+    setCellFormat(model, "A1", "#,##0.0");
+    setStyle(model, "A1", { bold: true });
+    const result = model.dispatch("UPDATE_CELL", {
+      sheetId,
+      col: 0,
+      row: 0,
+      content: "hello",
+      format: "#,##0.0",
+      style: { bold: true },
+    });
+    expect(result).toBeCancelledBecause(CommandResult.NoChanges);
+  });
+
+  test("clear content", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "hello");
+    clearCell(model, "A1");
+    expect(getCell(model, "A1")).toBeUndefined();
+  });
+
+  test("clear some content", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "hello");
+    setCellContent(model, "A2", "there");
+    clearCells(model, ["A1:A2"]);
+    expect(getCell(model, "A1")).toBeUndefined();
+    expect(getCell(model, "A2")).toBeUndefined();
+  });
+
+  test("clear some style", () => {
+    const model = new Model();
+    setStyle(model, "A1", { bold: true });
+    clearCell(model, "A1");
+    expect(getCell(model, "A1")).toBeUndefined();
+  });
+
+  test("clear some style", () => {
+    const model = new Model();
+    setStyle(model, "A1", { bold: true });
+    setStyle(model, "A2", { italic: true });
+    clearCells(model, ["A1:A2"]);
+    expect(getCell(model, "A1")).toBeUndefined();
+    expect(getCell(model, "A2")).toBeUndefined();
+  });
+
+  test("clear format", () => {
+    const model = new Model();
+    setCellFormat(model, "A1", "#,##0.0");
+    clearCell(model, "A1");
+    expect(getCell(model, "A1")).toBeUndefined();
+  });
+
+  test("clear some format", () => {
+    const model = new Model();
+    setCellFormat(model, "A1", "#,##0.0");
+    setCellFormat(model, "A2", "0%");
+    clearCells(model, ["A1:A2"]);
+    expect(getCell(model, "A1")).toBeUndefined();
+  });
+
+  test("clear content, style and format", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "hello");
+    setStyle(model, "A1", { bold: true });
+    setCellFormat(model, "A1", "#,##0.0");
+    clearCell(model, "A1");
+    expect(getCell(model, "A1")).toBeUndefined();
+  });
+
+  test("clear some content, style and format", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "hello");
+    setCellContent(model, "A2", "there");
+    setStyle(model, "A1", { bold: true });
+    setStyle(model, "A2", { italic: true });
+    setCellFormat(model, "A1", "#,##0.0");
+    setCellFormat(model, "A2", "0%");
+    clearCells(model, ["A1", "A2"]);
+    expect(getCell(model, "A1")).toBeUndefined();
+    expect(getCell(model, "A2")).toBeUndefined();
+  });
+
+  test("clear cell outside of sheet", () => {
+    const model = new Model();
+    const result = clearCell(model, "AAA999");
+    expect(result).toBeCancelledBecause(CommandResult.TargetOutOfSheet, CommandResult.NoChanges);
+  });
+
+  test("clear cell is cancelled if there is nothing on the cell", () => {
+    const model = new Model();
+    const result = clearCell(model, "A1");
+    expect(result).toBeCancelledBecause(CommandResult.NoChanges);
+  });
+
+  test("escape character is not display when formatting string", () => {
+    const model = new Model();
+    setCellContent(model, "A1", '="hello \\"world\\""');
+    expect(getEvaluatedCell(model, "A1")?.formattedValue).toBe('hello "world"');
   });
 });
 
@@ -219,14 +382,22 @@ describe("link cell", () => {
       const cell = getEvaluatedCell(model, "A1");
       expect(cell.value).toBe(markdown);
       expect(cell.type).toBe(CellValueType.text);
+      expect(cell.link).toBeFalsy();
     }
   );
 
-  test("a markdown link in a markdown link", () => {
+  test.each([
+    ["[label](url)", "label", "https://url"],
+    ["[[label](link)](http://odoo.com)", "[label](link)", "http://odoo.com"],
+    ["[lab[el](url)", "lab[el", "https://url"],
+    ["[lab]el](url)", "lab]el", "https://url"],
+    ["[[label]](url)", "[label]", "https://url"],
+  ])("valid markdown %s is recognized as link", (markdown, label, link) => {
     const model = new Model();
-    setCellContent(model, "A1", `[[label](link)](http://odoo.com)`);
-    expect(getEvaluatedCell(model, "A1").type).toBe(CellValueType.text);
-    expect(getCell(model, "A1")?.content).toBe("[[label](link)](http://odoo.com)");
+    setCellContent(model, "A1", markdown);
+    const cell = getEvaluatedCell(model, "A1");
+    expect(cell.link?.label).toBe(label);
+    expect(cell.link?.url).toBe(link);
   });
 
   test("can create a sheet link", () => {
@@ -398,8 +569,8 @@ test.each([
     const exportedData = model.exportData();
     expect(exportedData.sheets[0].cells.A1).toMatchObject({
       content: value,
-      format: 1,
     });
+    expect(exportedData.sheets[0].formats.A1).toBe(1);
     expect(exportedData.formats["1"]).toEqual(format);
   }
 );

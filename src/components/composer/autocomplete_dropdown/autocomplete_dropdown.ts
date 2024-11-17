@@ -1,6 +1,6 @@
-import { Component } from "@odoo/owl";
+import { Component, useEffect, useRef } from "@odoo/owl";
+import { AutoCompleteProposal } from "../../../registries";
 import { css } from "../../helpers/css";
-import { AutocompleteValue } from "../composer/composer";
 
 css/* scss */ `
   .o-autocomplete-dropdown {
@@ -8,6 +8,7 @@ css/* scss */ `
     cursor: pointer;
     background-color: #fff;
     max-width: 400px;
+    z-index: 1;
 
     .o-autocomplete-value-focus {
       background-color: #f2f2f2;
@@ -24,21 +25,33 @@ css/* scss */ `
 `;
 
 interface Props {
-  values: AutocompleteValue[];
+  proposals: AutoCompleteProposal[];
   selectedIndex: number | undefined;
-  getHtmlContent: (value: string) => string;
   onValueSelected: (value: string) => void;
   onValueHovered: (index: string) => void;
 }
 
 export class TextValueProvider extends Component<Props> {
   static template = "o-spreadsheet-TextValueProvider";
-}
+  static props = {
+    proposals: Array,
+    selectedIndex: { type: Number, optional: true },
+    onValueSelected: Function,
+    onValueHovered: Function,
+  };
+  private autoCompleteListRef = useRef("autoCompleteList");
 
-TextValueProvider.props = {
-  values: Array,
-  selectedIndex: { type: Number, optional: true },
-  getHtmlContent: Function,
-  onValueSelected: Function,
-  onValueHovered: Function,
-};
+  setup() {
+    useEffect(
+      () => {
+        const selectedIndex = this.props.selectedIndex;
+        if (selectedIndex === undefined) {
+          return;
+        }
+        const selectedElement = this.autoCompleteListRef.el?.children[selectedIndex];
+        selectedElement?.scrollIntoView?.({ block: "nearest" });
+      },
+      () => [this.props.selectedIndex, this.autoCompleteListRef.el]
+    );
+  }
+}

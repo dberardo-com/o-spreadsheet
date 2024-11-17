@@ -2,8 +2,8 @@ import { Model } from "../../src";
 import { functionCache } from "../../src/formulas/compiler";
 import { compile } from "../../src/formulas/index";
 import { functionRegistry } from "../../src/functions";
-import { createRange } from "../../src/helpers";
-import { ArgType, CompiledFormula } from "../../src/types";
+import { createValidRange } from "../../src/helpers";
+import { CompiledFormula } from "../../src/types";
 import { evaluateCell, evaluateCellFormat, restoreDefaultFunctions } from "../test_helpers/helpers";
 
 function compiledBaseFunction(formula: string): CompiledFormula {
@@ -21,10 +21,6 @@ describe("expression compiler", () => {
   test.each(["=1", "=true", `="abc"`])("some arithmetic expressions", (formula) => {
     const compiledFormula = compiledBaseFunction(formula);
     expect(compiledFormula.execute.toString()).toMatchSnapshot();
-  });
-
-  test("simple values that throw error", () => {
-    expect(() => compiledBaseFunction(`='abc'`)).toThrowError();
   });
 
   test.each(["=1 + 3", "=2 * 3", "=2 - 3", "=2 / 3", "=-3", "=(3 + 1) * (-1 + 4)"])(
@@ -77,10 +73,6 @@ describe("expression compiler", () => {
     const compiledFormula = compiledBaseFunction("=sum(A1)");
     expect(compiledFormula.execute.toString()).toMatchSnapshot();
   });
-
-  test("cannot compile some invalid formulas", () => {
-    expect(() => compiledBaseFunction("=qsdf")).toThrow();
-  });
 });
 
 describe("compile functions", () => {
@@ -99,12 +91,11 @@ describe("compile functions", () => {
           { name: "arg1", description: "", type: ["ANY"] },
           { name: "arg2", description: "", type: ["ANY"] },
         ],
-        returns: ["ANY"],
       });
-      expect(() => compiledBaseFunction("=ANYFUNCTION()")).toThrow();
-      expect(() => compiledBaseFunction("=ANYFUNCTION(1)")).toThrow();
-      expect(() => compiledBaseFunction("=ANYFUNCTION(1,2)")).not.toThrow();
-      expect(() => compiledBaseFunction("=ANYFUNCTION(1,2,3)")).toThrow();
+      expect(compiledBaseFunction("=ANYFUNCTION()").isBadExpression).toBe(true);
+      expect(compiledBaseFunction("=ANYFUNCTION(1)").isBadExpression).toBe(true);
+      expect(compiledBaseFunction("=ANYFUNCTION(1,2)").isBadExpression).toBe(false);
+      expect(compiledBaseFunction("=ANYFUNCTION(1,2,3)").isBadExpression).toBe(true);
       restoreDefaultFunctions();
     });
 
@@ -118,11 +109,10 @@ describe("compile functions", () => {
           { name: "arg1", description: "", type: ["ANY"] },
           { name: "arg2", description: "", type: ["ANY"], optional: true },
         ],
-        returns: ["ANY"],
       });
-      expect(() => compiledBaseFunction("=OPTIONAL(1)")).not.toThrow();
-      expect(() => compiledBaseFunction("=OPTIONAL(1,2)")).not.toThrow();
-      expect(() => compiledBaseFunction("=OPTIONAL(1,2,3)")).toThrow();
+      expect(compiledBaseFunction("=OPTIONAL(1)").isBadExpression).toBe(false);
+      expect(compiledBaseFunction("=OPTIONAL(1,2)").isBadExpression).toBe(false);
+      expect(compiledBaseFunction("=OPTIONAL(1,2,3)").isBadExpression).toBe(true);
       restoreDefaultFunctions();
     });
 
@@ -136,11 +126,10 @@ describe("compile functions", () => {
           { name: "arg1", description: "", type: ["ANY"] },
           { name: "arg2", description: "", type: ["ANY"], default: true, defaultValue: 42 },
         ],
-        returns: ["ANY"],
       });
-      expect(() => compiledBaseFunction("=USEDEFAULTARG(1)")).not.toThrow();
-      expect(() => compiledBaseFunction("=USEDEFAULTARG(1,2)")).not.toThrow();
-      expect(() => compiledBaseFunction("=USEDEFAULTARG(1,2,3)")).toThrow();
+      expect(compiledBaseFunction("=USEDEFAULTARG(1)").isBadExpression).toBe(false);
+      expect(compiledBaseFunction("=USEDEFAULTARG(1,2)").isBadExpression).toBe(false);
+      expect(compiledBaseFunction("=USEDEFAULTARG(1,2,3)").isBadExpression).toBe(true);
       restoreDefaultFunctions();
     });
 
@@ -154,11 +143,10 @@ describe("compile functions", () => {
           { name: "arg1", description: "", type: ["ANY"] },
           { name: "arg2", description: "", type: ["ANY"], optional: true, repeating: true },
         ],
-        returns: ["ANY"],
       });
-      expect(() => compiledBaseFunction("=REPEATABLE(1)")).not.toThrow();
-      expect(() => compiledBaseFunction("=REPEATABLE(1,2)")).not.toThrow();
-      expect(() => compiledBaseFunction("=REPEATABLE(1,2,3,4,5,6)")).not.toThrow();
+      expect(compiledBaseFunction("=REPEATABLE(1)").isBadExpression).toBe(false);
+      expect(compiledBaseFunction("=REPEATABLE(1,2)").isBadExpression).toBe(false);
+      expect(compiledBaseFunction("=REPEATABLE(1,2,3,4,5,6)").isBadExpression).toBe(false);
       restoreDefaultFunctions();
     });
 
@@ -173,12 +161,11 @@ describe("compile functions", () => {
           { name: "arg2", description: "", type: ["ANY"], optional: true, repeating: true },
           { name: "arg3", description: "", type: ["ANY"], optional: true, repeating: true },
         ],
-        returns: ["ANY"],
       });
-      expect(() => compiledBaseFunction("=REPEATABLES(1, 2)")).toThrow();
-      expect(() => compiledBaseFunction("=REPEATABLES(1, 2, 3)")).not.toThrow();
-      expect(() => compiledBaseFunction("=REPEATABLES(1, 2, 3, 4)")).toThrow();
-      expect(() => compiledBaseFunction("=REPEATABLES(1, 2, 3, 4, 5)")).not.toThrow();
+      expect(compiledBaseFunction("=REPEATABLES(1, 2)").isBadExpression).toBe(true);
+      expect(compiledBaseFunction("=REPEATABLES(1, 2, 3)").isBadExpression).toBe(false);
+      expect(compiledBaseFunction("=REPEATABLES(1, 2, 3, 4)").isBadExpression).toBe(true);
+      expect(compiledBaseFunction("=REPEATABLES(1, 2, 3, 4, 5)").isBadExpression).toBe(false);
       restoreDefaultFunctions();
     });
   });
@@ -192,12 +179,11 @@ describe("compile functions", () => {
           { name: "arg2", description: "", type: ["ANY"] },
         ],
         compute: (arg1, arg2) => {
-          return arg2 === undefined;
+          return {
+            value: arg2 === undefined,
+            format: arg2 === undefined ? '"TRUE"' : '"FALSE"',
+          };
         },
-        computeFormat: (arg1, arg2) => {
-          return arg2 === undefined ? "TRUE" : "FALSE";
-        },
-        returns: ["BOOLEAN"],
       });
 
       functionRegistry.add("SECONDARGDEFAULTVALUEEQUAL42", {
@@ -206,18 +192,11 @@ describe("compile functions", () => {
           { name: "arg1", description: "", type: ["ANY"] },
           { name: "arg2", description: "", type: ["ANY"], default: true, defaultValue: 42 },
         ],
-        compute: (arg1, arg2 = 42) => {
-          return arg2 === 42;
+        compute: (arg1, arg2 = { value: 42, format: "42" }) => {
+          return !Array.isArray(arg2) && arg2.value === 42 && arg2.format === "42"
+            ? { value: true, format: '"TRUE"' }
+            : { value: false, format: '"FALSE"' };
         },
-        computeFormat: (arg1, arg2 = { value: 42, format: "42" }) => {
-          return !Array.isArray(arg2) &&
-            typeof arg2 !== "function" &&
-            arg2.value === 42 &&
-            arg2.format === "42"
-            ? "TRUE"
-            : "FALSE";
-        },
-        returns: ["ANY"],
       });
     });
     afterAll(() => {
@@ -225,195 +204,17 @@ describe("compile functions", () => {
     });
     test("empty value interpreted as undefined", () => {
       expect(evaluateCell("A1", { A1: "=ISSECONDARGUNDEFINED(1,)" })).toBe(true);
-      expect(evaluateCellFormat("A1", { A1: "=ISSECONDARGUNDEFINED(1,)" })).toBe("TRUE");
+      expect(evaluateCellFormat("A1", { A1: "=ISSECONDARGUNDEFINED(1,)" })).toBe('"TRUE"');
     });
 
     test("if default value --> empty value interpreted as default value", () => {
       expect(evaluateCell("A1", { A1: "=SECONDARGDEFAULTVALUEEQUAL42(1,)" })).toBe(true);
-      expect(evaluateCellFormat("A1", { A1: "=SECONDARGDEFAULTVALUEEQUAL42(1,)" })).toBe("TRUE");
+      expect(evaluateCellFormat("A1", { A1: "=SECONDARGDEFAULTVALUEEQUAL42(1,)" })).toBe('"TRUE"');
     });
 
     test("if default value --> non-value interpreted as default value", () => {
       expect(evaluateCell("A1", { A1: "=SECONDARGDEFAULTVALUEEQUAL42(1)" })).toBe(true);
-      expect(evaluateCellFormat("A1", { A1: "=SECONDARGDEFAULTVALUEEQUAL42(1)" })).toBe("TRUE");
-    });
-  });
-
-  describe("check type of arguments", () => {
-    afterAll(() => {
-      restoreDefaultFunctions();
-    });
-    test("reject non-range argument when expecting only range argument", () => {
-      functionRegistry.add("RANGEEXPECTED", {
-        description: "function expect number in 1st arg",
-        compute: (arg) => {
-          return true;
-        },
-        args: [{ name: "arg1", description: "", type: ["RANGE"] }],
-        returns: ["ANY"],
-      });
-
-      functionRegistry.add("FORMULA_RETURNING_RANGE", {
-        description: "function returning range",
-        compute: (arg) => {
-          return [["cucumber"]];
-        },
-        args: [],
-        returns: ["RANGE"],
-      });
-
-      functionRegistry.add("FORMULA_NOT_RETURNING_RANGE", {
-        description: "function returning range",
-        compute: (arg) => {
-          return "cucumber";
-        },
-        args: [],
-        returns: ["STRING"],
-      });
-
-      expect(() => compiledBaseFunction("=RANGEEXPECTED(42)")).toThrowError(
-        "Function RANGEEXPECTED expects the parameter 1 to be reference to a cell or range, not a number."
-      );
-      expect(() => compiledBaseFunction('=RANGEEXPECTED("test")')).toThrowError(
-        "Function RANGEEXPECTED expects the parameter 1 to be reference to a cell or range, not a string."
-      );
-      expect(() => compiledBaseFunction("=RANGEEXPECTED(TRUE)")).toThrowError(
-        "Function RANGEEXPECTED expects the parameter 1 to be reference to a cell or range, not a boolean."
-      );
-      expect(() =>
-        compiledBaseFunction("=RANGEEXPECTED(FORMULA_NOT_RETURNING_RANGE())")
-      ).toThrowError(
-        "Function RANGEEXPECTED expects the parameter 1 to be reference to a cell or range, not a funcall."
-      );
-
-      expect(() => compiledBaseFunction("=RANGEEXPECTED(A1)")).not.toThrow();
-      expect(() => compiledBaseFunction("=RANGEEXPECTED(A1:A1)")).not.toThrow();
-      expect(() => compiledBaseFunction("=RANGEEXPECTED(A1:A2)")).not.toThrow();
-      expect(() => compiledBaseFunction("=RANGEEXPECTED(A1:A$2)")).not.toThrow();
-      expect(() => compiledBaseFunction("=RANGEEXPECTED(sheet2!A1:A$2)")).not.toThrow();
-      expect(() => compiledBaseFunction("=RANGEEXPECTED(FORMULA_RETURNING_RANGE())")).not.toThrow();
-    });
-
-    test("reject range when expecting only non-range argument", () => {
-      for (let typeExpected of ["ANY", "BOOLEAN", "DATE", "NUMBER", "STRING"] as ArgType[]) {
-        functionRegistry.add(typeExpected + "EXPECTED", {
-          description: "function expect number in 1st arg",
-          compute: () => {
-            return true;
-          },
-          args: [{ name: "arg1", description: "", type: [typeExpected] }],
-          returns: ["ANY"],
-        });
-      }
-
-      const m = new Model();
-      const sheetId = m.getters.getActiveSheetId();
-
-      expect(() => m.getters.evaluateFormula(sheetId, "=?ANYEXPECTED(A1:A2)")).toThrowError(
-        "Function ANYEXPECTED expects the parameter 1 to be a single value or a single cell reference, not a range."
-      );
-      expect(() => m.getters.evaluateFormula(sheetId, "=BOOLEANEXPECTED(A1:A2)")).toThrowError(
-        "Function BOOLEANEXPECTED expects the parameter 1 to be a single value or a single cell reference, not a range."
-      );
-      expect(() => m.getters.evaluateFormula(sheetId, "=DATEEXPECTED(A1:A2)")).toThrowError(
-        "Function DATEEXPECTED expects the parameter 1 to be a single value or a single cell reference, not a range."
-      );
-      expect(() => m.getters.evaluateFormula(sheetId, "=NUMBEREXPECTED(A1:A2)")).toThrowError(
-        "Function NUMBEREXPECTED expects the parameter 1 to be a single value or a single cell reference, not a range."
-      );
-      expect(() => m.getters.evaluateFormula(sheetId, "=STRINGEXPECTED(A1:A2)")).toThrowError(
-        "Function STRINGEXPECTED expects the parameter 1 to be a single value or a single cell reference, not a range."
-      );
-
-      expect(() => m.getters.evaluateFormula(sheetId, "=ANYEXPECTED(A1:A$2)")).toThrowError(
-        "Function ANYEXPECTED expects the parameter 1 to be a single value or a single cell reference, not a range."
-      );
-      expect(() => m.getters.evaluateFormula(sheetId, "=ANYEXPECTED(sheet2!A1:A$2)")).toThrowError(
-        "Function ANYEXPECTED expects the parameter 1 to be a single value or a single cell reference, not a range."
-      );
-      expect(() => m.getters.evaluateFormula(sheetId, "=A2:A3")).toThrowError(
-        "Function EQ expects its parameters to be single values or single cell references, not ranges."
-      );
-      expect(() => m.getters.evaluateFormula(sheetId, "=+A2:A3")).toThrowError(
-        "Function UPLUS expects its parameters to be single values or single cell references, not ranges."
-      );
-      expect(() => m.getters.evaluateFormula(sheetId, "=A1+A2:A3")).toThrowError(
-        "Function ADD expects its parameters to be single values or single cell references, not ranges."
-      );
-      expect(() => m.getters.evaluateFormula(sheetId, "=-A2:A3")).toThrowError(
-        "Function UMINUS expects its parameters to be single values or single cell references, not ranges."
-      );
-      expect(() => m.getters.evaluateFormula(sheetId, "=A1-A2:A3")).toThrowError(
-        "Function MINUS expects its parameters to be single values or single cell references, not ranges."
-      );
-      expect(() => m.getters.evaluateFormula(sheetId, "=A1+A4*A5:A6-A2")).toThrowError(
-        "Function MULTIPLY expects its parameters to be single values or single cell references, not ranges."
-      );
-      expect(() => m.getters.evaluateFormula(sheetId, "=ANYEXPECTED(A1:A1)")).not.toThrow();
-    });
-  });
-
-  describe("with lazy arguments", () => {
-    // this tests performs controls inside formula functions. For this reason, we
-    // don't use mocked functions. Errors would be caught during evaluation of
-    // formulas and not during the tests. So here we use a simple counter
-
-    let count = 0;
-
-    beforeAll(() => {
-      functionRegistry.add("ANYFUNCTION", {
-        description: "any function",
-        args: [],
-        compute: () => {
-          count += 1;
-          return true;
-        },
-        returns: ["ANY"],
-      });
-
-      functionRegistry.add("USELAZYARG", {
-        description: "function with a lazy argument",
-        args: [{ name: "lazyArg", description: "", type: ["ANY"], lazy: true }],
-        compute: (arg) => {
-          count *= 42;
-          (arg as Function)();
-          return true;
-        },
-        returns: ["ANY"],
-      });
-
-      functionRegistry.add("NOTUSELAZYARG", {
-        description: "any function",
-        args: [{ name: "any", description: "", type: ["ANY"] }],
-        compute: () => {
-          count *= 42;
-          return true;
-        },
-        returns: ["ANY"],
-      });
-    });
-
-    afterAll(() => {
-      restoreDefaultFunctions();
-    });
-
-    test("with function as argument --> change the order in which functions are evaluated ", () => {
-      count = 0;
-      evaluateCell("A1", { A1: "=USELAZYARG(ANYFUNCTION())" });
-      expect(count).toBe(1);
-      count = 0;
-      evaluateCell("A2", { A2: "=NOTUSELAZYARG(ANYFUNCTION())" });
-      expect(count).toBe(42);
-    });
-
-    test.each([
-      "=USELAZYARG(24)",
-      "=USELAZYARG(1/0)",
-      "=USELAZYARG(1/1/0)",
-      "=USELAZYARG(USELAZYARG(24))",
-    ])("functions call requesting lazy parameters", (formula) => {
-      const compiledFormula = compiledBaseFunction(formula);
-      expect(compiledFormula.execute.toString()).toMatchSnapshot();
+      expect(evaluateCellFormat("A1", { A1: "=SECONDARGDEFAULTVALUEEQUAL42(1)" })).toBe('"TRUE"');
     });
   });
 
@@ -423,13 +224,11 @@ describe("compile functions", () => {
         description: "function with a meta argument",
         compute: () => true,
         args: [{ name: "arg", description: "", type: ["META"] }],
-        returns: ["STRING"],
       });
       functionRegistry.add("NOTUSEMETAARG", {
         description: "any function",
         compute: () => true,
         args: [{ name: "arg", description: "", type: ["ANY"] }],
-        returns: ["ANY"],
       });
     });
 
@@ -442,20 +241,20 @@ describe("compile functions", () => {
     );
 
     test("throw error if parameter isn't cell/range reference", () => {
-      expect(() => compiledBaseFunction("=USEMETAARG(X8)")).not.toThrow();
-      expect(() => compiledBaseFunction("=USEMETAARG($X$8)")).not.toThrow();
-      expect(() => compiledBaseFunction("=USEMETAARG(Sheet42!X8)")).not.toThrow();
-      expect(() => compiledBaseFunction("=USEMETAARG('Sheet 42'!X8)")).not.toThrow();
+      expect(compiledBaseFunction("=USEMETAARG(X8)").isBadExpression).toBe(false);
+      expect(compiledBaseFunction("=USEMETAARG($X$8)").isBadExpression).toBe(false);
+      expect(compiledBaseFunction("=USEMETAARG(Sheet42!X8)").isBadExpression).toBe(false);
+      expect(compiledBaseFunction("=USEMETAARG('Sheet 42'!X8)").isBadExpression).toBe(false);
 
-      expect(() => compiledBaseFunction("=USEMETAARG(D3:Z9)")).not.toThrow();
-      expect(() => compiledBaseFunction("=USEMETAARG($D$3:$Z$9)")).not.toThrow();
-      expect(() => compiledBaseFunction("=USEMETAARG(Sheet42!$D$3:$Z$9)")).not.toThrow();
-      expect(() => compiledBaseFunction("=USEMETAARG('Sheet 42'!D3:Z9)")).not.toThrow();
+      expect(compiledBaseFunction("=USEMETAARG(D3:Z9)").isBadExpression).toBe(false);
+      expect(compiledBaseFunction("=USEMETAARG($D$3:$Z$9)").isBadExpression).toBe(false);
+      expect(compiledBaseFunction("=USEMETAARG(Sheet42!$D$3:$Z$9)").isBadExpression).toBe(false);
+      expect(compiledBaseFunction("=USEMETAARG('Sheet 42'!D3:Z9)").isBadExpression).toBe(false);
 
-      expect(() => compiledBaseFunction('=USEMETAARG("kikou")')).toThrowError();
-      expect(() => compiledBaseFunction('=USEMETAARG("")')).toThrowError();
-      expect(() => compiledBaseFunction("=USEMETAARG(TRUE)")).toThrowError();
-      expect(() => compiledBaseFunction("=USEMETAARG(SUM(1,2,3))")).toThrowError();
+      expect(compiledBaseFunction('=USEMETAARG("kikou")').isBadExpression).toBe(true);
+      expect(compiledBaseFunction('=USEMETAARG("")').isBadExpression).toBe(true);
+      expect(compiledBaseFunction("=USEMETAARG(TRUE)").isBadExpression).toBe(true);
+      expect(compiledBaseFunction("=USEMETAARG(SUM(1,2,3))").isBadExpression).toBe(true);
     });
 
     test("do not care about the value of the cell / range passed as a reference", () => {
@@ -468,41 +267,76 @@ describe("compile functions", () => {
 
       let refFn = jest.fn();
       let ensureRange = jest.fn();
+      let getSymbolValue = jest.fn();
 
       const ctx = { USEMETAARG: () => {}, NOTUSEMETAARG: () => {} };
 
-      const rangeA1 = createRange(m.getters, "ABC", "A1")!;
-      const rangeA1ToB2 = createRange(m.getters, "ABC", "A1:B2")!;
+      const rangeA1 = createValidRange(m.getters, "ABC", "A1")!;
+      const rangeA1ToB2 = createValidRange(m.getters, "ABC", "A1:B2")!;
 
-      compiledFormula1.execute([rangeA1], refFn, ensureRange, ctx);
-      expect(refFn).toHaveBeenCalledWith(rangeA1, true, "USEMETAARG", 1);
+      compiledFormula1.execute([rangeA1], refFn, ensureRange, getSymbolValue, ctx);
+      expect(refFn).toHaveBeenCalledWith(rangeA1, true);
       expect(ensureRange).toHaveBeenCalledTimes(0);
       refFn.mockReset();
 
-      compiledFormula2.execute([rangeA1ToB2], refFn, ensureRange, ctx);
-      expect(refFn).toHaveBeenCalledWith(rangeA1ToB2, true, "USEMETAARG", 1);
+      compiledFormula2.execute([rangeA1ToB2], refFn, ensureRange, getSymbolValue, ctx);
+      expect(refFn).toHaveBeenCalledWith(rangeA1ToB2, true);
       expect(ensureRange).toHaveBeenCalledTimes(0);
       refFn.mockReset();
 
-      compiledFormula3.execute([rangeA1], refFn, ensureRange, ctx);
-      expect(refFn).toHaveBeenCalledWith(rangeA1, false, "NOTUSEMETAARG", 1);
+      compiledFormula3.execute([rangeA1], refFn, ensureRange, getSymbolValue, ctx);
+      expect(refFn).toHaveBeenCalledWith(rangeA1, false);
       expect(ensureRange).toHaveBeenCalledTimes(0);
       refFn.mockReset();
 
-      compiledFormula4.execute([rangeA1ToB2], refFn, ensureRange, ctx);
-      expect(refFn).toHaveBeenCalledWith(rangeA1ToB2, false, "NOTUSEMETAARG", 1);
-      expect(ensureRange).toHaveBeenCalledTimes(0);
+      compiledFormula4.execute([rangeA1ToB2], refFn, ensureRange, getSymbolValue, ctx);
+      expect(refFn).toHaveBeenCalledTimes(0);
+      expect(ensureRange).toHaveBeenCalledWith(rangeA1ToB2);
       refFn.mockReset();
     });
   });
 
   test("function cache ignore spaces in functions", () => {
     compiledBaseFunction("=SUM(A1)");
-    expect(Object.keys(functionCache)).toEqual(["=SUM(|0|)"]);
+    expect(Object.keys(functionCache)).toEqual(["=SUM(C|0|)"]);
     compile("= SUM(A1)");
     compile("=SUM( A1)");
     compile("= SUM(A1 )");
     compile("= SUM   (    A1    )");
-    expect(Object.keys(functionCache)).toEqual(["=SUM(|0|)"]);
+    expect(Object.keys(functionCache)).toEqual(["=SUM(C|0|)"]);
+  });
+
+  test("simple symbol", () => {
+    const compiledFormula = compiledBaseFunction("=Hello");
+    expect(compiledFormula.execute.toString()).toMatchSnapshot();
+  });
+
+  test("simple in a function", () => {
+    const compiledFormula = compiledBaseFunction("=SUM(Hello)");
+    expect(compiledFormula.execute.toString()).toMatchSnapshot();
+  });
+
+  test("two different symbols", () => {
+    const compiledFormula = compiledBaseFunction("=Hello+world");
+    expect(compiledFormula.execute.toString()).toMatchSnapshot();
+  });
+
+  test("same symbol twice", () => {
+    const compiledFormula = compiledBaseFunction("=Hello+Hello");
+    expect(compiledFormula.execute.toString()).toMatchSnapshot();
+  });
+
+  test("symbol with optional single quotes", () => {
+    const compiledFormula = compiledBaseFunction("='Hello'");
+    expect(compiledFormula.execute.toString()).toMatchSnapshot();
+  });
+
+  test("symbol with space and with single quotes", () => {
+    const compiledFormula = compiledBaseFunction("='Hello world'");
+    expect(compiledFormula.execute.toString()).toMatchSnapshot();
+  });
+
+  test("symbol with space and without single quotes", () => {
+    expect(compiledBaseFunction("=Hello world").isBadExpression).toBe(true);
   });
 });

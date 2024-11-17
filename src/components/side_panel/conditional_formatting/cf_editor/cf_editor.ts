@@ -1,24 +1,40 @@
 import { Component, useExternalListener, useState } from "@odoo/owl";
-import { CancelledReason } from "../../../..";
-import { DEFAULT_COLOR_SCALE_MIDPOINT_COLOR } from "../../../../constants";
-import { colorNumberString, rangeReference } from "../../../../helpers";
-import { canonicalizeCFRule } from "../../../../helpers/locale";
 import {
+  ACTION_COLOR,
+  BADGE_SELECTED_COLOR,
+  CF_ICON_EDGE_LENGTH,
+  DEFAULT_COLOR_SCALE_MIDPOINT_COLOR,
+  GRAY_200,
+  GRAY_300,
+} from "../../../../constants";
+import { colorNumberString, isColorValid, rangeReference } from "../../../../helpers";
+import { canonicalizeCFRule } from "../../../../helpers/locale";
+import { cycleFixedReference } from "../../../../helpers/reference_type";
+import { _t } from "../../../../translation";
+import {
+  CancelledReason,
   CellIsRule,
   Color,
   ColorScaleRule,
   ColorScaleThreshold,
+  CommandResult,
   ConditionalFormat,
   ConditionalFormatRule,
+  DataBarRule,
   IconSetRule,
   SpreadsheetChildEnv,
 } from "../../../../types";
 import { ColorPickerWidget } from "../../../color_picker/color_picker_widget";
+import { StandaloneComposer } from "../../../composer/standalone_composer/standalone_composer";
 import { css, getTextDecoration } from "../../../helpers";
 import { IconPicker } from "../../../icon_picker/icon_picker";
 import { ICONS, ICON_SETS } from "../../../icons/icons";
 import { SelectionInput } from "../../../selection_input/selection_input";
 import { CellIsOperators, CfTerms } from "../../../translations_terms";
+import { ValidationMessages } from "../../../validation_messages/validation_messages";
+import { BadgeSelection } from "../../components/badge_selection/badge_selection";
+import { RoundColorPicker } from "../../components/round_color_picker/round_color_picker";
+import { Section } from "../../components/section/section";
 import { ConditionalFormatPreviewList } from "../cf_preview_list/cf_preview_list";
 export const enum CommandResult {
   Success = "Success",
@@ -133,171 +149,91 @@ export const enum CommandResult {
   InvalidCopyPasteSelection = "InvalidCopyPasteSelection",
 }
 css/* scss */ `
-  label {
-    vertical-align: middle;
-  }
-  .o_cf_radio_item {
-    margin-right: 10%;
-  }
-  .radio input:checked {
-    color: #e9ecef;
-    border-color: #00a09d;
-    background-color: #00a09d;
-  }
-  .o-cf-editor {
-    border-bottom: solid;
-    border-color: lightgrey;
-  }
-  .o-cf {
-    .o-cf-type-selector {
-      *,
-      ::after,
-      ::before {
-        box-sizing: border-box;
-      }
-      margin-top: 10px;
-      display: flex;
-    }
-    .o-section-subtitle:first-child {
-      margin-top: 0px;
-    }
-    .o-cf-ruleEditor {
-      font-size: 12px;
-      line-height: 1.5;
-      .o-selection-cf {
-        margin-bottom: 3%;
-      }
-      .o-cell-content {
-        font-size: 12px;
-        font-weight: 500;
-        padding: 0 12px;
-        margin: 0;
-        line-height: 35px;
-      }
-    }
-    .o-cf-error {
-      color: red;
-      margin-top: 10px;
-    }
-  }
-  .o-cf-cell-is-rule {
-    .o-cf-preview-line {
-      border: 1px solid darkgrey;
+  .o-cf-ruleEditor {
+    .o-cf-preview-display {
+      border: 1px solid ${GRAY_300};
       padding: 10px;
     }
-    .o-cell-is-operator {
-      margin-bottom: 5px;
-      width: 96%;
-    }
-    .o-cell-is-value {
-      margin-bottom: 5px;
-      width: 96%;
-    }
-    .o-color-picker-widget .o-color-picker-button {
-      pointer-events: all;
-      cursor: default;
-    }
-  }
-  .o-cf-color-scale-editor {
-    .o-threshold {
-      display: flex;
-      flex-direction: row;
-      justify-content: center;
-      align-items: center;
-      select {
-        width: 100%;
-      }
-      .o-threshold-value {
-        margin-left: 2%;
-        width: 20%;
-        min-width: 0px; // input overflows in Firefox otherwise
-      }
-      .o-threshold-value:disabled {
-        background-color: #edebed;
+
+    .o-cf-cell-is-rule {
+      .o-divider {
+        border-right: 1px solid ${GRAY_300};
+        margin: 4px 6px;
       }
     }
-    .o-cf-preview-gradient {
-      border: 1px solid darkgrey;
-      padding: 10px;
-      border-radius: 4px;
-    }
-  }
-  .o-cf-iconset-rule {
-    font-size: 12;
-    .o-cf-iconsets {
-      display: flex;
-      justify-content: space-between;
-      .o-cf-iconset {
-        border: 1px solid #dadce0;
-        border-radius: 4px;
-        display: inline-flex;
-        padding: 5px 8px;
-        width: 25%;
-        cursor: pointer;
-        justify-content: space-between;
-        .o-cf-icon {
-          display: inline;
-          margin-left: 1%;
-          margin-right: 1%;
+    .o-cf-color-scale-editor {
+      .o-threshold {
+        .o-select-with-input {
+          max-width: 150px;
         }
-        svg {
-          vertical-align: baseline;
+        .o-threshold-value {
+          flex-grow: 1;
+          flex-basis: 60%;
+          min-width: 0px; // input overflows in Firefox otherwise
+        }
+        .o-threshold-value input:disabled {
+          background-color: #edebed;
         }
       }
-      .o-cf-iconset:hover {
-        background-color: rgba(0, 0, 0, 0.08);
-      }
     }
-    .o-inflection {
-      .o-cf-icon-button {
-        display: inline-block;
-        border: 1px solid #dadce0;
+    .o-cf-iconset-rule {
+      .o-cf-clickable-icon {
+        border: 1px solid ${GRAY_200};
         border-radius: 4px;
         cursor: pointer;
-        padding: 1px 2px;
+        &:hover {
+          border-color: ${ACTION_COLOR};
+          background-color: ${BADGE_SELECTED_COLOR};
+        }
+        .o-icon {
+          width: ${CF_ICON_EDGE_LENGTH}px;
+          height: ${CF_ICON_EDGE_LENGTH}px;
+        }
       }
-      .o-cf-icon-button:hover {
-        background-color: rgba(0, 0, 0, 0.08);
+      .o-cf-iconsets {
+        gap: 11px;
+        .o-cf-iconset {
+          padding: 7px 8px;
+          width: 95px;
+          .o-icon {
+            margin: 0 3px;
+          }
+          svg {
+            vertical-align: baseline;
+          }
+        }
       }
-      table {
-        table-layout: fixed;
-        margin-top: 2%;
-        display: table;
-        text-align: left;
-        font-size: 12px;
-        line-height: 18px;
-        width: 100%;
-      }
-      th.o-cf-iconset-icons {
-        width: 8%;
-      }
-      th.o-cf-iconset-text {
-        width: 28%;
-      }
-      th.o-cf-iconset-operator {
-        width: 14%;
-      }
-      th.o-cf-iconset-type {
-        width: 28%;
-      }
-      th.o-cf-iconset-value {
-        width: 26%;
-      }
-      input,
-      select {
-        width: 100%;
-        height: 100%;
-        box-sizing: border-box;
+      .o-inflection {
+        .o-cf-icon-button {
+          padding: 4px 10px;
+        }
+        table {
+          font-size: 13px;
+          td {
+            padding: 6px 0;
+          }
+
+          th.o-cf-iconset-icons {
+            width: 25px;
+          }
+          th.o-cf-iconset-text {
+            width: 82px;
+          }
+          th.o-cf-iconset-operator {
+            width: 20px;
+          }
+          .o-cf-iconset-type {
+            min-width: 80px;
+          }
+        }
       }
     }
-    .o-cf-iconset-reverse {
-      margin-bottom: 2%;
-      margin-top: 2%;
-      .o-cf-label {
-        display: inline-block;
-        vertical-align: bottom;
-        margin-bottom: 2px;
-      }
+
+    .o-icon.arrow-down {
+      color: #e06666;
+    }
+    .o-icon.arrow-up {
+      color: #6aa84f;
     }
   }
 `;
@@ -306,12 +242,13 @@ interface Props {
   onExitEdition: () => void;
 }
 
-type CFType = "CellIsRule" | "ColorScaleRule" | "IconSetRule";
+type CFType = "CellIsRule" | "ColorScaleRule" | "IconSetRule" | "DataBarRule";
 
 interface Rules {
   cellIs: CellIsRule;
   colorScale: ColorScaleRule;
   iconSet: IconSetRule;
+  dataBar: DataBarRule;
 }
 
 type CFMenu =
@@ -334,11 +271,20 @@ interface State {
 
 export class ConditionalFormattingEditor extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-ConditionalFormattingEditor";
+  static props = {
+    editedCf: { type: Object, optional: true },
+    onExitEdition: Function,
+  };
   static components = {
     SelectionInput,
     IconPicker,
     ColorPickerWidget,
     ConditionalFormatPreviewList,
+    Section,
+    RoundColorPicker,
+    StandaloneComposer: StandaloneComposer,
+    BadgeSelection,
+    ValidationMessages,
   };
 
   icons = ICONS;
@@ -376,6 +322,9 @@ export class ConditionalFormattingEditor extends Component<Props, SpreadsheetChi
         case "IconSetRule":
           this.state.rules.iconSet = this.props.editedCf.rule;
           break;
+        case "DataBarRule":
+          this.state.rules.dataBar = this.props.editedCf.rule;
+          break;
       }
     }
 
@@ -386,8 +335,17 @@ export class ConditionalFormattingEditor extends Component<Props, SpreadsheetChi
     return this.state.errors.includes(CommandResult.EmptyRange);
   }
 
-  errorMessage(error: CancelledReason): string {
-    return CfTerms.Errors[error] || CfTerms.Errors.Unexpected;
+  get errorMessages(): string[] {
+    return this.state.errors.map((error) => CfTerms.Errors[error] || CfTerms.Errors.Unexpected);
+  }
+
+  get cfTypesValues() {
+    return [
+      { value: "CellIsRule", label: _t("Single color") },
+      { value: "ColorScaleRule", label: _t("Color scale") },
+      { value: "IconSetRule", label: _t("Icon set") },
+      { value: "DataBarRule", label: _t("Data bar") },
+    ];
   }
 
   saveConditionalFormat() {
@@ -428,6 +386,8 @@ export class ConditionalFormattingEditor extends Component<Props, SpreadsheetChi
         return this.state.rules.colorScale;
       case "IconSetRule":
         return this.state.rules.iconSet;
+      case "DataBarRule":
+        return this.state.rules.dataBar;
     }
   }
 
@@ -462,6 +422,10 @@ export class ConditionalFormattingEditor extends Component<Props, SpreadsheetChi
           value: "33",
           operator: "gt",
         },
+      },
+      dataBar: {
+        type: "DataBarRule",
+        color: 0xd9ead3,
       },
     };
   }
@@ -501,11 +465,14 @@ export class ConditionalFormattingEditor extends Component<Props, SpreadsheetChi
    ****************************************************************************/
 
   get isValue1Invalid(): boolean {
-    return !!this.state.errors?.includes(CommandResult.FirstArgMissing);
+    return (
+      this.state.errors.includes(CommandResult.FirstArgMissing) ||
+      this.state.errors.includes(CommandResult.ValueCellIsInvalidFormula)
+    );
   }
 
   get isValue2Invalid(): boolean {
-    return !!this.state.errors?.includes(CommandResult.SecondArgMissing);
+    return this.state.errors.includes(CommandResult.SecondArgMissing);
   }
 
   toggleStyle(tool: string) {
@@ -517,11 +484,11 @@ export class ConditionalFormattingEditor extends Component<Props, SpreadsheetChi
   onKeydown(event: KeyboardEvent) {
     if (event.key === "F4") {
       const target = event.target as HTMLInputElement;
-      const update = this.env.model.getters.getCycledReference(
+      const update = cycleFixedReference(
         { start: target.selectionStart ?? 0, end: target.selectionEnd ?? 0 },
-        target.value
+        target.value,
+        this.env.model.getters.getLocale()
       );
-
       if (!update) {
         return;
       }
@@ -567,6 +534,10 @@ export class ConditionalFormattingEditor extends Component<Props, SpreadsheetChi
   }
 
   setColorScaleColor(target: string, color: Color) {
+    if (!isColorValid(color)) {
+      return;
+    }
+
     const point = this.state.rules.colorScale[target];
     if (point) {
       point.color = Number.parseInt(color.substr(1), 16);
@@ -648,9 +619,65 @@ export class ConditionalFormattingEditor extends Component<Props, SpreadsheetChi
   setIcon(target: "upper" | "middle" | "lower", icon: string) {
     this.state.rules.iconSet.icons[target] = icon;
   }
-}
 
-ConditionalFormattingEditor.props = {
-  editedCf: { type: Object, optional: true },
-  onExitEdition: Function,
-};
+  getCellIsRuleComposerProps(valueIndex: 0 | 1): StandaloneComposer["props"] {
+    const isInvalid = valueIndex === 0 ? this.isValue1Invalid : this.isValue2Invalid;
+    return {
+      onConfirm: (str: string) => (this.state.rules.cellIs.values[valueIndex] = str),
+      composerContent: this.state.rules.cellIs.values[valueIndex],
+      placeholder: _t("Value or formula"),
+      invalid: isInvalid,
+      class: "o-sidePanel-composer",
+      defaultRangeSheetId: this.env.model.getters.getActiveSheetId(),
+    };
+  }
+
+  getColorScaleComposerProps(
+    thresholdType: "minimum" | "midpoint" | "maximum"
+  ): StandaloneComposer["props"] {
+    const threshold = this.state.rules.colorScale[thresholdType];
+    if (!threshold) {
+      throw new Error("Threshold not found");
+    }
+    const isInvalid = this.isValueInvalid(thresholdType);
+    return {
+      onConfirm: (str: string) => (threshold.value = str),
+      composerContent: threshold.value || "",
+      placeholder: _t("Formula"),
+      invalid: isInvalid,
+      class: "o-sidePanel-composer",
+      defaultRangeSheetId: this.env.model.getters.getActiveSheetId(),
+    };
+  }
+
+  getColorIconSetComposerProps(
+    inflectionPoint: "lowerInflectionPoint" | "upperInflectionPoint"
+  ): StandaloneComposer["props"] {
+    const inflection = this.state.rules.iconSet[inflectionPoint];
+    const isInvalid = this.isInflectionPointInvalid(inflectionPoint);
+    return {
+      onConfirm: (str: string) => (inflection.value = str),
+      composerContent: inflection.value || "",
+      placeholder: _t("Formula"),
+      invalid: isInvalid,
+      class: "o-sidePanel-composer",
+      defaultRangeSheetId: this.env.model.getters.getActiveSheetId(),
+    };
+  }
+
+  /*****************************************************************************
+   * DataBar
+   ****************************************************************************/
+
+  getRangeValues(): string[] {
+    return [this.state.rules.dataBar.rangeValues || ""];
+  }
+
+  updateDataBarColor(color: Color) {
+    this.state.rules.dataBar.color = Number.parseInt(color.substr(1), 16);
+  }
+
+  onDataBarRangeUpdate(ranges: string[]) {
+    this.state.rules.dataBar.rangeValues = ranges[0];
+  }
+}

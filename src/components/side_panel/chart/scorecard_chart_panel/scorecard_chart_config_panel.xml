@@ -1,41 +1,40 @@
 <templates>
   <t t-name="o-spreadsheet-ScorecardChartConfigPanel">
     <div>
-      <div class="o-section o-data-series">
-        <div class="o-section-title">Key value</div>
+      <Section class="'o-data-series'">
+        <t t-set-slot="title">Key value</t>
         <SelectionInput
-          ranges="() => [this.getKeyValueRange()]"
+          ranges="[this.getKeyValueRange()]"
           isInvalid="isKeyValueInvalid"
           hasSingleRange="true"
           required="true"
           onSelectionChanged="(ranges) => this.onKeyValueRangeChanged(ranges)"
           onSelectionConfirmed="() => this.updateKeyValueRange()"
         />
-      </div>
-      <div class="o-section o-data-labels">
-        <div class="o-section-title">Baseline configuration</div>
-        <div class="o-section-subtitle">Baseline value</div>
+      </Section>
+      <Section class="'o-data-labels'">
+        <t t-set-slot="title">Baseline configuration</t>
+        <div class="o-section-subtitle">Value</div>
         <SelectionInput
-          ranges="() => [this.getBaselineRange()]"
+          ranges="[this.getBaselineRange()]"
           isInvalid="isBaselineInvalid"
           hasSingleRange="true"
           onSelectionChanged="(ranges) => this.onBaselineRangeChanged(ranges)"
           onSelectionConfirmed="() => this.updateBaselineRange()"
         />
-        <div class="o-section-subtitle">Baseline format</div>
+        <div class="o-section-subtitle">Format</div>
         <select
           t-att-value="props.definition.baselineMode"
-          class="o-input o-type-selector o-optional"
+          class="o-input"
           t-on-change="(ev) => this.updateBaselineMode(ev)">
           <option value="text">Absolute value</option>
           <option value="difference">Value change from key value</option>
           <option value="percentage">Percentage change from key value</option>
+          <option value="progress">Progress bar</option>
         </select>
-      </div>
+      </Section>
 
-      <div class="o-section" t-if="errorMessages.length">
-        <ValidationMessages messages="errorMessages" msgType="'error'"/>
-      </div>
+      <ChartErrorSection t-if="errorMessages.length" messages="errorMessages"/>
     </div>
   </t>
 </templates>

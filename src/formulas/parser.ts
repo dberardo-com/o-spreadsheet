@@ -1,9 +1,9 @@
-import { DEFAULT_ERROR_MESSAGE } from "../constants";
-import { parseNumber, removeStringQuotes } from "../helpers/index";
+import { parseNumber, removeStringQuotes, unquote } from "../helpers/index";
 import { _t } from "../translation";
 import { DEFAULT_LOCALE } from "../types";
-import { BadExpressionError, InvalidReferenceError } from "../types/errors";
-import { Token, tokenize } from "./tokenizer";
+import { BadExpressionError, CellErrorType } from "../types/errors";
+import { rangeTokenize } from "./range_tokenizer";
+import { Token } from "./tokenizer";
 
 const functionRegex = /[a-zA-Z0-9\_]+(\.[a-zA-Z0-9\_]+)*/;
 
@@ -59,6 +59,11 @@ export interface ASTFuncall extends ASTBase {
   args: AST[];
 }
 
+export interface ASTSymbol extends ASTBase {
+  type: "SYMBOL";
+  value: string;
+}
+
 interface ASTEmpty extends ASTBase {
   type: "EMPTY";
   value: "";
@@ -68,6 +73,7 @@ export type AST =
   | ASTOperation
   | ASTUnaryOperation
   | ASTFuncall
+  | ASTSymbol
   | ASTNumber
   | ASTBoolean
   | ASTString
@@ -100,7 +106,7 @@ const OP_PRIORITY = {
 function parseOperand(tokens: Token[]): AST {
   const current = tokens.shift();
   if (!current) {
-    throw new BadExpressionError(DEFAULT_ERROR_MESSAGE);
+    throw new BadExpressionError();
   }
   switch (current.type) {
     case "DEBUGGER":
@@ -112,7 +118,11 @@ function parseOperand(tokens: Token[]): AST {
     case "STRING":
       return { type: "STRING", value: removeStringQuotes(current.value) };
     case "INVALID_REFERENCE":
-      throw new InvalidReferenceError();
+      return {
+        type: "REFERENCE",
+        value: CellErrorType.InvalidReference,
+      };
+
     case "REFERENCE":
       if (tokens[0]?.value === ":" && tokens[1]?.type === "REFERENCE") {
         tokens.shift();
@@ -129,7 +139,11 @@ function parseOperand(tokens: Token[]): AST {
     case "SYMBOL":
       const value = current.value;
       const nextToken = tokens[0];
-      if (nextToken?.type === "LEFT_PAREN" && functionRegex.test(current.value)) {
+      if (
+        nextToken?.type === "LEFT_PAREN" &&
+        functionRegex.test(current.value) &&
+        value === unquote(value, "'")
+      ) {
         const args = parseFunctionArgs(tokens);
         return { type: "FUNCALL", value: value, args };
       }
@@ -137,8 +151,7 @@ function parseOperand(tokens: Token[]): AST {
       if (upperCaseValue === "TRUE" || upperCaseValue === "FALSE") {
         return { type: "BOOLEAN", value: upperCaseValue === "TRUE" };
       }
-      throw new BadExpressionError(_t("Invalid formula"));
-
+      return { type: "SYMBOL", value: unquote(current.value, "'") };
     case "LEFT_PAREN":
       const result = parseExpression(tokens);
       consumeOrThrow(tokens, "RIGHT_PAREN", _t("Missing closing parenthesis"));
@@ -184,7 +197,7 @@ function parseOneFunctionArg(tokens: Token[]): AST {
   return parseExpression(tokens);
 }
 
-function consumeOrThrow(tokens, type, message = DEFAULT_ERROR_MESSAGE) {
+function consumeOrThrow(tokens, type, message?) {
   const token = tokens.shift();
   if (!token || token.type !== type) {
     throw new BadExpressionError(message);
@@ -193,7 +206,7 @@ function consumeOrThrow(tokens, type, message = DEFAULT_ERROR_MESSAGE) {
 
 function parseExpression(tokens: Token[], parent_priority: number = 0): AST {
   if (tokens.length === 0) {
-    throw new BadExpressionError(DEFAULT_ERROR_MESSAGE);
+    throw new BadExpressionError();
   }
   let left = parseOperand(tokens);
   // as long as we have operators with higher priority than the parent one,
@@ -224,17 +237,17 @@ function parseExpression(tokens: Token[], parent_priority: number = 0): AST {
  * Parse an expression (as a string) into an AST.
  */
 export function parse(str: string): AST {
-  return parseTokens(tokenize(str));
+  return parseTokens(rangeTokenize(str));
 }
 
 export function parseTokens(tokens: Token[]): AST {
   tokens = tokens.filter((x) => x.type !== "SPACE");
-  if (tokens[0].value === "=") {
+  if (tokens[0]?.value === "=") {
     tokens.splice(0, 1);
   }
   const result = parseExpression(tokens);
   if (tokens.length) {
-    throw new BadExpressionError(DEFAULT_ERROR_MESSAGE);
+    throw new BadExpressionError();
   }
   return result;
 }

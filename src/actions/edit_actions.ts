@@ -60,9 +60,9 @@ export const pasteSpecial: ActionSpec = {
 };
 
 export const pasteSpecialValue: ActionSpec = {
-  name: _t("Paste value only"),
+  name: _t("Paste as value"),
   description: "Ctrl+Shift+V",
-  execute: ACTIONS.PASTE_VALUE_ACTION,
+  execute: ACTIONS.PASTE_AS_VALUE_ACTION,
 };
 
 export const pasteSpecialFormat: ActionSpec = {
@@ -77,7 +77,7 @@ export const findAndReplace: ActionSpec = {
   execute: (env) => {
     env.openSidePanel("FindAndReplace", {});
   },
-  icon: "o-spreadsheet-Icon.FIND_AND_REPLACE",
+  icon: "o-spreadsheet-Icon.SEARCH",
 };
 
 export const deleteValues: ActionSpec = {
@@ -150,6 +150,18 @@ export const mergeCells: ActionSpec = {
   isActive: (env) => isInMerge(env),
   execute: (env) => toggleMerge(env),
   icon: "o-spreadsheet-Icon.MERGE_CELL",
+};
+
+export const editTable: ActionSpec = {
+  name: () => _t("Edit table"),
+  execute: (env) => env.openSidePanel("TableSidePanel", {}),
+  icon: "o-spreadsheet-Icon.EDIT_TABLE",
+};
+
+export const deleteTable: ActionSpec = {
+  name: () => _t("Delete table"),
+  execute: ACTIONS.DELETE_SELECTED_TABLE,
+  icon: "o-spreadsheet-Icon.DELETE_TABLE",
 };
 
 function cannotMerge(env: SpreadsheetChildEnv): boolean {

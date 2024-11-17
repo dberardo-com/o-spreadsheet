@@ -1,22 +1,44 @@
 /**
  * This file will be run before each test file
  */
+import { App } from "@odoo/owl";
 import { setDefaultSheetViewSize } from "../../src/constants";
-import { setTranslationMethod } from "../../src/translation";
-import { getParsedOwlTemplateBundle } from "../../tools/bundle_xml/bundle_xml_templates.cjs";
+import { getCompiledTemplates } from "../../tools/owl_templates/compile_templates.cjs";
+import { ContentEditableHelper } from "../__mocks__/content_editable_helper";
 import "./canvas.mock";
 import "./jest_extend";
+import "./polyfill";
 import "./resize_observer.mock";
+import { Resizers } from "./resize_observer.mock";
 
-export let OWL_TEMPLATES: Document;
+declare global {
+  interface Window {
+    mockContentHelper: ContentEditableHelper;
+    resizers: Resizers;
+  }
+}
+
+function registerOwlTemplates() {
+  const templates = getCompiledTemplates();
+  for (const tName in templates) {
+    App.registerTemplate(tName, templates[tName]);
+  }
+}
 
 beforeAll(() => {
-  OWL_TEMPLATES = getParsedOwlTemplateBundle();
+  registerOwlTemplates();
   setDefaultSheetViewSize(1000);
-  setTranslationMethod(
-    (str, ...values) => str,
-    () => true
-  );
+  Object.defineProperty(Element.prototype, "innerText", {
+    get: function () {
+      return this.textContent;
+    },
+    set: function (value) {
+      this.textContent = value;
+      this.innerHTML = value;
+    },
+  });
+
+  console.debug = () => {};
 });
 
 beforeEach(() => {
@@ -40,8 +62,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  //@ts-ignore
-  global.resizers.removeAll();
+  window.resizers.removeAll();
   executeCleanups();
 });
 
@@ -57,3 +78,21 @@ function executeCleanups() {
     cleanupFn();
   }
 }
+
+let error = null;
+
+beforeEach(() => {
+  error = null;
+  jest.spyOn(console, "error").mockImplementation((e) => {
+    error = e;
+  });
+  jest.spyOn(console, "warn").mockImplementation((e) => {
+    error = e;
+  });
+});
+
+afterEach(() => {
+  if (error) {
+    throw error;
+  }
+});

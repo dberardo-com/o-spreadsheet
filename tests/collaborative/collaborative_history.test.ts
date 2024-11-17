@@ -16,6 +16,7 @@ import {
   redo,
   setCellContent,
   setSelection,
+  setStyle,
   snapshot,
   undo,
   unfreezeColumns,
@@ -141,11 +142,7 @@ describe("Collaborative local history", () => {
   test("Add a column and set a formatting on it", () => {
     addColumns(alice, "before", "C", 4);
     undo(alice);
-    bob.dispatch("SET_FORMATTING", {
-      sheetId: bob.getters.getActiveSheetId(),
-      target: [toZone("H2:J6")],
-      style: { fillColor: "#121212" },
-    });
+    setStyle(bob, "H2:J6", { fillColor: "#121212" });
     expect([alice, bob, charlie]).toHaveSynchronizedExportedData();
     expect([alice, bob, charlie]).toHaveSynchronizedValue((user) => getStyle(user, "H2"), {
       fillColor: "#121212",
@@ -403,7 +400,7 @@ describe("Collaborative local history", () => {
             type: "UPDATE_CHART",
             id: "fig1",
             //@ts-ignore the old command would handle a partial definition
-            definition: { dataSets: ["A1:A3"] },
+            definition: { dataSets: [{ dataRange: "A1:A3" }] },
           },
           {
             type: "CREATE_CHART",
@@ -418,12 +415,11 @@ describe("Collaborative local history", () => {
               height: 100,
             },
             definition: {
-              title: "",
-              dataSets: ["A1"],
+              title: { text: "" },
+              dataSets: [{ dataRange: "A1", yAxisId: "y" }],
               type: "bar",
               stacked: false,
               dataSetsHaveTitle: false,
-              verticalAxisPosition: "left",
               legendPosition: "none",
             },
           },
@@ -431,7 +427,7 @@ describe("Collaborative local history", () => {
             type: "UPDATE_CHART",
             id: "fig2",
             //@ts-ignore the old command would handle a partial definition
-            definition: { dataSets: ["B1:B3"] },
+            definition: { dataSets: [{ dataRange: "B1:B3" }] },
           },
         ],
         serverRevisionId: "initial_revision",
@@ -453,9 +449,8 @@ describe("Collaborative local history", () => {
               data: {
                 type: "line",
                 dataSetsHaveTitle: false,
-                dataSets: ["Sheet1!B26:B35", "Sheet1!C26:C35"],
+                dataSets: [{ dataRange: "Sheet1!B26:B35" }, { dataRange: "Sheet1!C26:C35" }],
                 legendPosition: "top",
-                verticalAxisPosition: "left",
                 title: "Line",
                 stacked: false,
                 cumulative: false,
@@ -467,9 +462,9 @@ describe("Collaborative local history", () => {
     };
     const model = new Model(data, {}, initialMessages);
     const definition1 = model.getters.getChartDefinition("fig1") as LineChartDefinition;
-    expect(definition1.dataSets).toEqual(["A1:A3"]);
+    expect(definition1.dataSets).toEqual([{ dataRange: "A1:A3" }]);
     const definition2 = model.getters.getChartDefinition("fig2") as LineChartDefinition;
-    expect(definition2.dataSets).toEqual(["B1:B3"]);
+    expect(definition2.dataSets).toEqual([{ dataRange: "B1:B3" }]);
   });
 
   test("Undo/redo your own change only", () => {
@@ -894,11 +889,7 @@ describe("Collaborative local history", () => {
     addColumns(charlie, "before", "B", 1);
     network.concurrent(() => {
       undo(charlie);
-      bob.dispatch("SET_FORMATTING", {
-        sheetId: "Sheet1",
-        target: target("A1"),
-        style: { bold: true },
-      });
+      setStyle(bob, "A1", { bold: true });
     });
     expect(all).toHaveSynchronizedValue((user) => getCell(user, "A1")?.style, { bold: true });
     expect(all).toHaveSynchronizedValue((user) => getCell(user, "B1")?.style, undefined);

@@ -6,23 +6,23 @@ import {
   Arg,
   CellValue,
   CellValueType,
-  isMatrix,
+  FunctionResultObject,
   Locale,
   Matrix,
   Maybe,
-  ValueAndFormat,
+  isMatrix,
 } from "../types";
-import { NotAvailableError } from "../types/errors";
+import { EvaluationError, NotAvailableError } from "../types/errors";
 import { arg } from "./arguments";
 import { assertSameDimensions, assertSingleColOrRow } from "./helper_assert";
 import { toScalar } from "./helper_matrices";
 import { assert, matrixMap, toBoolean, toMatrix, toNumber, transposeMatrix } from "./helpers";
 
 function sortMatrix(
-  matrix: Matrix<ValueAndFormat>,
+  matrix: Matrix<FunctionResultObject>,
   locale: Locale,
   ...criteria: Arg[]
-): Matrix<ValueAndFormat> {
+): Matrix<FunctionResultObject> {
   for (const [i, value] of criteria.entries()) {
     assert(
       () => value !== undefined,
@@ -122,8 +122,7 @@ export const FILTER = {
       _t("Additional column or row containing true or false values.")
     ),
   ],
-  returns: ["RANGE<ANY>"],
-  computeValueAndFormat: function (range: Arg, ...conditions: Arg[]): Matrix<ValueAndFormat> {
+  compute: function (range: Arg, ...conditions: Arg[]): Matrix<FunctionResultObject> {
     let _array = toMatrix(range);
     const _conditionsMatrices = conditions.map((cond) =>
       matrixMap(toMatrix(cond), (data) => data.value)
@@ -133,22 +132,23 @@ export const FILTER = {
     );
     assertSameDimensions(
       _t("The arguments conditions must have the same dimensions."),
-      ..._conditionsMatrices
+      ...conditions
     );
     const _conditions = _conditionsMatrices.map((c) => c.flat());
 
     const mode = _conditionsMatrices[0].length === 1 ? "row" : "col";
     _array = mode === "row" ? transposeMatrix(_array) : _array;
-
     assert(
       () => _conditions.every((cond) => cond.length === _array.length),
       _t("FILTER has mismatched sizes on the range and conditions.")
     );
 
-    const result: Matrix<ValueAndFormat> = [];
+    const result: Matrix<FunctionResultObject> = [];
     for (let i = 0; i < _array.length; i++) {
       const row = _array[i];
-      if (_conditions.every((c) => c[i])) {
+      if (
+        _conditions.every((c) => (typeof c[i] === "boolean" || typeof c[i] === "number") && c[i])
+      ) {
         result.push(row);
       }
     }
@@ -182,11 +182,10 @@ export const SORT: AddFunctionDescription = {
       )
     ),
   ],
-  returns: ["RANGE"],
-  computeValueAndFormat: function (
-    range: Matrix<ValueAndFormat>,
+  compute: function (
+    range: Matrix<FunctionResultObject>,
     ...sortingCriteria: Arg[]
-  ): Matrix<ValueAndFormat> {
+  ): Matrix<FunctionResultObject> {
     const _range = transposeMatrix(range);
     return transposeMatrix(sortMatrix(_range, this.locale, ...sortingCriteria));
   },
@@ -218,12 +217,11 @@ export const SORTN: AddFunctionDescription = {
       )
     ),
   ],
-  returns: ["RANGE"],
-  computeValueAndFormat: function (
-    range: Matrix<ValueAndFormat>,
-    n: Maybe<ValueAndFormat>,
-    displayTiesMode: Maybe<ValueAndFormat>,
-    ...sortingCriteria: (ValueAndFormat | Matrix<ValueAndFormat>)[]
+  compute: function (
+    range: Matrix<FunctionResultObject>,
+    n: Maybe<FunctionResultObject>,
+    displayTiesMode: Maybe<FunctionResultObject>,
+    ...sortingCriteria: (FunctionResultObject | Matrix<FunctionResultObject>)[]
   ): any {
     const _n = toNumber(n?.value ?? 1, this.locale);
     assert(() => _n >= 0, _t("Wrong value of 'n'. Expected a positive number. Got %s.", _n));
@@ -305,12 +303,11 @@ export const UNIQUE = {
       _t("Whether to return only entries with no duplicates.")
     ),
   ],
-  returns: ["RANGE<NUMBER>"],
-  computeValueAndFormat: function (
+  compute: function (
     range: Arg = { value: "" },
-    byColumn: Maybe<ValueAndFormat>,
-    exactlyOnce: Maybe<ValueAndFormat>
-  ): Matrix<ValueAndFormat> {
+    byColumn: Maybe<FunctionResultObject>,
+    exactlyOnce: Maybe<FunctionResultObject>
+  ): Matrix<FunctionResultObject> {
     if (!isMatrix(range)) {
       return [[range]];
     }
@@ -321,7 +318,7 @@ export const UNIQUE = {
       range = transposeMatrix(range);
     }
 
-    const map: Map<string, { data: ValueAndFormat[]; count: number }> = new Map();
+    const map: Map<string, { data: FunctionResultObject[]; count: number }> = new Map();
 
     for (const data of range) {
       const key = JSON.stringify(data.map((item) => item.value));
@@ -333,7 +330,7 @@ export const UNIQUE = {
       }
     }
 
-    const result: Matrix<ValueAndFormat> = [];
+    const result: Matrix<FunctionResultObject> = [];
     for (const row of map.values()) {
       if (_exactlyOnce && row.count > 1) {
         continue;
@@ -341,7 +338,7 @@ export const UNIQUE = {
       result.push(row.data);
     }
 
-    if (!result.length) throw new Error(_t("No unique values found"));
+    if (!result.length) throw new EvaluationError(_t("No unique values found"));
 
     return _byColumn ? result : transposeMatrix(result);
   },

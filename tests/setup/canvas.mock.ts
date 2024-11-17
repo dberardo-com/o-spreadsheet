@@ -19,11 +19,13 @@ export class MockCanvasRenderingContext2D {
   clip() {}
   restore() {}
   setLineDash() {}
+  rotate() {}
   measureText(text: string) {
     const fontSize = getContextFontSize(this.font);
     return { width: fontSize * text.length || 0 };
   }
   drawImage() {}
+  resetTransform() {}
 }
 
 const patch = {
@@ -31,7 +33,7 @@ const patch = {
     return new MockCanvasRenderingContext2D() as any as CanvasRenderingContext2D;
   },
   toDataURL: function () {
-    return "";
+    return "data:image/png;base64,randomDataThatIsActuallyABase64Image";
   },
 };
 

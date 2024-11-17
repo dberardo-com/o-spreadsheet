@@ -1,6 +1,7 @@
 // Don't remove unused import
 // organize-imports-ignore
 import { demoData, makeLargeDataset } from "./data.js";
+import { makePivotDataset } from "./pivot.js";
 import { currenciesData } from "./currencies.js";
 import { WebsocketTransport } from "./transport.js";
 import { FileStore } from "./file_store.js";
@@ -9,7 +10,6 @@ const {
   xml,
   Component,
   whenReady,
-  useSubEnv,
   onWillStart,
   onMounted,
   useState,
@@ -18,13 +18,9 @@ const {
   onError,
 } = owl;
 
-const { Spreadsheet, Model, setTranslationMethod } = o_spreadsheet;
+const { Spreadsheet, Model } = o_spreadsheet;
 const { topbarMenuRegistry } = o_spreadsheet.registries;
-
-setTranslationMethod(
-  (str, ...values) => str,
-  () => true
-);
+const { useStoreProvider } = o_spreadsheet.stores;
 
 const uuidGenerator = new o_spreadsheet.helpers.UuidGenerator();
 
@@ -188,6 +184,7 @@ class Demo extends Component {
             inputFiles[images[i]] = { imageSrc };
           }
           await this.initiateConnection(inputFiles);
+          stores.resetStores();
           this.state.key = this.state.key + 1;
 
           // note : the onchange won't be called if we cancel the dialog w/o selecting a file, so this won't be called.
@@ -199,11 +196,8 @@ class Demo extends Component {
       icon: "o-spreadsheet-Icon.IMPORT_XLSX",
     });
 
-    useSubEnv({
-      notifyUser: this.notifyUser,
-      raiseError: this.raiseError,
-      askConfirmation: this.askConfirmation,
-    });
+    const stores = useStoreProvider();
+
     useExternalListener(window, "beforeunload", this.leaveCollaborativeSession.bind(this));
     useExternalListener(window, "unhandledrejection", () => {
       this.notifyUser({
@@ -244,7 +238,11 @@ class Demo extends Component {
       this.stateUpdateMessages = [];
     }
     this.createModel(data || demoData);
+    // this.createModel(makePivotDataset(10_000));
     // this.createModel(makeLargeDataset(26, 10_000, ["numbers"]));
+    // this.createModel(makeLargeDataset(26, 10_000, ["formulas"]));
+    // this.createModel(makeLargeDataset(26, 10_000, ["arrayFormulas"]));
+    // this.createModel(makeLargeDataset(26, 10_000, ["vectorizedFormulas"]));
     // this.createModel({});
   }
 
@@ -268,13 +266,6 @@ class Demo extends Component {
     this.model.joinSession();
     this.activateFirstSheet();
   }
-  askConfirmation(content, confirm, cancel) {
-    if (window.confirm(content)) {
-      confirm();
-    } else {
-      cancel?.();
-    }
-  }
 
   activateFirstSheet() {
     const sheetId = this.model.getters.getActiveSheetId();
@@ -293,7 +284,7 @@ class Demo extends Component {
     const text = document.createTextNode(notification.text);
     div.appendChild(text);
     div.style = NOTIFICATION_STYLE;
-    const element = document.querySelector(".o-spreadsheet");
+    const element = document.querySelector(".o-spreadsheet") || document.body; // if we crash on launch, the spreadsheet is not mounted yet
     div.onclick = () => {
       element.removeChild(div);
     };
@@ -306,11 +297,6 @@ class Demo extends Component {
         }
       }, 5000);
     }
-  }
-
-  raiseError(content, callback) {
-    window.alert(content);
-    callback?.();
   }
 
   /**
@@ -329,22 +315,23 @@ Demo.template = xml/* xml */ `
   <div t-if="state.displayHeader" class="d-flex flex flex-column justify-content vh-100">
     <div class="p-3 border-bottom">A header</div>
     <div class="flex-fill">
-      <Spreadsheet model="model" t-key="state.key"/>
+      <Spreadsheet model="model" notifyUser="notifyUser" t-key="state.key"/>
     </div>
   </div>
   <div t-else="" class="vh-100">
-    <Spreadsheet model="model" t-key="state.key"/>
+    <Spreadsheet model="model" t-key="state.key" notifyUser="notifyUser"/>
   </div>
 `;
 Demo.components = { Spreadsheet };
+Demo.props = {};
 
 // Setup code
 async function setup() {
   const templates = await (await fetch("../build/o_spreadsheet.xml")).text();
   start = Date.now();
 
-  const rootApp = new owl.App(Demo);
+  const rootApp = new owl.App(Demo, { dev: true, warnIfNoStaticProps: true });
   rootApp.addTemplates(templates);
-  rootApp.mount(document.body, { dev: true });
+  rootApp.mount(document.body);
 }
 whenReady(setup);

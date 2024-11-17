@@ -1,18 +1,27 @@
-import { Component, onMounted, useEffect, useRef } from "@odoo/owl";
-import type { Chart, ChartConfiguration } from "chart.js";
+import { Component, onMounted, onWillUnmount, useEffect, useRef } from "@odoo/owl";
+import { Chart, ChartConfiguration } from "chart.js/auto";
+import { deepCopy } from "../../../../helpers";
 import { Figure, SpreadsheetChildEnv } from "../../../../types";
 import { ChartJSRuntime } from "../../../../types/chart/chart";
-import { GaugeChartConfiguration, GaugeChartOptions } from "../../../../types/chart/gauge_chart";
+import { chartShowValuesPlugin } from "./chartjs_show_values_plugin";
+import { waterfallLinesPlugin } from "./chartjs_waterfall_plugin";
 
 interface Props {
   figure: Figure;
 }
 
+window.Chart?.register(waterfallLinesPlugin);
+window.Chart?.register(chartShowValuesPlugin);
+
 export class ChartJsComponent extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-ChartJsComponent";
+  static props = {
+    figure: Object,
+  };
 
   private canvas = useRef("graphContainer");
   private chart?: Chart;
+  private currentRuntime!: ChartJSRuntime;
 
   get background(): string {
     return this.chartRuntime.background;
@@ -33,18 +42,28 @@ export class ChartJsComponent extends Component<Props, SpreadsheetChildEnv> {
   setup() {
     onMounted(() => {
       const runtime = this.chartRuntime;
-      this.createChart(runtime.chartJsConfig);
+      this.currentRuntime = runtime;
+      // Note: chartJS modify the runtime in place, so it's important to give it a copy
+      this.createChart(deepCopy(runtime.chartJsConfig));
     });
-    useEffect(
-      () => this.updateChartJs(this.chartRuntime),
-      () => [this.chartRuntime]
-    );
+    onWillUnmount(() => this.chart?.destroy());
+    useEffect(() => {
+      const runtime = this.chartRuntime;
+      if (runtime !== this.currentRuntime) {
+        if (runtime.chartJsConfig.type !== this.currentRuntime.chartJsConfig.type) {
+          this.chart?.destroy();
+          this.createChart(deepCopy(runtime.chartJsConfig));
+        } else {
+          this.updateChartJs(deepCopy(runtime));
+        }
+        this.currentRuntime = runtime;
+      }
+    });
   }
 
-  private createChart(chartData: ChartConfiguration | GaugeChartConfiguration) {
+  private createChart(chartData: ChartConfiguration) {
     const canvas = this.canvas.el as HTMLCanvasElement;
     const ctx = canvas.getContext("2d")!;
-    // @ts-ignore
     this.chart = new window.Chart(ctx, chartData as ChartConfiguration);
   }
 
@@ -55,23 +74,10 @@ export class ChartJsComponent extends Component<Props, SpreadsheetChildEnv> {
       if (chartData.options?.plugins?.title) {
         this.chart!.config.options!.plugins!.title = chartData.options.plugins.title;
       }
-      if (chartData.options && "valueLabel" in chartData.options) {
-        if (chartData.options?.valueLabel) {
-          (this.chart!.config.options! as GaugeChartOptions).valueLabel =
-            chartData.options.valueLabel;
-        }
-      }
     } else {
       this.chart!.data.datasets = [];
     }
-    this.chart!.config.options!.plugins!.tooltip = chartData.options!.plugins!.tooltip;
-    this.chart!.config.options!.plugins!.legend = chartData.options!.plugins!.legend;
-    this.chart!.config.options!.scales = chartData.options?.scales;
-    // ?
-    this.chart!.update("active");
+    this.chart!.config.options = chartData.options;
+    this.chart!.update();
   }
 }
-
-ChartJsComponent.props = {
-  figure: Object,
-};

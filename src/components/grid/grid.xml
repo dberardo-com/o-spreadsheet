@@ -3,9 +3,10 @@
     <div
       class="o-grid w-100 h-100"
       tabindex="-1"
-      t-on-click="focus"
+      composerFocusableElement="true"
+      t-on-click="focusDefaultElement"
       t-on-keydown="onKeydown"
-      t-on-wheel="onMouseWheel"
+      t-on-wheel.prevent="onMouseWheel"
       t-ref="grid">
       <GridOverlay
         onCellClicked.bind="onCellClicked"
@@ -15,27 +16,13 @@
         onGridResized.bind="onGridResized"
         onGridMoved.bind="moveCanvas"
         gridOverlayDimensions="gridOverlayDimensions"
-        onFigureDeleted.bind="focus"
+        onFigureDeleted.bind="focusDefaultElement"
       />
       <HeadersOverlay onOpenContextMenu="(type, x, y) => this.toggleContextMenu(type, x, y)"/>
-
-      <t t-if="env.model.getters.getEditionMode() !== 'inactive'">
-        <GridComposer
-          onComposerUnmounted="() => this.focus()"
-          onComposerContentFocused="props.onComposerContentFocused"
-          focus="props.focusComposer"
-          gridDims="env.model.getters.getSheetViewDimensionWithHeaders()"
-        />
-      </t>
-      <t else="1">
-        <input
-          class="position-absolute"
-          style="z-index:-1000;"
-          t-on-input="onInput"
-          t-on-contextmenu="onInputContextMenu"
-          t-ref="hiddenInput"
-        />
-      </t>
+      <GridComposer
+        gridDims="env.model.getters.getSheetViewDimensionWithHeaders()"
+        onInputContextMenu.bind="onInputContextMenu"
+      />
       <canvas t-ref="canvas"/>
       <t
         t-foreach="env.model.getters.getClientsToDisplay()"
@@ -51,16 +38,16 @@
       </t>
       <GridPopover
         t-if="!menuState.isOpen"
-        hoveredCell="hoveredCell"
         gridRect="getGridRect()"
         onMouseWheel.bind="onMouseWheel"
         onClosePopover.bind="onClosePopover"
       />
-      <t t-if="env.model.getters.getEditionMode() === 'inactive'">
+      <t t-if="env.model.getters.isGridSelectionActive()">
         <Autofill position="getAutofillPosition()" isVisible="isAutofillVisible"/>
       </t>
-      <t t-foreach="env.model.getters.getHighlights()" t-as="highlight" t-key="highlight_index">
-        <t t-if="highlight.sheetId === env.model.getters.getActiveSheetId()">
+      <t t-foreach="highlights" t-as="highlight" t-key="highlight_index">
+        <t
+          t-if="highlight.interactive and highlight.sheetId === env.model.getters.getActiveSheetId()">
           <Highlight zone="highlight.zone" color="highlight.color"/>
         </t>
       </t>
@@ -70,7 +57,9 @@
         position="menuState.position"
         onClose="() => this.closeMenu()"
       />
-      <FilterIconsOverlay gridPosition="{ x: HEADER_WIDTH, y : HEADER_HEIGHT }"/>
+      <t t-foreach="staticTables" t-as="table" t-key="table.id">
+        <TableResizer table="table"/>
+      </t>
       <VerticalScrollBar topOffset="HEADER_HEIGHT"/>
       <HorizontalScrollBar leftOffset="HEADER_WIDTH"/>
       <div class="o-scrollbar corner"/>

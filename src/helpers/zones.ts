@@ -1,7 +1,8 @@
 import { _t } from "../translation";
-import { Position, UnboundedZone, Zone, ZoneDimension } from "../types";
+import { CellPosition, Position, UnboundedZone, Zone, ZoneDimension } from "../types";
 import { lettersToNumber, numberToLetters, toCartesian, toXC } from "./coordinates";
 import { range } from "./misc";
+import { recomputeZones } from "./recompute_zones";
 import { isColReference, isRowReference } from "./references";
 
 /**
@@ -25,21 +26,22 @@ export function toZoneWithoutBoundaryChanges(xc: string): UnboundedZone {
     xc = xc.split("!").at(-1)!;
   }
   if (xc.includes("$")) {
-    xc = xc.replace(/\$/g, "");
+    xc = xc.replaceAll("$", "");
   }
-  let ranges: string[];
+  let firstRangePart: string = "";
+  let secondRangePart: string | undefined;
   if (xc.includes(":")) {
-    ranges = xc.split(":").map((x) => x.trim());
+    [firstRangePart, secondRangePart] = xc.split(":");
+    firstRangePart = firstRangePart.trim();
+    secondRangePart = secondRangePart.trim();
   } else {
-    ranges = [xc.trim()];
+    firstRangePart = xc.trim();
   }
 
   let top: number, bottom: number, left: number, right: number;
   let fullCol = false;
   let fullRow = false;
   let hasHeader = false;
-  const firstRangePart = ranges[0];
-  const secondRangePart = ranges[1] && ranges[1];
 
   if (isColReference(firstRangePart)) {
     left = right = lettersToNumber(firstRangePart);
@@ -55,7 +57,7 @@ export function toZoneWithoutBoundaryChanges(xc: string): UnboundedZone {
     top = bottom = c.row;
     hasHeader = true;
   }
-  if (ranges.length === 2) {
+  if (secondRangePart) {
     if (isColReference(secondRangePart)) {
       right = lettersToNumber(secondRangePart);
       fullCol = true;
@@ -128,9 +130,9 @@ export function toUnboundedZone(xc: string): UnboundedZone {
  *
  * Examples:
  *    "A1" ==> Top 0, Bottom 0, Left: 0, Right: 0
- *    "B1:B3" ==> Top 0, Bottom 3, Left: 1, Right: 1
+ *    "B1:B3" ==> Top 0, Bottom 2, Left: 1, Right: 1
  *    "Sheet1!A1" ==> Top 0, Bottom 0, Left: 0, Right: 0
- *    "Sheet1!B1:B3" ==> Top 0, Bottom 3, Left: 1, Right: 1
+ *    "Sheet1!B1:B3" ==> Top 0, Bottom 2, Left: 1, Right: 1
  *
  * @param xc the string reference to convert
  *
@@ -317,6 +319,22 @@ export function union(...zones: Zone[]): Zone {
 }
 
 /**
+ * Compute the union of multiple unbounded zones.
+ */
+export function unionUnboundedZones(...zones: UnboundedZone[]): UnboundedZone {
+  return {
+    top: Math.min(...zones.map((zone) => zone.top)),
+    left: Math.min(...zones.map((zone) => zone.left)),
+    bottom: zones.some((zone) => zone.bottom === undefined)
+      ? undefined
+      : Math.max(...zones.map((zone) => zone.bottom!)),
+    right: zones.some((zone) => zone.right === undefined)
+      ? undefined
+      : Math.max(...zones.map((zone) => zone.right!)),
+  };
+}
+
+/**
  * Compute the intersection of two zones. Returns nothing if the two zones don't overlap
  */
 export function intersection(z1: Zone, z2: Zone): Zone | undefined {
@@ -366,127 +384,6 @@ export function isZoneInside(smallZone: Zone, biggerZone: Zone): boolean {
   return isEqual(union(biggerZone, smallZone), biggerZone);
 }
 
-/**
- * Recompute the ranges of the zone to contain all the cells in zones, without the cells in toRemoveZones
- * Also regroup zones together to shorten the string
- */
-export function recomputeZones(zonesXc: string[], toRemoveZonesXc: string[]): string[] {
-  const zones = zonesXc.map(toUnboundedZone);
-  const zonesToRemove = toRemoveZonesXc.map(toUnboundedZone);
-  // Compute the max to replace the bottom of full columns and right of full rows by something
-  // bigger than any other col/row to be able to apply the algorithm while keeping tracks of what
-  // zones are full cols/rows
-  const maxBottom = Math.max(...zones.concat(zonesToRemove).map((zone) => zone.bottom || 0));
-  const maxRight = Math.max(...zones.concat(zonesToRemove).map((zone) => zone.right || 0));
-  const expandedZones = zones.map((zone) => ({
-    ...zone,
-    bottom: zone.bottom === undefined ? maxBottom + 1 : zone.bottom,
-    right: zone.right === undefined ? maxRight + 1 : zone.right,
-  }));
-  const expandedZonesToRemove = zonesToRemove.map((zone) => ({
-    ...zone,
-    bottom: zone.bottom === undefined ? maxBottom + 1 : zone.bottom,
-    right: zone.right === undefined ? maxRight + 1 : zone.right,
-  }));
-
-  const zonePositions = expandedZones.map(positions).flat();
-  const positionsToRemove = expandedZonesToRemove.map(positions).flat();
-  const positionToKeep = positionsDifference(zonePositions, positionsToRemove);
-  const columns = mergePositionsIntoColumns(positionToKeep);
-
-  return mergeAlignedColumns(columns)
-    .map((zone) => ({
-      ...zone,
-      bottom: zone.bottom === maxBottom + 1 ? undefined : zone.bottom,
-      right: zone.right === maxRight + 1 ? undefined : zone.right,
-    }))
-    .map(zoneToXc);
-}
-
-/**
- * Merge aligned adjacent columns into single zones
- * e.g. A1:A5 and B1:B5 are merged into A1:B5
- */
-export function mergeAlignedColumns(columns: readonly Zone[]): Zone[] {
-  if (columns.length === 0) {
-    return [];
-  }
-  if (columns.some((zone) => zone.left !== zone.right)) {
-    throw new Error("only columns can be merged");
-  }
-  const done: Zone[] = [];
-  const cols = removeRedundantZones(columns);
-
-  const isAdjacentAndAligned = (zone, nextZone) =>
-    zone.top === nextZone.top &&
-    zone.bottom === nextZone.bottom &&
-    zone.right + 1 === nextZone.left;
-  while (cols.length) {
-    const merged = cols.reduce(
-      (zone, nextZone) => (isAdjacentAndAligned(zone, nextZone) ? union(zone, nextZone) : zone),
-      cols.shift()!
-    );
-    done.push(merged);
-  }
-  return removeRedundantZones(done);
-}
-
-/**
- * Remove redundant zones in the list.
- * i.e. zones included in another zone.
- */
-function removeRedundantZones(zones: readonly Zone[]): Zone[] {
-  const sortedZones = [...zones]
-    .sort((a, b) => b.right - a.right)
-    .sort((a, b) => b.bottom - a.bottom)
-    .sort((a, b) => a.top - b.top)
-    .sort((a, b) => a.left - b.left)
-    .reverse();
-  const checked: Zone[] = [];
-  while (sortedZones.length !== 0) {
-    const zone = sortedZones.shift()!;
-    const isIncludedInOther = sortedZones.some((otherZone) => isZoneInside(zone, otherZone));
-    if (!isIncludedInOther) {
-      checked.push(zone);
-    }
-  }
-  return checked.reverse();
-}
-
-/**
- * Merge adjacent positions into vertical zones (columns)
- */
-export function mergePositionsIntoColumns(positions: readonly Position[]): Zone[] {
-  if (positions.length === 0) {
-    return [];
-  }
-  const [startingPosition, ...sortedPositions] = [...positions]
-    .sort((a, b) => a.row - b.row)
-    .sort((a, b) => a.col - b.col);
-  const done: Zone[] = [];
-  let active = positionToZone(startingPosition);
-  for (const { col, row } of sortedPositions) {
-    if (isInside(col, row, active)) {
-      continue;
-    } else if (col === active.left && row === active.bottom + 1) {
-      const bottom = active.bottom + 1;
-      active = { ...active, bottom };
-    } else {
-      done.push(active);
-      active = positionToZone({ col, row });
-    }
-  }
-  return [...done, active];
-}
-
-/**
- * Returns positions in the first array which are not in the second array.
- */
-function positionsDifference(positions: readonly Position[], toRemove: readonly Position[]) {
-  const forbidden = new Set(toRemove.map(({ col, row }) => `${col}-${row}`));
-  return positions.filter(({ col, row }) => !forbidden.has(`${col}-${row}`));
-}
-
 export function zoneToDimension(zone: Zone): ZoneDimension {
   return {
     numberOfRows: zone.bottom - zone.top + 1,
@@ -499,13 +396,53 @@ export function isOneDimensional(zone: Zone): boolean {
   return numberOfCols === 1 || numberOfRows === 1;
 }
 
+export function excludeTopLeft(zone: Zone): Zone[] {
+  const { top, left, bottom, right } = zone;
+  if (getZoneArea(zone) === 1) {
+    return [];
+  }
+  const leftColumnZone = {
+    top: top + 1,
+    bottom,
+    left,
+    right: left,
+  };
+  if (right === left) {
+    return [leftColumnZone];
+  }
+  const rightPartZone = {
+    top,
+    bottom,
+    left: left + 1,
+    right,
+  };
+  if (top === bottom) {
+    return [rightPartZone];
+  }
+  return [leftColumnZone, rightPartZone];
+}
+
+export function aggregatePositionsToZones(positions: Iterable<CellPosition>): {
+  [sheetId: string]: Zone[];
+} {
+  const result: { [sheetId: string]: Zone[] } = {};
+  for (const position of positions) {
+    result[position.sheetId] ??= [];
+    result[position.sheetId].push(positionToZone(position));
+  }
+  for (const sheetId in result) {
+    result[sheetId] = recomputeZones(result[sheetId]);
+  }
+  return result;
+}
+
 /**
  * Array of all positions in the zone.
  */
 export function positions(zone: Zone): Position[] {
   const positions: Position[] = [];
-  const [left, right] = [zone.right, zone.left].sort((a, b) => a - b);
-  const [top, bottom] = [zone.top, zone.bottom].sort((a, b) => a - b);
+
+  const { left, right, top, bottom } = reorderZone(zone);
   for (const col of range(left, right + 1)) {
     for (const row of range(top, bottom + 1)) {
       positions.push({ col, row });
@@ -514,13 +451,14 @@ export function positions(zone: Zone): Position[] {
   return positions;
 }
 
-export function forEachPositionsInZone(zone: Zone, callback: (col: number, row: number) => void) {
-  const { left, right, top, bottom } = zone;
-  for (let col = left; col <= right; col++) {
-    for (let row = top; row <= bottom; row++) {
-      callback(col, row);
-    }
+export function reorderZone(zone: Zone): Zone {
+  if (zone.left > zone.right) {
+    zone = { left: zone.right, right: zone.left, top: zone.top, bottom: zone.bottom };
   }
+  if (zone.top > zone.bottom) {
+    zone = { left: zone.left, right: zone.right, top: zone.bottom, bottom: zone.top };
+  }
+  return zone;
 }
 
 /**
@@ -643,17 +581,13 @@ export function findCellInNewZone(oldZone: Zone, currentZone: Zone): Position {
   return { col, row };
 }
 
-export function organizeZone(zone: Zone): Zone {
-  return {
-    top: Math.min(zone.top, zone.bottom),
-    bottom: Math.max(zone.top, zone.bottom),
-    left: Math.min(zone.left, zone.right),
-    right: Math.max(zone.left, zone.right),
-  };
+export function positionToZone(position: Position): Zone {
+  return { left: position.col, right: position.col, top: position.row, bottom: position.row };
 }
 
-export function positionToZone(position: Position) {
-  return { left: position.col, right: position.col, top: position.row, bottom: position.row };
+/** Transform a zone into a zone with only its top-left position */
+export function zoneToTopLeft(zone: Zone): Zone {
+  return { ...zone, right: zone.left, bottom: zone.top };
 }
 
 export function isFullRow(zone: UnboundedZone): boolean {
@@ -673,15 +607,15 @@ export function getZoneArea(zone: Zone): number {
  * Check if the zones are continuous, ie. if they can be merged into a single zone without
  * including cells outside the zones
  * */
-export function areZonesContinuous(...zones: Zone[]): boolean {
+export function areZonesContinuous(zones: Zone[]): boolean {
   if (zones.length < 2) return true;
-  return recomputeZones(zones.map(zoneToXc), []).length === 1;
+  return recomputeZones(zones).length === 1;
 }
 
 /** Return all the columns in the given list of zones */
 export function getZonesCols(zones: Zone[]): Set<number> {
   const set = new Set<number>();
-  for (let zone of zones) {
+  for (let zone of recomputeZones(zones)) {
     for (let col of range(zone.left, zone.right + 1)) {
       set.add(col);
     }
@@ -692,10 +626,64 @@ export function getZonesCols(zones: Zone[]): Set<number> {
 /** Return all the rows in the given list of zones */
 export function getZonesRows(zones: Zone[]): Set<number> {
   const set = new Set<number>();
-  for (let zone of zones) {
+  for (let zone of recomputeZones(zones)) {
     for (let row of range(zone.top, zone.bottom + 1)) {
       set.add(row);
     }
   }
   return set;
+}
+
+export function unionPositionsToZone(positions: Position[]): Zone {
+  const zone = { top: Infinity, left: Infinity, bottom: -Infinity, right: -Infinity };
+  for (const { col, row } of positions) {
+    zone.top = Math.min(zone.top, row);
+    zone.left = Math.min(zone.left, col);
+    zone.bottom = Math.max(zone.bottom, row);
+    zone.right = Math.max(zone.right, col);
+  }
+  return zone;
+}
+
+/**
+ * Check if two zones are contiguous, ie. that they share a border
+ */
+function areZoneContiguous(zone1: Zone, zone2: Zone) {
+  if (zone1.right + 1 === zone2.left || zone1.left === zone2.right + 1) {
+    return (
+      (zone1.top <= zone2.bottom && zone1.top >= zone2.top) ||
+      (zone2.top <= zone1.bottom && zone2.top >= zone1.top)
+    );
+  }
+  if (zone1.bottom + 1 === zone2.top || zone1.top === zone2.bottom + 1) {
+    return (
+      (zone1.left <= zone2.right && zone1.left >= zone2.left) ||
+      (zone2.left <= zone1.right && zone2.left >= zone1.left)
+    );
+  }
+  return false;
+}
+
+/**
+ * Merge contiguous and overlapping zones that are in the array into bigger zones
+ */
+export function mergeContiguousZones(zones: Zone[]) {
+  const mergedZones = [...zones];
+  let hasMerged = true;
+  while (hasMerged) {
+    hasMerged = false;
+    for (let i = 0; i < mergedZones.length; i++) {
+      const zone = mergedZones[i];
+      const mergeableZoneIndex = mergedZones.findIndex(
+        (z, j) => i !== j && (areZoneContiguous(z, zone) || overlap(z, zone))
+      );
+      if (mergeableZoneIndex !== -1) {
+        mergedZones[i] = union(mergedZones[mergeableZoneIndex], zone);
+        mergedZones.splice(mergeableZoneIndex, 1);
+        hasMerged = true;
+        break;
+      }
+    }
+  }
+  return mergedZones;
 }

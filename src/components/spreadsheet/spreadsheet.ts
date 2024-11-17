@@ -4,41 +4,65 @@ import {
   onPatched,
   onWillUnmount,
   onWillUpdateProps,
+  useEffect,
   useExternalListener,
-  useState,
+  useRef,
   useSubEnv,
 } from "@odoo/owl";
 import {
+  ACTION_COLOR,
+  ACTION_COLOR_HOVER,
+  ALERT_DANGER_BORDER,
   BACKGROUND_GRAY_COLOR,
-  BACKGROUND_HEADER_FILTER_COLOR,
-  BG_HOVER_COLOR,
   BOTTOMBAR_HEIGHT,
-  CF_ICON_EDGE_LENGTH,
+  BUTTON_ACTIVE_BG,
+  BUTTON_ACTIVE_TEXT_COLOR,
+  BUTTON_BG,
+  BUTTON_HOVER_BG,
+  BUTTON_HOVER_TEXT_COLOR,
   DISABLED_TEXT_COLOR,
-  FILTERS_COLOR,
+  GRAY_200,
+  GRAY_300,
+  GRAY_900,
   GRID_BORDER_COLOR,
   GROUP_LAYER_WIDTH,
   HEADER_GROUPING_BACKGROUND_COLOR,
-  ICONS_COLOR,
-  ICON_EDGE_LENGTH,
   MAXIMAL_FREEZABLE_RATIO,
   MENU_SEPARATOR_BORDER_WIDTH,
   MENU_SEPARATOR_PADDING,
+  PRIMARY_BUTTON_ACTIVE_BG,
+  PRIMARY_BUTTON_BG,
+  PRIMARY_BUTTON_HOVER_BG,
   SCROLLBAR_WIDTH,
   SEPARATOR_COLOR,
+  TEXT_BODY,
+  TEXT_BODY_MUTED,
   TOPBAR_HEIGHT,
 } from "../../constants";
+import { batched } from "../../helpers";
 import { ImageProvider } from "../../helpers/figures/images/image_provider";
 import { Model } from "../../model";
-import { ComposerSelection } from "../../plugins/ui_stateful/edition";
+import { Store, useStore, useStoreProvider } from "../../store_engine";
+import { ModelStore } from "../../stores";
+import { NotificationStore, NotificationStoreMethods } from "../../stores/notification_store";
 import { _t } from "../../translation";
-import { HeaderGroup, InformationNotification, Pixel, SpreadsheetChildEnv } from "../../types";
+import {
+  CSSProperties,
+  HeaderGroup,
+  InformationNotification,
+  Pixel,
+  SpreadsheetChildEnv,
+} from "../../types";
 import { BottomBar } from "../bottom_bar/bottom_bar";
+import { ComposerFocusStore } from "../composer/composer_focus_store";
 import { SpreadsheetDashboard } from "../dashboard/dashboard";
 import { Grid } from "../grid/grid";
 import { HeaderGroupContainer } from "../header_group/header_group_container";
 import { css, cssPropertiesToCss } from "../helpers/css";
+import { isCtrlKey } from "../helpers/dom_helpers";
+import { useSpreadsheetRect } from "../helpers/position_hook";
 import { SidePanel } from "../side_panel/side_panel/side_panel";
+import { SidePanelStore } from "../side_panel/side_panel/side_panel_store";
 import { TopBar } from "../top_bar/top_bar";
 import { instantiateClipboard } from "./../../helpers/clipboard/navigator_clipboard_wrapper";
 
@@ -46,32 +70,28 @@ import { instantiateClipboard } from "./../../helpers/clipboard/navigator_clipbo
 // SpreadSheet
 // -----------------------------------------------------------------------------
 
-export type ComposerFocusType = "inactive" | "cellFocus" | "contentFocus";
-
-// If we ever change these colors, make sure the filter tool stays green to match the icon in the grid
-const ACTIVE_BG_COLOR = BACKGROUND_HEADER_FILTER_COLOR;
-const ACTIVE_FONT_COLOR = FILTERS_COLOR;
-const HOVERED_BG_COLOR = BG_HOVER_COLOR;
-const HOVERED_FONT_COLOR = "#000";
+const CARET_DOWN_SVG = /*xml*/ `
+<svg xmlns='http://www.w3.org/2000/svg' width='7' height='4' viewBox='0 0 7 4'>
+  <polygon fill='%23374151' points='3.5 4 7 0 0 0'/>
+</svg>
+`;
 
 css/* scss */ `
   .o-spreadsheet {
     position: relative;
     display: grid;
-    grid-template-columns: auto 350px;
-    color: #333;
+    color: ${TEXT_BODY};
+    font-size: 14px;
+
     input {
       background-color: white;
     }
     .text-muted {
-      color: grey !important;
-    }
-    button {
-      color: #333;
+      color: ${TEXT_BODY_MUTED} !important;
     }
     .o-disabled {
       opacity: 0.4;
-      pointer: default;
+      cursor: default;
       pointer-events: none;
     }
 
@@ -80,6 +100,8 @@ css/* scss */ `
     *:before,
     *:after {
       box-sizing: content-box;
+      /** rtl not supported ATM */
+      direction: ltr;
     }
     .o-separator {
       border-bottom: ${MENU_SEPARATOR_BORDER_WIDTH}px solid ${SEPARATOR_COLOR};
@@ -90,20 +112,20 @@ css/* scss */ `
       border-radius: 2px;
       cursor: pointer;
       .o-icon {
-        color: ${ICONS_COLOR};
+        color: ${TEXT_BODY};
       }
       &:not(.o-disabled):not(.active):hover {
-        background-color: ${HOVERED_BG_COLOR};
-        color: ${HOVERED_FONT_COLOR};
+        background-color: ${BUTTON_HOVER_BG};
+        color: ${BUTTON_HOVER_TEXT_COLOR};
         .o-icon {
-          color: ${HOVERED_FONT_COLOR};
+          color: ${BUTTON_HOVER_TEXT_COLOR};
         }
       }
       &.active {
-        background-color: ${ACTIVE_BG_COLOR};
-        color: ${ACTIVE_FONT_COLOR};
+        background-color: ${BUTTON_ACTIVE_BG};
+        color: ${BUTTON_ACTIVE_TEXT_COLOR};
         .o-icon {
-          color: ${ACTIVE_FONT_COLOR};
+          color: ${BUTTON_ACTIVE_TEXT_COLOR};
         }
       }
     }
@@ -132,22 +154,62 @@ css/* scss */ `
         border-left: 1px solid ${GRID_BORDER_COLOR};
       }
     }
+
+    .o-input {
+      min-width: 0px;
+      padding: 1px 0;
+      box-sizing: border-box;
+      width: 100%;
+      outline: none;
+      border-color: ${GRAY_300};
+      color: ${GRAY_900};
+
+      &::placeholder {
+        opacity: 0.5;
+      }
+      &:focus {
+        border-color: ${ACTION_COLOR};
+      }
+    }
+
+    select.o-input {
+      cursor: pointer;
+      border-width: 0 0 1px 0;
+      padding: 1px 6px 1px 0px;
+
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      background: transparent url("data:image/svg+xml,${encodeURIComponent(CARET_DOWN_SVG)}")
+        no-repeat right center;
+      text-overflow: ellipsis;
+
+      &:disabled {
+        color: ${DISABLED_TEXT_COLOR};
+        opacity: 0.4;
+        cursor: default;
+      }
+    }
+
+    .o-input[type="text"] {
+      border-width: 0 0 1px 0;
+    }
+
+    .o-input[type="number"],
+    .o-number-input {
+      border-width: 0 0 1px 0;
+      /* Remove number input arrows */
+      appearance: textfield;
+      &::-webkit-outer-spin-button,
+      &::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+      }
+    }
   }
 
   .o-two-columns {
     grid-column: 1 / 3;
-  }
-
-  .o-icon {
-    width: ${ICON_EDGE_LENGTH}px;
-    height: ${ICON_EDGE_LENGTH}px;
-    vertical-align: middle;
-  }
-
-  .o-cf-icon {
-    width: ${CF_ICON_EDGE_LENGTH}px;
-    height: ${CF_ICON_EDGE_LENGTH}px;
-    vertical-align: sub;
   }
 
   .o-text-icon {
@@ -189,61 +251,93 @@ css/* scss */ `
   }
 
   .o-button {
-    border: 1px solid lightgrey;
-    padding: 0px 20px 0px 20px;
+    border: 1px solid;
     border-radius: 4px;
     font-weight: 500;
     font-size: 14px;
     height: 30px;
     line-height: 16px;
-    background: white;
-    margin-right: 8px;
-    &:hover:enabled {
-      background-color: rgba(0, 0, 0, 0.08);
-    }
-
-    &:enabled {
-      cursor: pointer;
-    }
+    flex-grow: 1;
+    background-color: ${BUTTON_BG};
+    border: 1px solid ${GRAY_200};
+    color: ${TEXT_BODY};
 
     &:disabled {
       color: ${DISABLED_TEXT_COLOR};
     }
 
-    &:last-child {
-      margin-right: 0px;
+    &.primary {
+      background-color: ${PRIMARY_BUTTON_BG};
+      border-color: ${PRIMARY_BUTTON_BG};
+      color: #fff;
+      &:hover:enabled {
+        color: #fff;
+        background-color: ${PRIMARY_BUTTON_HOVER_BG};
+      }
+      &:active:enabled {
+        background-color: ${PRIMARY_BUTTON_ACTIVE_BG};
+        color: ${PRIMARY_BUTTON_BG};
+      }
+      &.o-disabled,
+      &:disabled {
+        opacity: 0.5;
+      }
+    }
+
+    &:hover:enabled {
+      color: ${BUTTON_HOVER_TEXT_COLOR};
+      background-color: ${BUTTON_HOVER_BG};
+    }
+    &:active:enabled {
+      color: ${BUTTON_ACTIVE_TEXT_COLOR};
+      background-color: ${BUTTON_ACTIVE_BG};
+    }
+
+    &.o-disabled,
+    &:disabled {
+      opacity: 0.8;
+    }
+
+    &.o-button-danger:hover {
+      color: #ffffff;
+      background: ${ALERT_DANGER_BORDER};
     }
   }
 
-  .o-input {
-    color: #666666;
-    border-radius: 4px;
-    min-width: 0px;
-    padding: 4px 6px;
-    box-sizing: border-box;
-    line-height: 1;
-    width: 100%;
-    height: 28px;
+  .o-button-link {
+    cursor: pointer;
+    text-decoration: none;
+    color: ${ACTION_COLOR};
+    font-weight: 500;
+    &:hover,
+    &:active {
+      color: ${ACTION_COLOR_HOVER};
+    }
+  }
+
+  .o-button-icon {
+    cursor: pointer;
+    color: ${TEXT_BODY_MUTED};
+    font-weight: 500;
+    &:hover,
+    &:active {
+      color: ${TEXT_BODY};
+    }
   }
 `;
 
-export interface SpreadsheetProps {
+export interface SpreadsheetProps extends Partial<NotificationStoreMethods> {
   model: Model;
-}
-
-interface SidePanelState {
-  isOpen: boolean;
-  component?: string;
-  panelProps: any;
-}
-
-interface ComposerState {
-  topBarFocus: Exclude<ComposerFocusType, "cellFocus">;
-  gridFocusMode: ComposerFocusType;
 }
 
 export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-Spreadsheet";
+  static props = {
+    model: Object,
+    notifyUser: { type: Function, optional: true },
+    raiseError: { type: Function, optional: true },
+    askConfirmation: { type: Function, optional: true },
+  };
   static components = {
     TopBar,
     Grid,
@@ -253,24 +347,32 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
     HeaderGroupContainer,
   };
 
-  sidePanel!: SidePanelState;
-  composer!: ComposerState;
+  sidePanel!: Store<SidePanelStore>;
+  spreadsheetRef = useRef("spreadsheet");
+  spreadsheetRect = useSpreadsheetRect();
 
   private _focusGrid?: () => void;
 
   private keyDownMapping!: { [key: string]: Function };
 
   private isViewportTooSmall: boolean = false;
+  private notificationStore!: Store<NotificationStore>;
+  private composerFocusStore!: Store<ComposerFocusStore>;
 
   get model(): Model {
     return this.props.model;
   }
 
-  getStyle() {
+  getStyle(): string {
+    const properties: CSSProperties = {};
     if (this.env.isDashboard()) {
-      return `grid-template-rows: auto;`;
+      properties["grid-template-rows"] = `auto`;
+    } else {
+      properties["grid-template-rows"] = `${TOPBAR_HEIGHT}px auto ${BOTTOMBAR_HEIGHT + 1}px`;
     }
-    return `grid-template-rows: ${TOPBAR_HEIGHT}px auto ${BOTTOMBAR_HEIGHT + 1}px`;
+    properties["grid-template-columns"] = `auto ${this.sidePanel.panelSize}px`;
+
+    return cssPropertiesToCss(properties);
   }
 
   askConfirmation(content, confirm, cancel) {
@@ -320,14 +422,14 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
   }
 
   setup() {
-    this.sidePanel = useState({ isOpen: false, panelProps: {} });
-    this.composer = useState({
-      topBarFocus: "inactive",
-      gridFocusMode: "inactive",
-    });
+    const stores = useStoreProvider();
+    stores.inject(ModelStore, this.model);
+    this.notificationStore = useStore(NotificationStore);
+    this.composerFocusStore = useStore(ComposerFocusStore);
+    this.sidePanel = useStore(SidePanelStore);
     this.keyDownMapping = {
-      "CTRL+H": () => this.toggleSidePanel("FindAndReplace", {}),
-      "CTRL+F": () => this.toggleSidePanel("FindAndReplace", {}),
+      "CTRL+H": () => this.sidePanel.toggle("FindAndReplace", {}),
+      "CTRL+F": () => this.sidePanel.toggle("FindAndReplace", {}),
     };
     const fileStore = this.model.config.external.fileStore;
     useSubEnv({
@@ -336,53 +438,84 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
       loadCurrencies: this.model.config.external.loadCurrencies,
       loadLocales: this.model.config.external.loadLocales,
       isDashboard: () => this.model.getters.isDashboard(),
-      openSidePanel: this.openSidePanel.bind(this),
-      toggleSidePanel: this.toggleSidePanel.bind(this),
+      openSidePanel: this.sidePanel.open.bind(this.sidePanel),
+      toggleSidePanel: this.sidePanel.toggle.bind(this.sidePanel),
       clipboard: this.env.clipboard || instantiateClipboard(),
-      startCellEdition: (content?: string) => this.onGridComposerCellFocused(content),
-      notifyUser: this.notifyUser,
-      raiseError: this.raiseError,
-      askConfirmation: this.askConfirmation,
-    });
+      startCellEdition: (content?: string) =>
+        this.composerFocusStore.focusActiveComposer({ content }),
+      notifyUser: (notification) => this.notificationStore.notifyUser(notification),
+      askConfirmation: (text, confirm, cancel) =>
+        this.notificationStore.askConfirmation(text, confirm, cancel),
+      raiseError: (text, cb) => this.notificationStore.raiseError(text, cb),
+    } satisfies Partial<SpreadsheetChildEnv>);
 
-    // useExternalListener(window as any, "resize", () => this.render(true));
-    // useExternalListener(window, "beforeunload", this.unbindModelEvents.bind(this));
+    this.notificationStore.updateNotificationCallbacks({ ...this.props });
+
+    useEffect(
+      () => {
+        /**
+         * Only refocus the grid if the active element is not a child of the spreadsheet
+         * (i.e. activeElement is outside of the spreadsheetRef component)
+         * and spreadsheet is a child of that element. Anything else means that the focus
+         * is on an element that needs to keep it.
+         */
+        if (
+          !this.spreadsheetRef.el!.contains(document.activeElement) &&
+          document.activeElement?.contains(this.spreadsheetRef.el!)
+        ) {
+          this.focusGrid();
+        }
+      },
+      () => [this.env.model.getters.getActiveSheetId()]
+    );
+
+    useExternalListener(window as any, "resize", () => this.render(true));
+
+    // For some reason, the wheel event is not properly registered inside templates
+    // in Chromium-based browsers based on chromium 125
+    // This hack ensures the event declared in the template is properly registered/working
+    useExternalListener(document.body, "wheel", () => {});
 
     this.bindModelEvents();
 
-    onWillUpdateProps((nextProps) => {
+    onWillUpdateProps((nextProps: SpreadsheetProps) => {
       if (nextProps.model !== this.props.model) {
         throw new Error("Changing the props model is not supported at the moment.");
       }
+      if (
+        nextProps.notifyUser !== this.props.notifyUser ||
+        nextProps.askConfirmation !== this.props.askConfirmation ||
+        nextProps.raiseError !== this.props.raiseError
+      ) {
+        this.notificationStore.updateNotificationCallbacks({ ...nextProps });
+      }
     });
 
+    const render = batched(this.render.bind(this, true));
     onMounted(() => {
       this.checkViewportSize();
+      stores.on("store-updated", this, render);
+      resizeObserver.observe(this.spreadsheetRef.el!);
     });
-    onWillUnmount(() => this.unbindModelEvents());
+    onWillUnmount(() => {
+      this.unbindModelEvents();
+      stores.off("store-updated", this);
+      resizeObserver.disconnect();
+    });
     onPatched(() => {
       this.checkViewportSize();
     });
-  }
-
-  get focusTopBarComposer(): Omit<ComposerFocusType, "cellFocus"> {
-    return this.model.getters.getEditionMode() === "inactive"
-      ? "inactive"
-      : this.composer.topBarFocus;
-  }
-
-  get focusGridComposer(): ComposerFocusType {
-    return this.model.getters.getEditionMode() === "inactive"
-      ? "inactive"
-      : this.composer.gridFocusMode;
+    const resizeObserver = new ResizeObserver(() => {
+      this.sidePanel.changePanelSize(this.sidePanel.panelSize, this.spreadsheetRect.width);
+    });
   }
 
   private bindModelEvents() {
     this.model.on("update", this, () => this.render(true));
     this.model.on("notify-ui", this, (notification: InformationNotification) =>
-      this.env.notifyUser(notification)
+      this.notificationStore.notifyUser(notification)
     );
-    this.model.on("raise-error-ui", this, ({ text }) => this.env.raiseError(text));
+    this.model.on("raise-error-ui", this, ({ text }) => this.notificationStore.raiseError(text));
   }
 
   private unbindModelEvents() {
@@ -405,7 +538,7 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
       if (this.isViewportTooSmall) {
         return;
       }
-      this.env.notifyUser({
+      this.notificationStore.notifyUser({
         text: _t(
           "The current window is too small to display this sheet properly. Consider resizing your browser window or adjusting frozen rows and columns."
         ),
@@ -418,39 +551,16 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
     }
   }
 
-  openSidePanel(panel: string, panelProps: any) {
-    if (this.sidePanel.isOpen && panel !== this.sidePanel.component) {
-      this.sidePanel.panelProps?.onCloseSidePanel?.();
-    }
-    this.sidePanel.component = panel;
-    this.sidePanel.panelProps = panelProps;
-    this.sidePanel.isOpen = true;
-  }
-
-  closeSidePanel() {
-    this.sidePanel.isOpen = false;
-    this.focusGrid();
-    this.sidePanel.panelProps?.onCloseSidePanel?.();
-  }
-
-  toggleSidePanel(panel: string, panelProps: any) {
-    if (this.sidePanel.isOpen && panel === this.sidePanel.component) {
-      this.sidePanel.isOpen = false;
-      this.focusGrid();
-    } else {
-      this.openSidePanel(panel, panelProps);
-    }
-  }
   focusGrid() {
     if (!this._focusGrid) {
-      throw new Error("_focusGrid should be exposed by the grid component");
+      return;
     }
     this._focusGrid();
   }
 
   onKeydown(ev: KeyboardEvent) {
     let keyDownString = "";
-    if (ev.ctrlKey || ev.metaKey) {
+    if (isCtrlKey(ev)) {
       keyDownString += "CTRL+";
     }
     keyDownString += ev.key.toUpperCase();
@@ -461,50 +571,6 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
       ev.stopPropagation();
       handler();
       return;
-    }
-  }
-
-  onTopBarComposerFocused(selection: ComposerSelection) {
-    if (this.model.getters.isReadonly()) {
-      return;
-    }
-    this.composer.topBarFocus = "contentFocus";
-    this.composer.gridFocusMode = "inactive";
-    this.setComposerContent({ selection } || {});
-  }
-
-  onGridComposerContentFocused() {
-    if (this.model.getters.isReadonly()) {
-      return;
-    }
-    this.composer.topBarFocus = "inactive";
-    this.composer.gridFocusMode = "contentFocus";
-    this.setComposerContent({});
-  }
-
-  onGridComposerCellFocused(content?: string, selection?: ComposerSelection) {
-    if (this.model.getters.isReadonly()) {
-      return;
-    }
-    this.composer.topBarFocus = "inactive";
-    this.composer.gridFocusMode = "cellFocus";
-    this.setComposerContent({ content, selection } || {});
-  }
-
-  /**
-   * Start the edition or update the content if it's already started.
-   */
-  private setComposerContent({
-    content,
-    selection,
-  }: {
-    content?: string | undefined;
-    selection?: ComposerSelection;
-  }) {
-    if (this.model.getters.getEditionMode() === "inactive") {
-      this.model.dispatch("START_EDITION", { text: content, selection });
-    } else if (content) {
-      this.model.dispatch("SET_CURRENT_CONTENT", { content, selection });
     }
   }
 
@@ -532,7 +598,3 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
     return this.env.model.getters.getVisibleGroupLayers(sheetId, "COL");
   }
 }
-
-Spreadsheet.props = {
-  model: Object,
-};

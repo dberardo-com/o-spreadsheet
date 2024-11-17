@@ -9,32 +9,36 @@ import {
   Locale,
 } from "../types";
 import { isDateTime } from "./dates";
-import { formatValue, getDecimalNumberRegex } from "./format";
+import { formatValue, getDecimalNumberRegex } from "./format/format";
 import { deepCopy } from "./misc";
 import { isNumber } from "./numbers";
 
 export function isValidLocale(locale: any): locale is Locale {
   if (
-    !(
-      locale &&
-      typeof locale === "object" &&
-      typeof locale.name === "string" &&
-      typeof locale.code === "string" &&
-      typeof locale.thousandsSeparator === "string" &&
-      typeof locale.decimalSeparator === "string" &&
-      typeof locale.dateFormat === "string" &&
-      typeof locale.timeFormat === "string" &&
-      typeof locale.formulaArgSeparator === "string"
-    )
+    !locale ||
+    typeof locale !== "object" ||
+    !(!locale.thousandsSeparator || typeof locale.thousandsSeparator === "string")
   ) {
     return false;
   }
 
-  if (!Object.values(locale).every((v) => v)) {
-    return false;
+  for (const property of [
+    "code",
+    "name",
+    "decimalSeparator",
+    "dateFormat",
+    "timeFormat",
+    "formulaArgSeparator",
+  ]) {
+    if (!locale[property] || typeof locale[property] !== "string") {
+      return false;
+    }
   }
 
   if (locale.formulaArgSeparator === locale.decimalSeparator) {
+    return false;
+  }
+  if (locale.thousandsSeparator === locale.decimalSeparator) {
     return false;
   }
 
@@ -155,6 +159,9 @@ export function canonicalizeNumberLiteral(content: string, locale: Locale): stri
   if (locale.decimalSeparator === "." || !isNumber(content, locale)) {
     return content;
   }
+  if (locale.thousandsSeparator) {
+    content = content.replaceAll(locale.thousandsSeparator, "");
+  }
   return content.replace(locale.decimalSeparator, ".");
 }
 
@@ -268,7 +275,8 @@ function changeCFRuleLocale(
         case "IsNotEmpty":
           return rule;
       }
-      break;
+    case "DataBarRule":
+      return rule;
     case "ColorScaleRule":
       rule.minimum = changeCFRuleThresholdLocale(rule.minimum, changeContentLocale);
       rule.maximum = changeCFRuleThresholdLocale(rule.maximum, changeContentLocale);

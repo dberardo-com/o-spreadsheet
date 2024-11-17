@@ -10,13 +10,18 @@ import {
   ConditionalFormattingOperatorValues,
   IconSetRule,
 } from "../../src/types";
-import { FR_LOCALE } from "../test_helpers/constants";
+import { FR_LOCALE } from "./../test_helpers/constants";
 
 describe("Locale helpers", () => {
   describe("canonicalize content", () => {
     test("Can canonicalize literal", () => {
       expect(canonicalizeContent("1", FR_LOCALE)).toBe("1");
       expect(canonicalizeContent("1,1", FR_LOCALE)).toBe("1.1");
+      expect(canonicalizeContent("1 000,1", FR_LOCALE)).toBe("1000.1");
+      expect(canonicalizeContent("1 000 000,1", FR_LOCALE)).toBe("1000000.1");
+      expect(canonicalizeContent("1.000,1", { ...FR_LOCALE, thousandsSeparator: "." })).toBe(
+        "1000.1"
+      );
       expect(canonicalizeContent(",1", FR_LOCALE)).toBe(".1");
       expect(canonicalizeContent("1,", FR_LOCALE)).toBe("1.");
       expect(canonicalizeContent("1,1%", FR_LOCALE)).toBe("1.1%");
@@ -24,6 +29,10 @@ describe("Locale helpers", () => {
       expect(canonicalizeContent("01/10/2022", FR_LOCALE)).toBe("10/1/2022");
       expect(canonicalizeContent("01/10/2022 10:00:00", FR_LOCALE)).toBe("10/1/2022 10:00:00 AM");
       expect(canonicalizeContent("01-10-2022", FR_LOCALE)).toBe("10/1/2022");
+
+      expect(
+        canonicalizeContent("1000000,1", { ...FR_LOCALE, thousandsSeparator: undefined })
+      ).toBe("1000000.1");
     });
 
     test("Non-number literals aren't canonicalize", () => {

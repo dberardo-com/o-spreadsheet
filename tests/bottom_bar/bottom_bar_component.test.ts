@@ -1,6 +1,9 @@
-import { Component, onMounted, onWillUnmount, xml } from "@odoo/owl";
+import { Component } from "@odoo/owl";
 import { BottomBar } from "../../src/components/bottom_bar/bottom_bar";
+import { toHex } from "../../src/helpers";
+import { interactiveRenameSheet } from "../../src/helpers/ui/sheet_interactive";
 import { Model } from "../../src/model";
+import { DOMFocusableElementStore } from "../../src/stores/DOM_focus_store";
 import { Pixel, SpreadsheetChildEnv, UID } from "../../src/types";
 import {
   activateSheet,
@@ -25,29 +28,17 @@ import {
   triggerMouseEvent,
   triggerWheelEvent,
 } from "../test_helpers/dom_helper";
-import { mockUuidV4To, mountComponent, nextTick } from "../test_helpers/helpers";
+import {
+  makeTestEnv,
+  mockUuidV4To,
+  mountComponentWithPortalTarget,
+  nextTick,
+} from "../test_helpers/helpers";
 import { mockGetBoundingClientRect } from "../test_helpers/mock_helpers";
 
 jest.mock("../../src/helpers/uuid", () => require("../__mocks__/uuid"));
 
 let fixture: HTMLElement;
-
-class Parent extends Component<any, any> {
-  static template = xml/* xml */ `
-    <div class="o-spreadsheet">
-      <BottomBar onClick="()=>{}"/>
-    </div>
-  `;
-  static components = { BottomBar };
-
-  setup() {
-    onMounted(() => this.props.model.on("update", this, this.render));
-    onWillUnmount(() => this.props.model.off("update", this));
-  }
-  getSubEnv() {
-    return this.__owl__.childEnv;
-  }
-}
 
 function isDragAndDropActive(): boolean {
   const activeSheet = fixture.querySelector<HTMLElement>(".o-sheet.active")!;
@@ -56,11 +47,16 @@ function isDragAndDropActive(): boolean {
 
 async function mountBottomBar(
   model: Model = new Model(),
-  env: Partial<SpreadsheetChildEnv> = {}
-): Promise<{ parent: Parent; model: Model }> {
+  partialEnv: Partial<SpreadsheetChildEnv> = {}
+): Promise<{ parent: Component; model: Model; env: SpreadsheetChildEnv }> {
   let parent: Component;
-  ({ fixture, parent } = await mountComponent(Parent, { model, env, props: { model } }));
-  return { parent: parent as Parent, model };
+  let env: SpreadsheetChildEnv;
+  ({ fixture, parent, env } = await mountComponentWithPortalTarget(BottomBar, {
+    model,
+    env: partialEnv,
+    props: { onClick: () => {} },
+  }));
+  return { parent, model, env };
 }
 
 describe("BottomBar component", () => {
@@ -110,7 +106,7 @@ describe("BottomBar component", () => {
     const model = new Model({ sheets: [{ id: "Sheet1" }, { id: "Sheet2" }] });
     await mountBottomBar(model);
     const dispatch = jest.spyOn(model, "dispatch");
-    triggerMouseEvent(`.o-sheet[data-id="Sheet2"]`, "mousedown");
+    triggerMouseEvent(`.o-sheet[data-id="Sheet2"]`, "pointerdown");
     expect(dispatch).toHaveBeenCalledWith("ACTIVATE_SHEET", {
       sheetIdFrom: "Sheet1",
       sheetIdTo: "Sheet2",
@@ -228,7 +224,7 @@ describe("BottomBar component", () => {
     expect(fixture.querySelector(".o-menu-item[data-name='hide_sheet']")).toBeNull();
   });
 
-  test("Move right and left are not visible when it's not possible to move", async () => {
+  test("Move right and left are disabled when it's not possible to move", async () => {
     await mountBottomBar();
 
     triggerMouseEvent(".o-sheet", "contextmenu");
@@ -240,20 +236,33 @@ describe("BottomBar component", () => {
   describe("Rename a sheet", () => {
     let model: Model;
     let raiseError: jest.Mock;
+    let env: SpreadsheetChildEnv;
     beforeEach(async () => {
       raiseError = jest.fn((string, callback) => {
         callback();
       });
-      ({ model } = await mountBottomBar(new Model(), { raiseError }));
-      model;
+      ({ model, env } = await mountBottomBar(new Model(), { raiseError }));
+      //@ts-ignore
+      env.getStore(DOMFocusableElementStore).focus = jest.fn();
     });
 
     test("Double click on the sheet name make it editable and give it the focus", async () => {
       const sheetName = fixture.querySelector<HTMLElement>(".o-sheet-name")!;
       expect(sheetName.getAttribute("contenteditable")).toEqual("false");
       await doubleClick(sheetName);
+      await nextTick();
       expect(sheetName.getAttribute("contenteditable")).toEqual("true");
       expect(document.activeElement).toEqual(sheetName);
+    });
+
+    test("Double click on the sheet name in readonly mode doesn't make it editable", async () => {
+      model.updateMode("readonly");
+      await nextTick();
+      const sheetName = fixture.querySelector<HTMLElement>(".o-sheet-name")!;
+      expect(sheetName.getAttribute("contenteditable")).toEqual("false");
+      triggerMouseEvent(sheetName, "dblclick");
+      await nextTick();
+      expect(sheetName.getAttribute("contenteditable")).toEqual("false");
     });
 
     test("Rename sheet with context menu makes sheet name editable and give it the focus", async () => {
@@ -326,6 +335,46 @@ describe("BottomBar component", () => {
       expect(raiseError).not.toHaveBeenCalled();
       expect(sheetName.textContent).toEqual("SHEET1");
     });
+
+    test("Pasting styled content in sheet name and renaming sheet does not throw a trackback", async () => {
+      const HTML = `<span style="color: rgb(242, 44, 61); background-color: rgb(0, 0, 0);">HELLO</span>`;
+
+      const sheetName = fixture.querySelector<HTMLElement>(".o-sheet-name")!;
+      triggerMouseEvent(sheetName, "dblclick");
+      await nextTick();
+
+      sheetName.innerHTML = HTML;
+      await keyDown({ key: "Enter" });
+
+      expect(sheetName.getAttribute("contenteditable")).toEqual("false");
+      await nextTick();
+
+      expect(sheetName.innerText).toEqual("HELLO");
+    });
+
+    test.each(["Enter", "Escape"])(
+      "Pressing %s ends the edition and yields back the DOM focus",
+      async (key) => {
+        const sheetName = fixture.querySelector<HTMLElement>(".o-sheet-name")!;
+        // will give focus back to the component main node
+        triggerMouseEvent(sheetName, "dblclick");
+        await nextTick();
+        sheetName.textContent = "New name";
+        await keyDown({ key });
+        const focusableElementStore = env.getStore(DOMFocusableElementStore);
+        expect(focusableElementStore.focus).toHaveBeenCalled();
+      }
+    );
+  });
+
+  test("Can't rename a sheet in readonly mode", async () => {
+    const sheetName = "New name";
+    const raiseError = jest.fn();
+    const model = new Model({}, { mode: "readonly" });
+    const env = makeTestEnv({ model, raiseError });
+    interactiveRenameSheet(env, model.getters.getActiveSheetId(), sheetName, raiseError);
+    expect(raiseError).not.toHaveBeenCalled();
+    expect(model.getters.getActiveSheet().name).toEqual("Sheet1");
   });
 
   test("Can duplicate a sheet", async () => {
@@ -401,9 +450,29 @@ describe("BottomBar component", () => {
     });
   });
 
+  test("Clicking on an hidden sheet in the list of sheets unhide and activate it", async () => {
+    const { model } = await mountBottomBar();
+    createSheet(model, { sheetId: "42", hidden: true });
+    await click(fixture, ".o-list-sheets");
+    const menuItem = fixture.querySelector<HTMLElement>(".o-menu-item[data-name='42'")!;
+    expect(toHex(menuItem.style.color)).toEqual("#808080");
+    await click(menuItem);
+    expect(model.getters.getActiveSheetId()).toBe("42");
+    expect(model.getters.getActiveSheet().isVisible).toBe(true);
+  });
+
+  test("Hidden sheets menu items are disabled in readonly in the list of sheets", async () => {
+    const { model } = await mountBottomBar();
+    createSheet(model, { sheetId: "42", hidden: true });
+    model.updateMode("readonly");
+    await click(fixture, ".o-list-sheets");
+    const menuItem = fixture.querySelector<HTMLElement>(".o-menu-item[data-name='42'");
+    expect(menuItem!.classList).toContain("disabled");
+  });
+
   describe("Scroll on the list of sheets", () => {
     let model: Model;
-    let parent: Parent;
+    let parent: Component;
     let sheetListEl: HTMLElement;
 
     jest
@@ -457,7 +526,7 @@ describe("BottomBar component", () => {
     test("Can scroll to the right: scroll arrow right enabled and fade-out effect", async () => {
       jest.spyOn(sheetListEl, "clientWidth", "get").mockReturnValue(300);
       jest.spyOn(sheetListEl, "scrollWidth", "get").mockReturnValue(500);
-      parent.render();
+      parent.render(true);
       await nextTick();
 
       expect(fixture.querySelector(".o-bottom-bar-arrow-left.o-disabled")).not.toBeNull();
@@ -470,7 +539,7 @@ describe("BottomBar component", () => {
       jest.spyOn(sheetListEl, "clientWidth", "get").mockReturnValue(300);
       jest.spyOn(sheetListEl, "scrollWidth", "get").mockReturnValue(500);
       sheetListEl.scrollLeft = 200;
-      parent.render();
+      parent.render(true);
       await nextTick();
       expect(fixture.querySelector(".o-bottom-bar-arrow-left:not(.o-disabled)")).not.toBeNull();
       expect(fixture.querySelector(".o-bottom-bar-arrow-right.o-disabled")).not.toBeNull();
@@ -482,7 +551,7 @@ describe("BottomBar component", () => {
       jest.spyOn(sheetListEl, "clientWidth", "get").mockReturnValue(300);
       jest.spyOn(sheetListEl, "scrollWidth", "get").mockReturnValue(500);
       sheetListEl.scrollLeft = 100;
-      parent.render();
+      parent.render(true);
       await nextTick();
       expect(fixture.querySelector(".o-bottom-bar-arrow-left:not(.o-disabled)")).not.toBeNull();
       expect(fixture.querySelector(".o-bottom-bar-arrow-right:not(.o-disabled)")).not.toBeNull();
@@ -493,7 +562,7 @@ describe("BottomBar component", () => {
     test("Scroll to the right with the arrow button", async () => {
       jest.spyOn(sheetListEl, "clientWidth", "get").mockReturnValue(100);
       jest.spyOn(sheetListEl, "scrollWidth", "get").mockReturnValue(250);
-      parent.render();
+      parent.render(true);
       await nextTick();
       simulateClick(".o-bottom-bar-arrow-right");
       await nextTick();
@@ -508,7 +577,7 @@ describe("BottomBar component", () => {
       jest.spyOn(sheetListEl, "clientWidth", "get").mockReturnValue(100);
       jest.spyOn(sheetListEl, "scrollWidth", "get").mockReturnValue(250);
       sheetListEl.scrollLeft = 150;
-      parent.render();
+      parent.render(true);
       await nextTick();
       simulateClick(".o-bottom-bar-arrow-left");
       await nextTick();
@@ -528,7 +597,7 @@ describe("BottomBar component", () => {
 
       jest.spyOn(sheetListEl, "clientWidth", "get").mockReturnValue(100);
       jest.spyOn(sheetListEl, "scrollWidth", "get").mockReturnValue(800);
-      parent.render();
+      parent.render(true);
       await nextTick();
 
       simulateClick(".o-bottom-bar-arrow-right");
@@ -615,7 +684,27 @@ describe("BottomBar component", () => {
     expect(fixture.querySelector(".o-selection-statistic")?.textContent).toBe("Count Numbers: 1");
   });
 
-  test("The list of statistics menu closes if the selection or the cell value change", async () => {
+  test("The list of statistics is updated with the selection", async () => {
+    const { model } = await mountBottomBar();
+    // Change value of cell
+    setCellContent(model, "A1", "24");
+    setCellContent(model, "A2", "23");
+    await nextTick();
+    triggerMouseEvent(".o-selection-statistic", "click");
+    await nextTick();
+    expect(fixture.querySelector(".o-menu")).toBeTruthy();
+    expect(fixture.querySelector(".o-menu .o-menu-item")?.textContent).toBe("Sum: 24");
+
+    setCellContent(model, "A1", "42");
+    await nextTick();
+    expect(fixture.querySelector(".o-menu .o-menu-item")?.textContent).toBe("Sum: 42");
+
+    selectCell(model, "A2");
+    await nextTick();
+    expect(fixture.querySelector(".o-menu .o-menu-item")?.textContent).toBe("Sum: 23");
+  });
+
+  test("Hide the statistics component when the statistics are empty", async () => {
     const { model } = await mountBottomBar();
     // Change value of cell
     setCellContent(model, "A1", "24");
@@ -623,18 +712,15 @@ describe("BottomBar component", () => {
     triggerMouseEvent(".o-selection-statistic", "click");
     await nextTick();
     expect(fixture.querySelector(".o-menu")).toBeTruthy();
+    expect(fixture.querySelector(".o-menu .o-menu-item")?.textContent).toBe("Sum: 24");
 
     setCellContent(model, "A1", "42");
     await nextTick();
-    expect(fixture.querySelector(".o-menu")).toBeFalsy();
-
-    // Change selection
-    triggerMouseEvent(".o-selection-statistic", "click");
-    await nextTick();
-    expect(fixture.querySelector(".o-menu")).toBeTruthy();
+    expect(fixture.querySelector(".o-menu .o-menu-item")?.textContent).toBe("Sum: 42");
 
     selectCell(model, "A2");
     await nextTick();
+    expect(fixture.querySelector(".o-selection-statistic")).toBeFalsy();
     expect(fixture.querySelector(".o-menu")).toBeFalsy();
   });
 
@@ -716,7 +802,7 @@ describe("BottomBar component", () => {
       sheetList.scrollLeft = 120;
       sheetList.dispatchEvent(new Event("scroll")); // JSDOm don't trigger scroll event when the scrollLeft is changed...
 
-      triggerMouseEvent(document, "mouseup");
+      triggerMouseEvent(document, "pointerup");
       const sheetIds = model.getters.getVisibleSheetIds();
       expect(sheetIds).toEqual(["Sheet2", "Sheet1", "Sheet3", "Sheet4"]);
     });
@@ -736,7 +822,7 @@ describe("BottomBar component", () => {
       const sheetList = fixture.querySelector(".o-sheet-list")!;
       sheetList.dispatchEvent(new Event("scroll")); // JSDOm don't trigger scroll event when the scrollLeft is changed...
 
-      triggerMouseEvent(document, "mouseup");
+      triggerMouseEvent(document, "pointerup");
       const sheetIds = model.getters.getVisibleSheetIds();
       expect(sheetIds[sheetIds.length - 1]).toEqual("Sheet1");
     });
@@ -756,7 +842,7 @@ describe("BottomBar component", () => {
       const sheetList = fixture.querySelector(".o-sheet-list")!;
       sheetList.dispatchEvent(new Event("scroll")); // JSDOm don't trigger scroll event when the scrollLeft is changed...
 
-      triggerMouseEvent(document, "mouseup");
+      triggerMouseEvent(document, "pointerup");
       expect(model.getters.getVisibleSheetIds()[0]).toEqual("Sheet10");
     });
 
@@ -770,18 +856,18 @@ describe("BottomBar component", () => {
         },
       });
 
-      triggerMouseEvent('.o-sheet[data-id="Sheet1"]', "mousedown");
-      triggerMouseEvent('.o-sheet[data-id="Sheet1"]', "mousemove", 0, 0);
+      triggerMouseEvent('.o-sheet[data-id="Sheet1"]', "pointerdown");
+      triggerMouseEvent('.o-sheet[data-id="Sheet1"]', "pointermove", 0, 0);
       await nextTick();
       expect(getElComputedStyle('.o-sheet[data-id="Sheet1"]', "left")).toBe("0px");
       expect(getElComputedStyle('.o-sheet[data-id="Sheet2"]', "left")).toBe("0px");
 
-      triggerMouseEvent('.o-sheet[data-id="Sheet1"]', "mousemove", 100, 0);
+      triggerMouseEvent('.o-sheet[data-id="Sheet1"]', "pointermove", 100, 0);
       await nextTick();
       expect(getElComputedStyle(".o-sheet[data-id=Sheet1]", "left")).toBe("100px");
       expect(getElComputedStyle(".o-sheet[data-id=Sheet2]", "left")).toBe("-99px"); // -99 because we do a -1 to take the negative margin into account
 
-      triggerMouseEvent('.o-sheet[data-id="Sheet1"]', "mousemove", 150, 0); // 150 is the position of the mouse not the move offset
+      triggerMouseEvent('.o-sheet[data-id="Sheet1"]', "pointermove", 150, 0); // 150 is the position of the mouse not the move offset
       await nextTick();
       expect(getElComputedStyle(".o-sheet[data-id=Sheet1]", "left")).toBe("150px");
       expect(getElComputedStyle(".o-sheet[data-id=Sheet2]", "left")).toBe("-99px");
@@ -823,6 +909,73 @@ describe("BottomBar component", () => {
       expect(fixture.querySelector(".o-menu")).toBeTruthy();
       await dragSheet("Sheet1", { mouseMoveX: 10, mouseUp: false });
       expect(fixture.querySelector(".o-menu")).toBeFalsy();
+    });
+
+    test("Cannot drag & drop sheets in readonly mode", async () => {
+      model.updateMode("readonly");
+      await dragSheet("Sheet1", { mouseMoveX: 10, mouseUp: false });
+      expect(getElComputedStyle('.o-sheet[data-id="Sheet1"]', "position")).toBe("");
+      expect(getElComputedStyle('.o-sheet[data-id="Sheet1"]', "left")).toBe("");
+    });
+
+    test("Cannot drag & drop sheets by clicking the sheetName in edit mode", async () => {
+      const sheetName = fixture.querySelector<HTMLElement>(".o-sheet-name")!;
+      const sheetId = model.getters.getActiveSheetId();
+      await doubleClick(sheetName);
+      await nextTick();
+      await dragElement(
+        `.o-sheet[data-id="${sheetId}"] .o-sheet-name`,
+        { x: 10, y: 0 },
+        { x: sheetName.getBoundingClientRect().x, y: 0 },
+        false
+      );
+      expect(getElComputedStyle('.o-sheet[data-id="Sheet1"]', "position")).toBe("");
+      expect(getElComputedStyle('.o-sheet[data-id="Sheet1"]', "left")).toBe("");
+    });
+  });
+
+  describe("Sheet colors", () => {
+    function getSheetColor(): string {
+      return fixture.querySelector<HTMLElement>(`.o-sheet-color`)?.style.background || "";
+    }
+
+    test("Can color a sheet", async () => {
+      const { model } = await mountBottomBar();
+      expect(getSheetColor()).toBe("");
+
+      triggerMouseEvent(".o-sheet", "contextmenu");
+      await nextTick();
+      await click(fixture, ".o-menu-item[data-name='change_color'");
+      await click(fixture, ".o-color-picker-line-item[data-color='#FFFF00'");
+
+      expect(getSheetColor()).toBeSameColorAs("#FFFF00");
+      expect(model.getters.getSheet(model.getters.getActiveSheetId()).color).toBe("#FFFF00");
+    });
+
+    test("Clicking outside sheet color picker closes it", async () => {
+      await mountBottomBar();
+      expect(getSheetColor()).toBe("");
+
+      triggerMouseEvent(".o-sheet", "contextmenu");
+      await nextTick();
+      await click(fixture, ".o-menu-item[data-name='change_color'");
+
+      expect(fixture.querySelector(".o-color-picker")).toBeTruthy();
+      await click(document.body);
+      expect(fixture.querySelector(".o-color-picker")).toBeFalsy();
+    });
+
+    test("Sheet icons are colored in the menu listing all sheets", async () => {
+      const { model } = await mountBottomBar();
+      createSheet(model, { sheetId: "42", color: "#FFFF00", position: 1 });
+      createSheet(model, { sheetId: "43", color: "#FF0000", position: 2 });
+
+      await click(fixture, ".o-sheet-item.o-list-sheets");
+      const menuItemsIcons = fixture.querySelectorAll(".o-menu-item-icon");
+
+      expect(menuItemsIcons[0]?.children).toHaveLength(0);
+      expect(getElComputedStyle(menuItemsIcons[1], "color")).toBeSameColorAs("#FFFF00");
+      expect(getElComputedStyle(menuItemsIcons[2], "color")).toBeSameColorAs("#FF0000");
     });
   });
 });

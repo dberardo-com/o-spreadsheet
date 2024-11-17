@@ -6,9 +6,15 @@ import {
   DEFAULT_REVISION_ID,
   FORBIDDEN_SHEET_CHARS,
 } from "../../src/constants";
-import { toCartesian } from "../../src/helpers";
+import { toCartesian, toZone } from "../../src/helpers";
 import { CURRENT_VERSION } from "../../src/migrations/data";
-import { BorderDescr, ColorScaleRule, DEFAULT_LOCALE, IconSetRule } from "../../src/types";
+import {
+  BorderDescr,
+  ColorScaleRule,
+  DEFAULT_LOCALE,
+  DEFAULT_LOCALES,
+  IconSetRule,
+} from "../../src/types";
 import {
   activateSheet,
   resizeColumns,
@@ -16,7 +22,14 @@ import {
   setCellContent,
   setStyle,
 } from "../test_helpers/commands_helpers";
-import { getCell, getCellContent, getMerges } from "../test_helpers/getters_helpers";
+import { FR_LOCALE } from "../test_helpers/constants";
+import {
+  getBorder,
+  getCell,
+  getCellContent,
+  getEvaluatedCell,
+  getMerges,
+} from "../test_helpers/getters_helpers";
 
 jest.mock("../../src/helpers/uuid", () => require("../__mocks__/uuid"));
 describe("data", () => {
@@ -30,7 +43,7 @@ describe("data", () => {
 });
 
 describe("Migrations", () => {
-  test("Can upgrade from 1 to 12", () => {
+  test("Can upgrade from 1 to 13", () => {
     const model = new Model({
       version: 1,
       sheets: [
@@ -159,45 +172,41 @@ describe("Migrations", () => {
     const data = model.exportData();
     expect(data.sheets[0].figures[0].data).toEqual({
       type: "line",
-      title: "demo chart",
+      title: { text: "demo chart" },
       labelRange: "'My sheet'!A27:A35",
-      dataSets: ["B26:B35", "C26:C35"],
+      dataSets: [{ dataRange: "B26:B35" }, { dataRange: "C26:C35" }],
       dataSetsHaveTitle: true,
       background: BACKGROUND_CHART_COLOR,
-      verticalAxisPosition: "left",
       legendPosition: "top",
       stacked: false,
     });
     expect(data.sheets[0].figures[1].data).toEqual({
       type: "bar",
-      title: "demo chart 2",
+      title: { text: "demo chart 2" },
       labelRange: "'My sheet'!A27:A35",
-      dataSets: ["B27:B35", "C27:C35"],
+      dataSets: [{ dataRange: "B27:B35" }, { dataRange: "C27:C35" }],
       dataSetsHaveTitle: false,
       background: BACKGROUND_CHART_COLOR,
-      verticalAxisPosition: "left",
       legendPosition: "top",
       stacked: false,
     });
     expect(data.sheets[0].figures[2].data).toEqual({
       type: "bar",
-      title: "demo chart 3",
+      title: { text: "demo chart 3" },
       labelRange: "'My sheet'!A27",
-      dataSets: ["B26:B27"],
+      dataSets: [{ dataRange: "B26:B27" }],
       dataSetsHaveTitle: true,
       background: BACKGROUND_CHART_COLOR,
-      verticalAxisPosition: "left",
       legendPosition: "top",
       stacked: false,
     });
     expect(data.sheets[0].figures[3].data).toEqual({
       type: "bar",
-      title: "demo chart 4",
+      title: { text: "demo chart 4" },
       labelRange: "'My sheet'!A27",
-      dataSets: ["B27"],
+      dataSets: [{ dataRange: "B27" }],
       dataSetsHaveTitle: false,
       background: BACKGROUND_CHART_COLOR,
-      verticalAxisPosition: "left",
       legendPosition: "top",
       stacked: false,
     });
@@ -277,7 +286,10 @@ describe("Migrations", () => {
     expect(cells.A1!.content).toBe("=sheetName_!A2");
 
     const figures = data.sheets[1].figures;
-    expect(figures[0].data?.dataSets).toEqual(["=sheetName_!A1:A2", "My sheet!A1:A2"]);
+    expect(figures[0].data?.dataSets).toEqual([
+      { dataRange: "=sheetName_!A1:A2" },
+      { dataRange: "My sheet!A1:A2" },
+    ]);
     expect(figures[0].data?.labelRange).toBe("=sheetName_!B1:B2");
 
     const cfs = data.sheets[1].conditionalFormats;
@@ -366,15 +378,29 @@ describe("Migrations", () => {
       "1": "#,##0",
       "2": "mm/dd/yyyy",
     });
-    expect(data.sheets[0].cells["A1"]?.format).toEqual(1);
-    expect(data.sheets[0].cells["A2"]?.format).toBeUndefined();
-    expect(data.sheets[1].cells["A1"]?.format).toEqual(1);
-    expect(data.sheets[1].cells["A2"]?.format).toEqual(2);
+    expect(data.sheets[0].formats["A1"]).toEqual(1);
+    expect(data.sheets[0].formats["A2"]).toBeUndefined();
+    expect(data.sheets[1].formats["A1"]).toEqual(1);
+    expect(data.sheets[1].formats["A2"]).toEqual(2);
   });
 
-  test("migrate version 12: update border description structure", () => {
+  test("migrate version 12: Fix Overlapping datafilters", () => {
     const model = new Model({
       version: 12,
+      sheets: [
+        {
+          id: "1",
+          filterTables: [{ range: "A1:B2" }, { range: "A1:C2" }],
+        },
+      ],
+    });
+    const data = model.exportData();
+    expect(data.sheets[0].tables).toEqual([{ range: "A1:C2", type: "static" }]);
+  });
+
+  test("migrate version 12.5: update border description structure", () => {
+    const model = new Model({
+      version: 12.5,
       sheets: [
         {
           id: "1",
@@ -407,6 +433,106 @@ describe("Migrations", () => {
     let data = model.exportData();
     expect(data.settings).toEqual({ locale: DEFAULT_LOCALE });
   });
+
+  test("migrate version 14.5: Fix Overlapping datafilters", () => {
+    const model = new Model({
+      version: 14,
+      sheets: [
+        {
+          id: "1",
+          filterTables: [{ range: "A1:B2" }, { range: "A1:C2" }],
+        },
+      ],
+    });
+    const data = model.exportData();
+    expect(data.sheets[0].tables).toEqual([{ range: "A1:C2", type: "static" }]);
+  });
+
+  test("migrate version 15: filterTables are renamed into tables", () => {
+    const model = new Model({
+      version: 14.5,
+      sheets: [
+        {
+          id: "1",
+          filterTables: [{ range: "A1:B2" }],
+        },
+      ],
+    });
+    expect(model.getters.getTables("1")).toMatchObject([{ range: { zone: toZone("A1:B2") } }]);
+    let data = model.exportData();
+    expect(data.version).toBe(CURRENT_VERSION);
+    expect(data.sheets[0].tables).toEqual([{ range: "A1:B2", type: "static" }]);
+  });
+
+  test("migrate version 21: style,format and borders by zones", () => {
+    const style = { bold: true };
+    const border = { top: { style: "thin", color: "#000" } as BorderDescr };
+    const model = new Model({
+      version: 20,
+      sheets: [
+        {
+          id: "1",
+          cells: {
+            A1: { content: "hi", style: 1, format: 2, border: 3 },
+          },
+        },
+      ],
+      styles: { 1: style },
+      formats: { 2: "0.00%" },
+      borders: { 3: border },
+    });
+    expect(getCell(model, "A1")?.format).toBe("0.00%");
+    expect(getCell(model, "A1")?.style).toEqual(style);
+    expect(getBorder(model, "A1")).toEqual(border);
+    const data = model.exportData();
+    expect(data.version).toBe(CURRENT_VERSION);
+    expect(data.sheets[0].cells).toEqual({ A1: { content: "hi" } });
+    expect(data.sheets[0].formats).toEqual({ A1: 1 });
+    expect(data.sheets[0].styles).toEqual({ A1: 1 });
+    expect(data.sheets[0].borders).toEqual({ A1: 1 });
+    expect(data.formats).toEqual({ 1: "0.00%" });
+    expect(data.styles).toEqual({ 1: style });
+    expect(data.borders).toEqual({ 1: border });
+  });
+
+  test("Migrate version 22: add inflection operator to gauge chart", () => {
+    const model = new Model({
+      version: 19,
+      sheets: [
+        {
+          id: "1",
+          figures: [
+            {
+              id: "5",
+              tag: "chart",
+              data: {
+                type: "gauge",
+                background: "#FFFFFF",
+                sectionRule: {
+                  colors: { lowerColor: "#cc0000", middleColor: "#f1c232", upperColor: "#6aa84f" },
+                  rangeMin: "0",
+                  rangeMax: "100",
+                  lowerInflectionPoint: { type: "percentage", value: "15" },
+                  upperInflectionPoint: { type: "percentage", value: "40" },
+                },
+                title: { text: "Gauge" },
+                dataRange: "Sheet1!B29",
+              },
+            },
+          ],
+        },
+      ],
+    });
+    expect(model.getters.getChartDefinition("5")).toMatchObject({
+      sectionRule: {
+        colors: { lowerColor: "#cc0000", middleColor: "#f1c232", upperColor: "#6aa84f" },
+        rangeMin: "0",
+        rangeMax: "100",
+        lowerInflectionPoint: { type: "percentage", value: "15", operator: "<=" },
+        upperInflectionPoint: { type: "percentage", value: "40", operator: "<=" },
+      },
+    });
+  });
 });
 
 describe("Import", () => {
@@ -436,12 +562,12 @@ describe("Import", () => {
     expect(Object.keys(getMerges(model))).toHaveLength(0);
     activateSheet(model, sheet1);
     expect(Object.keys(getMerges(model))).toHaveLength(1);
-    expect(Object.values(getMerges(model))[0].topLeft).toEqual(toCartesian("A2"));
+    expect(getMerges(model)[1]).toMatchObject(toZone("A2:B2"));
   });
 
   test("can import cell without content", () => {
     const model = new Model({
-      sheets: [{ id: "1", cells: { A1: { format: 1 } } }],
+      sheets: [{ id: "1", formats: { A1: 1 } }],
       formats: { 1: "0.00%" },
     });
     expect(getCell(model, "A1")?.content).toBe("");
@@ -474,18 +600,20 @@ describe("Export", () => {
 
   test("Can export format", () => {
     const model = new Model({
-      sheets: [{ colNumber: 10, rowNumber: 10, cells: { A1: { content: "145", format: 1 } } }],
+      sheets: [
+        { colNumber: 10, rowNumber: 10, cells: { A1: { content: "145" } }, formats: { A1: 1 } },
+      ],
       formats: { 1: "0.00%" },
     });
     const exp = model.exportData();
-    expect(exp.sheets![0].cells!.A1!.format).toBe(1);
+    expect(exp.sheets[0].formats.A1).toBe(1);
   });
 
   test("empty content is not exported", () => {
     const model = new Model();
     setStyle(model, "A1", { fillColor: "#123456" });
     const exp = model.exportData();
-    expect(exp.sheets![0].cells!.A1!).toEqual({ style: 1 });
+    expect(exp.sheets[0].styles.A1).toEqual(1);
   });
 
   test("chart figures without a definition are not exported", () => {
@@ -505,7 +633,7 @@ describe("Export", () => {
                 type: "line",
                 title: "demo chart",
                 labelRange: "A1:A4",
-                dataSets: ["B1:B4", "C1:C4"],
+                dataSets: [{ dataRange: "B1:B4" }, { dataRange: "C1:C4" }],
               },
             },
             { id: "id2", x: 100, y: 100, width: 100, height: 100 },
@@ -551,20 +679,27 @@ test("complete import, then export", () => {
         },
         cells: {
           A1: { content: "hello" },
-          B1: {
-            content: "=A1",
-            style: 1,
-            border: 1,
-            format: 1,
-          },
+          B1: { content: "=A1" },
           C1: { content: "=mqdlskjfqmslfkj(++%//@@@)" },
           D1: { content: '="This is a quote \\""' },
+        },
+        styles: {
+          B1: 1,
+          "D1:D2": 1,
+        },
+        formats: {
+          B1: 1,
+          "D1:D2": 1,
+        },
+        borders: {
+          A1: 1,
+          B1: 2,
         },
         name: "My sheet",
         conditionalFormats: [],
         dataValidationRules: [],
         figures: [],
-        filterTables: [],
+        tables: [],
         areGridLinesVisible: true,
         isVisible: true,
         panes: { ySplit: 1, xSplit: 5 },
@@ -580,20 +715,25 @@ test("complete import, then export", () => {
         cells: {
           A1: { content: "hello" },
         },
+        styles: {},
+        formats: {},
+        borders: {},
         name: "My sheet 2",
         conditionalFormats: [],
         dataValidationRules: [],
         figures: [],
-        filterTables: [],
+        tables: [],
         areGridLinesVisible: false,
         isVisible: true,
         headerGroups: { COL: [], ROW: [] },
       },
     ],
+    pivots: {},
+    pivotNextId: 1,
     settings: { locale: DEFAULT_LOCALE },
-    entities: {},
+    customTableStyles: {},
     styles: {
-      1: { bold: true, textColor: "#3A3791", fontSize: 12 },
+      1: { bold: true, textColor: "#674EA7", fontSize: 12 },
     },
     formats: {
       1: "0.00%",
@@ -601,6 +741,9 @@ test("complete import, then export", () => {
     borders: {
       1: {
         top: { style: "thin", color: "#000" } as BorderDescr,
+      },
+      2: {
+        top: { style: "medium", color: "#000" } as BorderDescr,
       },
     },
     uniqueFigureIds: true,
@@ -662,25 +805,72 @@ test("import then export (figures)", () => {
         cols: {},
         rows: {},
         cells: {},
+        styles: {},
+        formats: {},
+        borders: {},
         name: "My sheet",
         conditionalFormats: [],
         dataValidationRules: [],
         figures: [{ id: "otheruuid", x: 100, y: 100, width: 100, height: 100 }],
-        filterTables: [],
+        tables: [],
         areGridLinesVisible: true,
         isVisible: true,
         headerGroups: { COL: [], ROW: [] },
       },
     ],
-    entities: {},
+    pivots: {},
+    pivotNextId: 1,
     styles: {},
     formats: {},
     borders: {},
     uniqueFigureIds: true,
     settings: { locale: DEFAULT_LOCALE },
+    customTableStyles: {},
   };
   const model = new Model(modelData);
   expect(model).toExport(modelData);
+});
+
+test("import date as string and detect the format", () => {
+  const model = new Model({
+    sheets: [
+      {
+        cells: { A1: { content: "12/31/2020" } },
+      },
+    ],
+  });
+  expect(getCell(model, "A1")?.format).toBe("m/d/yyyy");
+  expect(getCell(model, "A1")?.content).toBe("44196");
+  expect(getEvaluatedCell(model, "A1")?.formattedValue).toBe("12/31/2020");
+});
+
+test("import localized date as string and detect the format", () => {
+  const model = new Model({
+    sheets: [
+      {
+        cells: { A1: { content: "31/12/2020" } },
+      },
+    ],
+    settings: { locale: FR_LOCALE },
+  });
+  expect(getCell(model, "A1")?.format).toBe("d/m/yyyy");
+  expect(getCell(model, "A1")?.content).toBe("44196");
+  expect(getEvaluatedCell(model, "A1")?.formattedValue).toBe("31/12/2020");
+});
+
+test("Week start is automatically added during migration", () => {
+  expect(
+    new Model({
+      version: 19,
+      settings: { locale: { ...DEFAULT_LOCALES[1], weekStart: undefined } },
+    }).exportData().settings.locale.weekStart
+  ).toBe(1);
+  expect(
+    new Model({
+      version: 19,
+      settings: { locale: { ...DEFAULT_LOCALES[0], weekStart: undefined } },
+    }).exportData().settings.locale.weekStart
+  ).toBe(7);
 });
 
 test("Can import spreadsheet with only version", () => {

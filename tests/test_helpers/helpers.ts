@@ -1,33 +1,46 @@
-import {
-  App,
-  Component,
-  ComponentConstructor,
-  onMounted,
-  onWillUnmount,
-  useState,
-  xml,
-} from "@odoo/owl";
+import { App, Component, ComponentConstructor, useState, xml } from "@odoo/owl";
 import type { ChartConfiguration } from "chart.js";
 import format from "xml-formatter";
+import { functionCache } from "../../src";
 import { Action } from "../../src/actions/action";
-import { Composer, ComposerProps } from "../../src/components/composer/composer/composer";
-import {
-  ComposerFocusType,
-  Spreadsheet,
-  SpreadsheetProps,
-} from "../../src/components/spreadsheet/spreadsheet";
+import { ComposerSelection } from "../../src/components/composer/composer/abstract_composer_store";
+import { CellComposerStore } from "../../src/components/composer/composer/cell_composer_store";
+import { CellComposerProps, Composer } from "../../src/components/composer/composer/composer";
+import { ComposerFocusStore } from "../../src/components/composer/composer_focus_store";
+import { SidePanelStore } from "../../src/components/side_panel/side_panel/side_panel_store";
+import { Spreadsheet, SpreadsheetProps } from "../../src/components/spreadsheet/spreadsheet";
 import { matrixMap } from "../../src/functions/helpers";
 import { functionRegistry } from "../../src/functions/index";
 import { ImageProvider } from "../../src/helpers/figures/images/image_provider";
-import { range, toCartesian, toUnboundedZone, toXC, toZone } from "../../src/helpers/index";
+import {
+  batched,
+  range,
+  toCartesian,
+  toUnboundedZone,
+  toXC,
+  toZone,
+  zoneToXc,
+} from "../../src/helpers/index";
+import { createEmptyExcelWorkbookData } from "../../src/migrations/data";
 import { Model } from "../../src/model";
+import { BasePlugin } from "../../src/plugins/base_plugin";
 import { MergePlugin } from "../../src/plugins/core/merge";
 import { CorePluginConstructor } from "../../src/plugins/core_plugin";
 import { UIPluginConstructor } from "../../src/plugins/ui_plugin";
-import { ComposerSelection } from "../../src/plugins/ui_stateful";
 import { topbarMenuRegistry } from "../../src/registries";
 import { MenuItemRegistry } from "../../src/registries/menu_items_registry";
 import { Registry } from "../../src/registries/registry";
+import {
+  DependencyContainer,
+  Store,
+  StoreConstructor,
+  proxifyStoreMutation,
+  useStore,
+} from "../../src/store_engine";
+import { ModelStore } from "../../src/stores";
+import { HighlightProvider, HighlightStore } from "../../src/stores/highlight_store";
+import { NotificationStore } from "../../src/stores/notification_store";
+import { RendererStore } from "../../src/stores/renderer_store";
 import { _t } from "../../src/translation";
 import {
   CellPosition,
@@ -36,12 +49,19 @@ import {
   ColorScaleMidPointThreshold,
   ColorScaleThreshold,
   CommandTypes,
+  ComposerFocusType,
   ConditionalFormat,
   Currency,
   DEFAULT_LOCALES,
+  EditionMode,
   EvaluatedCell,
+  ExcelWorkbookData,
   Format,
+  GridRenderingContext,
+  Highlight,
+  LayerName,
   Matrix,
+  OrderedLayers,
   RangeData,
   SpreadsheetChildEnv,
   Style,
@@ -51,10 +71,12 @@ import {
 import { Image } from "../../src/types/image";
 import { XLSXExport } from "../../src/types/xlsx";
 import { isXLSXExportXMLFile } from "../../src/xlsx/helpers/xlsx_helper";
+import { fixLengthySheetNames, purgeSingleRowTables } from "../../src/xlsx/xlsx_writer";
 import { FileStore } from "../__mocks__/mock_file_store";
-import { OWL_TEMPLATES, registerCleanup } from "../setup/jest.setup";
+import { registerCleanup } from "../setup/jest.setup";
 import { MockClipboard } from "./clipboard";
 import { redo, setCellContent, setFormat, setStyle, undo } from "./commands_helpers";
+import { DOMTarget, click, getTarget, keyDown, keyUp } from "./dom_helper";
 import { getCellContent, getEvaluatedCell } from "./getters_helpers";
 
 const functionsContent = functionRegistry.content;
@@ -90,6 +112,7 @@ export function addTestPlugin(
 const realTimeSetTimeout = window.setTimeout.bind(window);
 class Root extends Component {
   static template = xml`<div/>`;
+  static props = {};
 }
 const Scheduler = new App(Root).scheduler.constructor as unknown as { requestAnimationFrame: any };
 
@@ -124,19 +147,62 @@ export function makeTestFixture() {
   return fixture;
 }
 
-export function makeTestEnv(mockEnv: Partial<SpreadsheetChildEnv> = {}): SpreadsheetChildEnv {
+class FakeRendererStore extends RendererStore {
+  // we don't want to actually draw anything on the canvas as it cannot be tested
+  drawLayer(renderingContext: GridRenderingContext, layer: LayerName) {}
+}
+
+interface SpreadsheetChildEnvWithStores extends SpreadsheetChildEnv {
+  __spreadsheet_stores__: DependencyContainer;
+}
+
+export function makeTestEnv(
+  mockEnv: Partial<SpreadsheetChildEnvWithStores> = {}
+): SpreadsheetChildEnvWithStores {
+  const model = mockEnv.model || new Model();
+  if (mockEnv.__spreadsheet_stores__) {
+    throw new Error("Cannot call makeTestEnv on a partial env that already have a store container");
+  }
+  const container = new DependencyContainer();
+  container.inject(ModelStore, model);
+  container.inject(RendererStore, new FakeRendererStore());
+
+  const notificationStore = container.get(NotificationStore);
+  notificationStore.updateNotificationCallbacks({
+    notifyUser: mockEnv.notifyUser || (() => {}),
+    raiseError: mockEnv.raiseError || (() => {}),
+    askConfirmation: mockEnv.askConfirmation || (() => {}),
+  });
+
+  // For tests without the grid composer mounted, we register fake composer
+  const composerFocusStore = container.get(ComposerFocusStore);
+  composerFocusStore.focusComposer(
+    {
+      id: "mockTestComposer",
+      get editionMode(): EditionMode {
+        return "inactive";
+      },
+      startEdition: () => {},
+      stopEdition: () => {},
+      setCurrentContent: () => {},
+    },
+    { focusMode: "inactive" }
+  );
+
+  const store = container.get(SidePanelStore);
+  const sidePanelStore = proxifyStoreMutation(store, () => container.trigger("store-updated"));
   return {
-    model: mockEnv.model || new Model(),
+    model,
     isDashboard: mockEnv.isDashboard || (() => false),
-    openSidePanel: mockEnv.openSidePanel || (() => {}),
-    toggleSidePanel: mockEnv.toggleSidePanel || (() => {}),
+    openSidePanel: mockEnv.openSidePanel || sidePanelStore.open.bind(sidePanelStore),
+    toggleSidePanel: mockEnv.toggleSidePanel || sidePanelStore.toggle.bind(sidePanelStore),
     clipboard: mockEnv.clipboard || new MockClipboard(),
     //FIXME : image provider is not built on top of the file store of the model if provided
     // and imageProvider is defined even when there is no file store on the model
     imageProvider: new ImageProvider(new FileStore()),
-    notifyUser: mockEnv.notifyUser || (() => {}),
-    raiseError: mockEnv.raiseError || (() => {}),
-    askConfirmation: mockEnv.askConfirmation || (() => {}),
+    notifyUser: notificationStore.notifyUser,
+    raiseError: notificationStore.raiseError,
+    askConfirmation: notificationStore.askConfirmation,
     startCellEdition: mockEnv.startCellEdition || (() => {}),
     loadCurrencies:
       mockEnv.loadCurrencies ||
@@ -144,6 +210,12 @@ export function makeTestEnv(mockEnv: Partial<SpreadsheetChildEnv> = {}): Spreads
         return [] as Currency[];
       }),
     loadLocales: mockEnv.loadLocales || (async () => DEFAULT_LOCALES),
+    getStore<T extends StoreConstructor>(Store: T) {
+      const store = container.get(Store);
+      return proxifyStoreMutation(store, () => container.trigger("store-updated"));
+    },
+    // @ts-ignore
+    __spreadsheet_stores__: container,
   };
 }
 
@@ -157,39 +229,83 @@ export function testUndoRedo(model: Model, expect: jest.Expect, command: Command
   expect(model).toExport(after);
 }
 
-export async function mountComponent<Props extends { [key: string]: any }>(
-  component: ComponentConstructor<Props, SpreadsheetChildEnv>,
-  optionalArgs: {
-    props?: Props;
-    env?: Partial<SpreadsheetChildEnv>;
-    model?: Model;
-    fixture?: HTMLElement;
-    renderOnModelUpdate?: boolean; // true by default
-  } = {}
-): Promise<{
+type ComponentProps = { [key: string]: any };
+
+interface ParentProps<ChildProps extends ComponentProps> {
+  childComponent: ComponentConstructor<ChildProps, SpreadsheetChildEnv>;
+  childProps: ChildProps;
+}
+
+class ParentWithPortalTarget<Props extends ComponentProps> extends Component<
+  ParentProps<Props>,
+  SpreadsheetChildEnv
+> {
+  static template = xml/*xml*/ `
+    <div class="o-spreadsheet" >
+      <t t-component="props.childComponent" t-props="props.childProps"/>
+    </div>
+  `;
+  static props = { "*": Object };
+}
+
+interface MountComponentArgs<Props extends ComponentProps> {
+  props?: Props;
+  env?: Partial<SpreadsheetChildEnv>;
+  model?: Model;
+  fixture?: HTMLElement;
+  renderOnModelUpdate?: boolean; // true by default
+}
+
+interface MountComponentReturn<Props extends ComponentProps> {
   app: App;
   parent: Component<Props, SpreadsheetChildEnv>;
   model: Model;
   fixture: HTMLElement;
   env: SpreadsheetChildEnv;
-}> {
+}
+
+export async function mountComponentWithPortalTarget<Props extends ComponentProps>(
+  component: ComponentConstructor<Props, SpreadsheetChildEnv>,
+  optionalArgs: MountComponentArgs<Props> = {}
+): Promise<MountComponentReturn<ParentProps<Props>>> {
+  const args = {
+    ...optionalArgs,
+    props: { childComponent: component, childProps: optionalArgs.props || ({} as Props) },
+  };
+  return mountComponent(ParentWithPortalTarget<Props>, args);
+}
+
+export async function mountComponent<Props extends { [key: string]: any }>(
+  component: ComponentConstructor<Props, SpreadsheetChildEnv>,
+  optionalArgs: MountComponentArgs<Props> = {}
+): Promise<MountComponentReturn<Props>> {
   const model = optionalArgs.model || optionalArgs?.env?.model || new Model();
-  model.drawGrid = () => {};
+  model.drawLayer = () => {};
   const env = makeTestEnv({ ...optionalArgs.env, model: model });
   const props = optionalArgs.props || ({} as Props);
-  const app = new App(component, { props, env, test: true, translateFn: _t });
-  app.addTemplates(OWL_TEMPLATES);
+  const app = new App(component, {
+    props,
+    env,
+    test: true,
+    translateFn: _t,
+    warnIfNoStaticProps: true,
+  });
   const fixture = optionalArgs?.fixture || makeTestFixture();
   const parent = await app.mount(fixture);
 
+  const render = batched(parent.render.bind(parent, true));
   if (optionalArgs.renderOnModelUpdate === undefined || optionalArgs.renderOnModelUpdate) {
-    model.on("update", null, () => parent.render(true));
+    model.on("update", null, render);
   }
+  // @ts-ignore
+  env.__spreadsheet_stores__.on("store-updated", null, render);
 
   registerCleanup(() => {
     app.destroy();
     fixture.remove();
     model.off("update", null);
+    // @ts-ignore
+    env.__spreadsheet_stores__.off("store-updated", null);
   });
 
   return { app, parent, model, fixture, env: parent.env };
@@ -230,9 +346,9 @@ type GridStyleDescr = { [xc: string]: Style | undefined };
 function getCellGrid(model: Model): { [xc: string]: EvaluatedCell } {
   const result = {};
   const sheetId = model.getters.getActiveSheetId();
-  for (let cellId in model.getters.getEvaluatedCells(sheetId)) {
-    const { col, row } = model.getters.getCellPosition(cellId);
-    const cell = model.getters.getEvaluatedCell({ sheetId, col, row });
+  for (const position of model.getters.getEvaluatedCellsPositions(sheetId)) {
+    const { col, row } = position;
+    const cell = model.getters.getEvaluatedCell(position);
     result[toXC(col, row)] = cell;
   }
   return result;
@@ -241,7 +357,15 @@ function getCellGrid(model: Model): { [xc: string]: EvaluatedCell } {
 export function getGrid(model: Model): GridResult {
   const result: GridResult = {};
   for (const [xc, cell] of Object.entries(getCellGrid(model))) {
-    result[xc] = cell.value;
+    result[xc] = cell.value ?? "";
+  }
+  return result;
+}
+
+export function getFormattedGrid(model: Model): GridResult {
+  const result: GridResult = {};
+  for (const [xc, cell] of Object.entries(getCellGrid(model))) {
+    result[xc] = cell.formattedValue ?? "";
   }
   return result;
 }
@@ -274,7 +398,7 @@ export function setGrid(model: Model, grid: GridDescr) {
 export function setGridFormat(model: Model, grid: GridFormatDescr) {
   for (const [xc, format] of Object.entries(grid)) {
     if (format === undefined) continue;
-    setFormat(model, format, target(xc));
+    setFormat(model, xc, format);
   }
 }
 
@@ -447,6 +571,9 @@ export function clearFunctions() {
 }
 
 export function restoreDefaultFunctions() {
+  for (let f in functionCache) {
+    delete functionCache[f];
+  }
   clearFunctions();
   Object.keys(functionMapRestore).forEach((k) => {
     functionMap[k] = functionMapRestore[k];
@@ -525,20 +652,19 @@ export async function typeInComposerHelper(selector: string, text: string, fromS
   }
 
   (composerEl as HTMLElement).focus();
-  // @ts-ignore
-  const cehMock = window.mockContentHelper as ContentEditableHelper;
-  composerEl.dispatchEvent(new Event("keydown", { bubbles: true }));
+  const cehMock = window.mockContentHelper;
+  composerEl.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "" }));
   await nextTick();
   cehMock.insertText(text);
   composerEl.dispatchEvent(new InputEvent("input", { data: text, bubbles: true }));
   await nextTick();
-  composerEl.dispatchEvent(new Event("keyup", { bubbles: true }));
+  composerEl.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, key: "" }));
   await nextTick();
   return composerEl;
 }
 
 export async function typeInComposerGrid(text: string, fromScratch: boolean = true) {
-  return await typeInComposerHelper(".o-grid .o-composer", text, fromScratch);
+  return await typeInComposerHelper(".o-grid div.o-composer", text, fromScratch);
 }
 
 export async function typeInComposerTopBar(text: string, fromScratch: boolean = true) {
@@ -548,19 +674,50 @@ export async function typeInComposerTopBar(text: string, fromScratch: boolean = 
 }
 
 export async function startGridComposition(key?: string) {
+  const gridComposerTarget = document.querySelector(".o-grid .o-composer")!;
   if (key) {
-    const gridInputEl = document.querySelector(".o-grid>input");
-    gridInputEl!.dispatchEvent(
+    gridComposerTarget!.dispatchEvent(
       new InputEvent("input", { data: key, bubbles: true, cancelable: true })
     );
   } else {
-    const gridInputEl = document.querySelector(".o-grid");
-    gridInputEl!.dispatchEvent(
+    gridComposerTarget!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })
+    );
+    gridComposerTarget!.dispatchEvent(
       new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })
     );
   }
   await nextTick();
   return document.querySelector(".o-grid .o-composer")!;
+}
+
+interface EditStandaloneComposerOptions {
+  confirm?: boolean;
+  fromScratch?: boolean;
+}
+export async function editStandaloneComposer(
+  target: DOMTarget,
+  text: string,
+  { confirm = true, fromScratch = true }: EditStandaloneComposerOptions = {}
+) {
+  let composerEl = getTarget(target) as HTMLElement;
+
+  composerEl.focus();
+  const cehMock = window.mockContentHelper;
+  await click(composerEl);
+
+  if (fromScratch) {
+    cehMock.removeAll();
+  }
+  cehMock.insertText(text);
+  composerEl.dispatchEvent(new InputEvent("input", { data: text, bubbles: true }));
+
+  if (confirm) {
+    keyDown({ key: "Enter" });
+    await keyUp({ key: "Enter" });
+  }
+
+  return composerEl;
 }
 
 /**
@@ -591,6 +748,18 @@ export async function exportPrettifiedXlsx(model: Model): Promise<XLSXExport> {
   };
 }
 
+export function getExportedExcelData(model: Model): ExcelWorkbookData {
+  model.dispatch("EVALUATE_CELLS");
+  let data = createEmptyExcelWorkbookData();
+  for (let handler of model["handlers"]) {
+    if (handler instanceof BasePlugin) {
+      handler.exportForExcel(data);
+    }
+  }
+  data = fixLengthySheetNames(data);
+  return purgeSingleRowTables(data);
+}
+
 export function mockUuidV4To(model: Model, value: number | string) {
   //@ts-ignore
   return model.uuidGenerator.setNextId(value);
@@ -609,16 +778,18 @@ export const mockChart = () => {
     static _adapters = { _date: MockLuxonTimeAdapter };
     constructor(ctx: unknown, chartData: ChartConfiguration) {
       Object.assign(mockChartData, chartData);
+      this.constructorMock();
     }
+    constructorMock() {} // for spying
     set data(value) {
       mockChartData.data = value;
     }
     get data() {
       return mockChartData.data;
     }
-    toBase64Image = () => "";
-    destroy = () => {};
-    update = () => {};
+    toBase64Image = () => "data:image/png;base64,randomDataThatIsActuallyABase64Image";
+    destroy() {}
+    update() {}
     options = mockChartData.options;
     config = mockChartData;
   }
@@ -642,7 +813,7 @@ export function getCellsObject(model: Model, sheetId: UID): Record<string, CellO
     cells[toXC(col, row)] = {
       style: cell.style,
       format: cell.format,
-      value: model.getters.getEvaluatedCell({ sheetId, col, row }).value,
+      value: model.getters.getEvaluatedCell({ sheetId, col, row }).value ?? "",
       content: cell.content,
     };
   }
@@ -654,12 +825,13 @@ export async function doAction(
   env: SpreadsheetChildEnv,
   menuRegistry: MenuItemRegistry = topbarMenuRegistry
 ) {
-  const node = getNode(path, menuRegistry);
+  const node = getNode(path, env, menuRegistry);
   await node.execute?.(env);
 }
 
 export function getNode(
   _path: string[],
+  env: SpreadsheetChildEnv,
   menuRegistry: MenuItemRegistry = topbarMenuRegistry
 ): Action {
   const path = [..._path];
@@ -673,7 +845,7 @@ export function getNode(
     if (path.length === 0) {
       return item;
     }
-    items = item.children({} as SpreadsheetChildEnv);
+    items = item.children(env);
   }
   throw new Error(`Menu item not found`);
 }
@@ -683,7 +855,7 @@ export function getName(
   env: SpreadsheetChildEnv,
   menuRegistry: MenuItemRegistry = topbarMenuRegistry
 ): string {
-  const node = getNode(path, menuRegistry);
+  const node = getNode(path, env, menuRegistry);
   return node.name(env).toString();
 }
 
@@ -722,37 +894,38 @@ export function getStylePropertyInPx(el: HTMLElement, property: string): number 
 
 type ComposerWrapperProps = {
   focusComposer: ComposerFocusType;
-  composerProps: Partial<ComposerProps>;
+  composerProps: Partial<CellComposerProps>;
 };
 export class ComposerWrapper extends Component<ComposerWrapperProps, SpreadsheetChildEnv> {
   static components = { Composer };
   static template = xml/*xml*/ `
     <Composer t-props="composerProps"/>
   `;
+  static props = { composerProps: Object, focusComposer: String };
   state = useState({ focusComposer: <ComposerFocusType>"inactive" });
+  composerStore!: Store<CellComposerStore>;
   setup() {
     this.state.focusComposer = this.props.focusComposer;
-    onMounted(() => this.env.model.on("update", this, () => this.render(true)));
-    onWillUnmount(() => this.env.model.off("update", this));
+    this.composerStore = useStore(CellComposerStore);
   }
 
-  get composerProps(): ComposerProps {
+  get composerProps(): CellComposerProps {
     return {
-      onComposerContentFocused: (selection) => {
+      ...this.props.composerProps,
+      onComposerContentFocused: () => {
         this.state.focusComposer = "contentFocus";
-        this.setEdition({ selection });
-        this.env.model.dispatch("CHANGE_COMPOSER_CURSOR_SELECTION", selection);
+        this.setEdition({});
       },
       focus: this.state.focusComposer,
-      ...this.props.composerProps,
+      composerStore: this.composerStore,
     };
   }
 
   setEdition({ text, selection }: { text?: string; selection?: ComposerSelection }) {
-    if (this.env.model.getters.getEditionMode() === "inactive") {
-      this.env.model.dispatch("START_EDITION", { text, selection });
+    if (this.composerStore.editionMode === "inactive") {
+      this.composerStore.startEdition(text, selection);
     } else if (text) {
-      this.env.model.dispatch("SET_CURRENT_CONTENT", { content: text, selection });
+      this.composerStore.setCurrentContent(text, selection);
     }
   }
 
@@ -764,15 +937,20 @@ export class ComposerWrapper extends Component<ComposerWrapperProps, Spreadsheet
 
 export async function mountComposerWrapper(
   model: Model = new Model(),
-  composerProps: Partial<ComposerProps> = {},
+  composerProps: Partial<CellComposerProps> = {},
   focusComposer: ComposerFocusType = "inactive"
-): Promise<{ parent: ComposerWrapper; model: Model; fixture: HTMLElement }> {
-  const { parent, fixture } = await mountComponent(ComposerWrapper, {
+): Promise<{
+  parent: ComposerWrapper;
+  model: Model;
+  fixture: HTMLElement;
+  env: SpreadsheetChildEnv;
+}> {
+  const { parent, fixture, env } = await mountComponent(ComposerWrapper, {
     props: { composerProps, focusComposer },
     model,
   });
 
-  return { parent: parent as ComposerWrapper, model, fixture };
+  return { parent: parent as ComposerWrapper, model, fixture, env };
 }
 
 export function toCellPosition(sheetId: UID, xc: string): CellPosition {
@@ -785,5 +963,59 @@ export function getDataValidationRules(model: Model, sheetId = model.getters.get
   return model.getters.getDataValidationRules(sheetId).map((rule) => ({
     ...rule,
     ranges: rule.ranges.map((range) => model.getters.getRangeString(range, sheetId)),
+  }));
+}
+
+export function drawGrid(model: Model, ctx: GridRenderingContext) {
+  for (const layer of OrderedLayers()) {
+    model.drawLayer(ctx, layer);
+  }
+}
+
+export function getHighlightsFromStore(
+  storeGetter: SpreadsheetChildEnv | DependencyContainer
+): Highlight[] {
+  const rendererStore =
+    "getStore" in storeGetter
+      ? storeGetter.getStore(RendererStore)
+      : storeGetter.get(RendererStore);
+  return (Object.values(rendererStore["renderers"]) as any)
+    .flat()
+    .filter((renderer) => renderer instanceof HighlightStore)
+    .flatMap((store: HighlightStore) => store["providers"])
+    .flatMap((getter: HighlightProvider) => getter.highlights);
+}
+
+export function makeTestNotificationStore(): NotificationStore {
+  return {
+    mutators: ["notifyUser", "raiseError", "askConfirmation", "updateNotificationCallbacks"],
+    notifyUser: () => {},
+    raiseError: () => {},
+    askConfirmation: () => {},
+    updateNotificationCallbacks: () => {},
+  };
+}
+
+export function makeTestComposerStore(
+  model: Model,
+  notificationStore?: NotificationStore
+): CellComposerStore {
+  const container = new DependencyContainer();
+  container.inject(ModelStore, model);
+  notificationStore = notificationStore || makeTestNotificationStore();
+  container.inject(NotificationStore, notificationStore);
+  return container.get(CellComposerStore);
+}
+
+/** Return the values of the first filter found in the sheet */
+export function getFilterHiddenValues(model: Model, sheetId = model.getters.getActiveSheetId()) {
+  const table = model.getters.getTables(sheetId)[0];
+  return table.filters.map((filter) => ({
+    zone: zoneToXc(filter.rangeWithHeaders.zone),
+    value: model.getters.getFilterHiddenValues({
+      sheetId,
+      col: filter.col,
+      row: table.range.zone.top,
+    }),
   }));
 }

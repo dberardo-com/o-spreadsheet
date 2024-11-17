@@ -6,7 +6,13 @@ import {
   GRID_ICON_MARGIN,
 } from "../../src/constants";
 import { Model } from "../../src/model";
-import { createFilter, selectCell, setCellContent } from "../test_helpers/commands_helpers";
+import { clickableCellRegistry } from "../../src/registries/cell_clickable_registry";
+import {
+  createTable,
+  selectCell,
+  setCellContent,
+  setViewportOffset,
+} from "../test_helpers/commands_helpers";
 import { keyDown, simulateClick } from "../test_helpers/dom_helper";
 import { getSelectionAnchorCellXc } from "../test_helpers/getters_helpers";
 import { mountSpreadsheet, nextTick, spyDispatch } from "../test_helpers/helpers";
@@ -58,7 +64,7 @@ describe("Grid component in dashboard mode", () => {
   });
 
   test("Filter icon is correctly rendered", async () => {
-    createFilter(model, "B2:C3");
+    createTable(model, "B2:C3");
     model.updateMode("dashboard");
     await nextTick();
     const icons = fixture.querySelectorAll(".o-grid-cell-icon");
@@ -71,7 +77,7 @@ describe("Grid component in dashboard mode", () => {
   });
 
   test("Clicking on a filter icon correctly open the filter popover", async () => {
-    createFilter(model, "A1:A2");
+    createTable(model, "A1:A2");
     model.updateMode("dashboard");
     await nextTick();
     await simulateClick(".o-filter-icon");
@@ -79,7 +85,7 @@ describe("Grid component in dashboard mode", () => {
   });
 
   test("Clicking on a filter icon correctly closes the filter popover", async () => {
-    createFilter(model, "A1:A2");
+    createTable(model, "A1:A2");
     model.updateMode("dashboard");
     await nextTick();
     await simulateClick(".o-filter-icon");
@@ -91,7 +97,7 @@ describe("Grid component in dashboard mode", () => {
   });
 
   test("When filter menu is open, clicking on a random grid correctly closes filter popover", async () => {
-    createFilter(model, "A1:A2");
+    createTable(model, "A1:A2");
     model.updateMode("dashboard");
     await nextTick();
     await simulateClick(".o-filter-icon");
@@ -113,5 +119,33 @@ describe("Grid component in dashboard mode", () => {
     selectCell(model, "A2");
     document.body.dispatchEvent(getEmptyClipboardEvent("paste"));
     expect(spy).not.toHaveBeenCalledWith("PASTE");
+  });
+
+  test("Clickable cells actions are properly udpated on viewport scroll", async () => {
+    const fn = jest.fn();
+    clickableCellRegistry.add("fake", {
+      condition: (position, getters) => {
+        return !!getters.getCell(position)?.content.startsWith("__");
+      },
+      execute: (position) => fn(position.col, position.row),
+      sequence: 5,
+    });
+    setCellContent(model, "A1", "__test1");
+    setCellContent(model, "B10", "__test1");
+    model.updateMode("dashboard");
+    await nextTick();
+
+    await simulateClick("div.o-dashboard-clickable-cell", 10, 10); // first visible cell
+    expect(fn).toHaveBeenCalledWith(0, 0);
+
+    setViewportOffset(
+      model,
+      DEFAULT_CELL_WIDTH /** scroll to column B */,
+      9 * DEFAULT_CELL_HEIGHT /** scroll to row 10 */
+    );
+    await nextTick();
+    await simulateClick("div.o-dashboard-clickable-cell", 10, 10);
+    expect(fn).toHaveBeenCalledWith(1, 9);
+    clickableCellRegistry.remove("fake");
   });
 });

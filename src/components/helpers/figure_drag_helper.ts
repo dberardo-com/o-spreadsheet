@@ -1,3 +1,4 @@
+import { clip } from "../../helpers";
 import { Figure, PixelPosition, SheetScrollInfo } from "../../types";
 
 export function dragFigureForMove(
@@ -11,14 +12,10 @@ export function dragFigureForMove(
   const minX = viewportX ? 0 : -scrollX;
   const minY = viewportY ? 0 : -scrollY;
   const deltaX = mouseX - mouseInitialX;
-  const newX = clamp(initialFigure.x + deltaX, minX, maxX - initialFigure.width - scrollX);
+  const newX = clip(initialFigure.x + deltaX, minX, maxX - initialFigure.width - scrollX);
   const deltaY = mouseY - mouseInitialY;
-  const newY = clamp(initialFigure.y + deltaY, minY, maxY - initialFigure.height - scrollY);
+  const newY = clip(initialFigure.y + deltaY, minY, maxY - initialFigure.height - scrollY);
   return { ...initialFigure, x: newX, y: newY };
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), max);
 }
 
 export function dragFigureForResize(
@@ -28,7 +25,8 @@ export function dragFigureForResize(
   { x: mouseX, y: mouseY }: PixelPosition,
   { x: mouseInitialX, y: mouseInitialY }: PixelPosition,
   keepRatio: boolean,
-  minFigSize: number
+  minFigSize: number,
+  { scrollX, scrollY }: SheetScrollInfo
 ): Figure {
   let { x, y, width, height } = initialFigure;
 
@@ -58,14 +56,14 @@ export function dragFigureForResize(
     }
   }
 
-  // Restrict resizing if x or y reaches header boundaries
-  if (x < 0) {
-    width += x;
-    x = 0;
+  // Adjusts figure dimensions to ensure it remains within header boundaries and viewport during resizing.
+  if (x + scrollX <= 0) {
+    width = width + x + scrollX;
+    x = -scrollX;
   }
-  if (y < 0) {
-    height += y;
-    y = 0;
+  if (y + scrollY <= 0) {
+    height = height + y + scrollY;
+    y = -scrollY;
   }
 
   return { ...initialFigure, x, y, width, height };

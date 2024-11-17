@@ -3,7 +3,8 @@ import { ScorecardChartDefinition } from "../../../../types/chart/scorecard_char
 import { CommandResult, DispatchResult, SpreadsheetChildEnv, UID } from "../../../../types/index";
 import { SelectionInput } from "../../../selection_input/selection_input";
 import { ChartTerms } from "../../../translations_terms";
-import { ValidationMessages } from "../../../validation_messages/validation_messages";
+import { Section } from "../../components/section/section";
+import { ChartErrorSection } from "../building_blocks/error_section/error_section";
 
 interface Props {
   figureId: UID;
@@ -19,7 +20,13 @@ interface PanelState {
 
 export class ScorecardChartConfigPanel extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-ScorecardChartConfigPanel";
-  static components = { SelectionInput, ValidationMessages };
+  static components = { SelectionInput, ChartErrorSection, Section };
+  static props = {
+    figureId: String,
+    definition: Object,
+    updateChart: Function,
+    canUpdateChart: Function,
+  };
 
   private state: PanelState = useState({
     keyValueDispatchResult: undefined,
@@ -89,10 +96,3 @@ export class ScorecardChartConfigPanel extends Component<Props, SpreadsheetChild
     this.props.updateChart(this.props.figureId, { baselineMode: ev.target.value });
   }
 }
-
-ScorecardChartConfigPanel.props = {
-  figureId: String,
-  definition: Object,
-  updateChart: Function,
-  canUpdateChart: Function,
-};

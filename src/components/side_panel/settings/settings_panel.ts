@@ -1,8 +1,11 @@
 import { Component, onWillStart } from "@odoo/owl";
-import { deepEquals, formatValue } from "../../../helpers";
+import { GRAY_100, GRAY_300 } from "../../../constants";
+import { DAYS, deepEquals, formatValue } from "../../../helpers";
 import { getDateTimeFormat, isValidLocale } from "../../../helpers/locale";
 import { Locale, LocaleCode, SpreadsheetChildEnv } from "../../../types";
 import { css } from "../../helpers";
+import { ValidationMessages } from "../../validation_messages/validation_messages";
+import { Section } from "../components/section/section";
 
 interface Props {
   onCloseSidePanel: () => void;
@@ -10,12 +13,15 @@ interface Props {
 
 css/* scss */ `
   .o-locale-preview {
-    color: dimgrey;
+    border: 1px solid ${GRAY_300};
+    background-color: ${GRAY_100};
   }
 `;
 
 export class SettingsPanel extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-SettingsPanel";
+  static components = { Section, ValidationMessages };
+  static props = { onCloseSidePanel: Function };
 
   loadedLocales: Locale[] = [];
 
@@ -31,7 +37,13 @@ export class SettingsPanel extends Component<Props, SpreadsheetChildEnv> {
 
   private async loadLocales() {
     this.loadedLocales = (await this.env.loadLocales())
-      .filter(isValidLocale)
+      .filter((locale) => {
+        const isValid = isValidLocale(locale);
+        if (!isValid) {
+          console.warn(`Invalid locale: ${locale["code"]} ${locale}`);
+        }
+        return isValid;
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
@@ -49,6 +61,14 @@ export class SettingsPanel extends Component<Props, SpreadsheetChildEnv> {
     const locale = this.env.model.getters.getLocale();
     const dateTimeFormat = getDateTimeFormat(locale);
     return formatValue(1.6, { format: dateTimeFormat, locale });
+  }
+
+  get firstDayOfWeek() {
+    const locale = this.env.model.getters.getLocale();
+    const weekStart = locale.weekStart;
+    // Week start: 1 = Monday, 7 = Sunday
+    // Days: 0 = Sunday, 6 = Saturday
+    return DAYS[weekStart % 7];
   }
 
   get currentLocale() {
@@ -75,7 +95,3 @@ export class SettingsPanel extends Component<Props, SpreadsheetChildEnv> {
     return this.loadedLocales;
   }
 }
-
-SettingsPanel.props = {
-  onCloseSidePanel: Function,
-};

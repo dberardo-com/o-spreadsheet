@@ -1,196 +1,32 @@
-import { functionRegistry } from "../../src/functions";
 import { zoneToXc } from "../../src/helpers";
 import { Model } from "../../src/model";
 import { CommandResult, coreTypes, UID } from "../../src/types";
 import {
   activateSheet,
-  addCellToSelection,
   addColumns,
   addRows,
   createSheet,
-  hideRows,
   redo,
   resizeColumns,
   resizeRows,
   selectCell,
-  setAnchorCorner,
   setCellContent,
   setCellFormat,
-  setSelection,
+  setFormat,
+  setStyle,
   setZoneBorders,
   undo,
 } from "../test_helpers/commands_helpers";
 import {
   getCell,
   getCellContent,
-  getCellError,
   getEvaluatedCell,
   getRangeFormattedValues,
   getRangeValues,
 } from "../test_helpers/getters_helpers";
-import { toRangesData } from "../test_helpers/helpers";
+import { makeTestComposerStore, toRangesData } from "../test_helpers/helpers";
 
-let model: Model;
 describe("core", () => {
-  describe("statistic functions", () => {
-    test("functions are applied on deduplicated cells in zones", () => {
-      const model = new Model();
-      setCellContent(model, "A1", "1");
-      setCellContent(model, "A2", "2");
-      setCellContent(model, "A3", "3");
-
-      setSelection(model, ["A1:A2"]);
-      let statisticFnResults = model.getters.getStatisticFnResults();
-      expect(statisticFnResults["Count"]).toBe(2);
-
-      // expand selection with the range A3:A2
-      addCellToSelection(model, "A3");
-      setAnchorCorner(model, "A2");
-
-      // A2 is now present in two selection
-      statisticFnResults = model.getters.getStatisticFnResults();
-      expect(statisticFnResults["Count"]).toBe(3);
-    });
-
-    test("statistic function should not include hidden rows/columns in calculations", () => {
-      const model = new Model();
-      setCellContent(model, "A1", "1");
-      setCellContent(model, "A2", "2");
-      setCellContent(model, "A3", "3");
-
-      setSelection(model, ["A1:A4"]);
-      let statisticFnResults = model.getters.getStatisticFnResults();
-      expect(statisticFnResults["Sum"]).toBe(6);
-
-      hideRows(model, [1, 2]);
-      statisticFnResults = model.getters.getStatisticFnResults();
-      expect(statisticFnResults["Sum"]).toBe(1);
-    });
-
-    describe("return undefined if the types handled by the function are not present among the types of the selected cells", () => {
-      beforeEach(() => {
-        model = new Model();
-        setCellContent(model, "A1", "24");
-        setCellContent(model, "A2", "=42");
-        setCellContent(model, "A3", "107% of people don't get statistics");
-        setCellContent(model, "A4", "TRUE");
-        setCellContent(model, "A5", "=A5");
-        setCellContent(model, "A6", "=A7");
-      });
-
-      test('return the "SUM" value only on cells interpreted as number', () => {
-        // select the range A1:A7
-        selectCell(model, "A1");
-        setAnchorCorner(model, "A7");
-        let statisticFnResults = model.getters.getStatisticFnResults();
-        expect(statisticFnResults["Sum"]).toBe(66);
-
-        selectCell(model, "A7");
-        statisticFnResults = model.getters.getStatisticFnResults();
-        expect(statisticFnResults["Sum"]).toBe(undefined);
-      });
-
-      test('return the "Avg" result only on cells interpreted as number', () => {
-        // select the range A1:A7
-        selectCell(model, "A1");
-        setAnchorCorner(model, "A7");
-        let statisticFnResults = model.getters.getStatisticFnResults();
-        expect(statisticFnResults["Avg"]).toBe(22);
-
-        selectCell(model, "A7");
-        statisticFnResults = model.getters.getStatisticFnResults();
-        expect(statisticFnResults["Avg"]).toBe(undefined);
-      });
-
-      test('return "Min" value only on cells interpreted as number', () => {
-        // select the range A1:A7
-        selectCell(model, "A1");
-        setAnchorCorner(model, "A7");
-        let statisticFnResults = model.getters.getStatisticFnResults();
-        expect(statisticFnResults["Min"]).toBe(0);
-
-        selectCell(model, "A7");
-        statisticFnResults = model.getters.getStatisticFnResults();
-        expect(statisticFnResults["Min"]).toBe(undefined);
-      });
-
-      test('return the "Max" value only on cells interpreted as number', () => {
-        // select the range A1:A7
-        selectCell(model, "A1");
-        setAnchorCorner(model, "A7");
-        let statisticFnResults = model.getters.getStatisticFnResults();
-        expect(statisticFnResults["Max"]).toBe(42);
-
-        selectCell(model, "A7");
-        statisticFnResults = model.getters.getStatisticFnResults();
-        expect(statisticFnResults["Max"]).toBe(undefined);
-      });
-
-      test('return the "Count" value on all types of interpreted cells except on cells interpreted as empty', () => {
-        // select the range A1:A7
-        selectCell(model, "A1");
-        setAnchorCorner(model, "A7");
-        let statisticFnResults = model.getters.getStatisticFnResults();
-        expect(statisticFnResults["Count"]).toBe(6);
-
-        selectCell(model, "A7");
-        statisticFnResults = model.getters.getStatisticFnResults();
-        expect(statisticFnResults["Count"]).toBe(undefined);
-      });
-
-      test('return the "Count numbers" value on all types of interpreted cells except on cells interpreted as empty', () => {
-        selectCell(model, "A1");
-        let statisticFnResults = model.getters.getStatisticFnResults();
-        expect(statisticFnResults["Count Numbers"]).toBe(1);
-
-        selectCell(model, "A2");
-        statisticFnResults = model.getters.getStatisticFnResults();
-        expect(statisticFnResults["Count Numbers"]).toBe(1);
-
-        selectCell(model, "A3");
-        statisticFnResults = model.getters.getStatisticFnResults();
-        expect(statisticFnResults["Count Numbers"]).toBe(0);
-
-        selectCell(model, "A4");
-        statisticFnResults = model.getters.getStatisticFnResults();
-        expect(statisticFnResults["Count Numbers"]).toBe(0);
-
-        selectCell(model, "A5");
-        statisticFnResults = model.getters.getStatisticFnResults();
-        expect(statisticFnResults["Count Numbers"]).toBe(0);
-
-        // select the range A6:A7
-        selectCell(model, "A6");
-        setAnchorCorner(model, "A7");
-        statisticFnResults = model.getters.getStatisticFnResults();
-        expect(statisticFnResults["Count"]).toBe(1);
-      });
-    });
-
-    test("raise error from compilation with specific error message", () => {
-      functionRegistry.add("TWOARGSNEEDED", {
-        description: "any function",
-        compute: () => {
-          return true;
-        },
-        args: [
-          { name: "arg1", description: "", type: ["ANY"] },
-          { name: "arg2", description: "", type: ["ANY"] },
-        ],
-        returns: ["ANY"],
-      });
-
-      const model = new Model();
-      setCellContent(model, "A1", "=TWOARGSNEEDED(42)");
-
-      expect(getEvaluatedCell(model, "A1").value).toBe("#BAD_EXPR");
-      expect(getCellError(model, "A1")).toBe(
-        `Invalid number of arguments for the TWOARGSNEEDED function. Expected 2 minimum, but got 1 instead.`
-      );
-      functionRegistry.remove("TWOARGSNEEDED");
-    });
-  });
-
   describe("format", () => {
     test("format cell that point to an empty cell properly", () => {
       const model = new Model();
@@ -210,30 +46,17 @@ describe("core", () => {
       const model = new Model();
       setCellContent(model, "A1", "0");
       selectCell(model, "A1");
-      model.dispatch("SET_FORMATTING", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: model.getters.getSelectedZones(),
-        format: "0.00000",
-      });
+      setFormat(model, "A1", "0.00000");
       expect(getCellContent(model, "A1")).toBe("0.00000");
       setCellContent(model, "A2", "0");
-      selectCell(model, "A2");
-      model.dispatch("SET_FORMATTING", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: model.getters.getSelectedZones(),
-        format: "0.00%",
-      });
+      setFormat(model, "A2", "0.00%");
       expect(getCellContent(model, "A2")).toBe("0.00%");
     });
 
     test("evaluate properly a cell with a style just recently applied", () => {
       const model = new Model();
       setCellContent(model, "A1", "=sum(A2) + 1");
-      model.dispatch("SET_FORMATTING", {
-        sheetId: model.getters.getActiveSheetId(),
-        target: [{ left: 0, top: 0, right: 0, bottom: 0 }],
-        style: { bold: true },
-      });
+      setStyle(model, "A1", { bold: true });
       expect(getCellContent(model, "A1")).toEqual("1");
     });
 
@@ -403,13 +226,14 @@ describe("core", () => {
 
   test("does not reevaluate cells if edition does not change content", () => {
     const model = new Model();
+    const composerStore = makeTestComposerStore(model);
     setCellContent(model, "A1", "=rand()");
 
     expect(getEvaluatedCell(model, "A1").value).toBeDefined();
     const val = getEvaluatedCell(model, "A1").value;
 
-    model.dispatch("START_EDITION");
-    model.dispatch("STOP_EDITION");
+    composerStore.startEdition();
+    composerStore.stopEdition();
     expect(getEvaluatedCell(model, "A1").value).toBe(val);
   });
 
@@ -557,11 +381,12 @@ describe("history", () => {
     const model = new Model({
       sheets: [{ colNumber: 10, rowNumber: 10, cells: { A1: { content: "1" } } }],
     });
+    const composerStore = makeTestComposerStore(model);
 
     expect(model.getters.canUndo()).toBe(false);
 
-    model.dispatch("START_EDITION", { text: "abc" });
-    model.dispatch("STOP_EDITION");
+    composerStore.startEdition("abc");
+    composerStore.stopEdition();
 
     expect(getCellContent(model, "A1")).toBe("abc");
     expect(model.getters.canUndo()).toBe(true);
@@ -597,12 +422,7 @@ describe("history", () => {
   test("can delete a cell with a style", () => {
     const model = new Model();
     setCellContent(model, "A1", "3");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: [{ left: 0, top: 0, right: 0, bottom: 0 }],
-      style: { bold: true },
-    });
-
+    setStyle(model, "A1", { bold: true });
     expect(getCellContent(model, "A1")).toBe("3");
 
     model.dispatch("DELETE_CONTENT", {
@@ -629,11 +449,7 @@ describe("history", () => {
   test("can delete a cell with a format", () => {
     const model = new Model();
     setCellContent(model, "A1", "3");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: [{ left: 0, top: 0, right: 0, bottom: 0 }],
-      format: "#,##0.00",
-    });
+    setFormat(model, "A1", "#,##0.00");
 
     expect(getCellContent(model, "A1")).toBe("3.00");
 
@@ -703,9 +519,14 @@ describe("history", () => {
             colNumber: 10,
             rowNumber: 10,
             cells: {
-              A1: { content: "1000", format: 1 },
-              A3: { content: "2000", format: 1 },
-              B2: { content: "TRUE", format: 1 },
+              A1: { content: "1000" },
+              A3: { content: "2000" },
+              B2: { content: "TRUE" },
+            },
+            formats: {
+              A1: 1,
+              A3: 1,
+              B2: 1,
             },
           },
           {
@@ -713,9 +534,14 @@ describe("history", () => {
             colNumber: 10,
             rowNumber: 10,
             cells: {
-              A1: { content: "21000", format: 1 },
-              A3: { content: "12-31-2020", format: 2 },
-              B2: { content: "TRUE", format: 1 },
+              A1: { content: "21000" },
+              A3: { content: "12-31-2020" },
+              B2: { content: "TRUE" },
+            },
+            formats: {
+              A1: 1,
+              A3: 2,
+              B2: 1,
             },
           },
         ],
@@ -778,11 +604,11 @@ describe("history", () => {
           },
         ],
       });
-      expect(getRangeValues(model, "A1:A3", sheet1Id)).toEqual([1000, "", 2000]);
-      expect(getRangeValues(model, "$A$1:$A$3", sheet1Id)).toEqual([1000, "", 2000]);
-      expect(getRangeValues(model, "Sheet1!A1:A3", sheet1Id)).toEqual([1000, "", 2000]);
-      expect(getRangeValues(model, "Sheet2!A1:A3", sheet2Id)).toEqual([21000, "", 44196]);
-      expect(getRangeValues(model, "Sheet2!A1:A3", sheet1Id)).toEqual([21000, "", 44196]);
+      expect(getRangeValues(model, "A1:A3", sheet1Id)).toEqual([1000, null, 2000]);
+      expect(getRangeValues(model, "$A$1:$A$3", sheet1Id)).toEqual([1000, null, 2000]);
+      expect(getRangeValues(model, "Sheet1!A1:A3", sheet1Id)).toEqual([1000, null, 2000]);
+      expect(getRangeValues(model, "Sheet2!A1:A3", sheet2Id)).toEqual([21000, null, 44196]);
+      expect(getRangeValues(model, "Sheet2!A1:A3", sheet1Id)).toEqual([21000, null, 44196]);
       expect(getRangeValues(model, "B2", sheet1Id)).toEqual([true]);
       expect(getRangeValues(model, "Sheet1!B2", sheet1Id)).toEqual([true]);
       expect(getRangeValues(model, "Sheet2!B2", sheet2Id)).toEqual([true]);

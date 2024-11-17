@@ -1,5 +1,4 @@
-import { areZonesContinuous, numberToLetters } from "../helpers";
-import { interactiveAddFilter } from "../helpers/ui/filter_interactive";
+import { numberToLetters } from "../helpers";
 import { interactiveFreezeColumnsRows } from "../helpers/ui/freeze_interactive";
 import { _t } from "../translation";
 import { SpreadsheetChildEnv } from "../types";
@@ -38,6 +37,7 @@ export const unhideCols: ActionSpec = {
     const currentCols = env.model.getters.getElementsFromSelection("COL");
     return currentCols.some((col) => hiddenCols.includes(col));
   },
+  icon: "o-spreadsheet-Icon.UNHIDE_COL",
 };
 
 export const unhideAllCols: ActionSpec = {
@@ -52,6 +52,7 @@ export const unhideAllCols: ActionSpec = {
   },
   isVisible: (env: SpreadsheetChildEnv) =>
     env.model.getters.getHiddenColsGroups(env.model.getters.getActiveSheetId()).length > 0,
+  icon: "o-spreadsheet-Icon.UNHIDE_COL",
 };
 
 export const hideRows: ActionSpec = {
@@ -85,6 +86,7 @@ export const unhideRows: ActionSpec = {
     const currentRows = env.model.getters.getElementsFromSelection("ROW");
     return currentRows.some((col) => hiddenRows.includes(col));
   },
+  icon: "o-spreadsheet-Icon.UNHIDE_ROW",
 };
 
 export const unhideAllRows: ActionSpec = {
@@ -99,6 +101,7 @@ export const unhideAllRows: ActionSpec = {
   },
   isVisible: (env: SpreadsheetChildEnv) =>
     env.model.getters.getHiddenRowsGroups(env.model.getters.getActiveSheetId()).length > 0,
+  icon: "o-spreadsheet-Icon.UNHIDE_ROW",
 };
 
 export const unFreezePane: ActionSpec = {
@@ -186,10 +189,7 @@ export const freezeCurrentCol: ActionSpec = {
 };
 
 export const viewGridlines: ActionSpec = {
-  name: (env: SpreadsheetChildEnv) =>
-    env.model.getters.getGridLinesVisibility(env.model.getters.getActiveSheetId())
-      ? _t("Hide gridlines")
-      : _t("Show gridlines"),
+  name: _t("Gridlines"),
   execute: (env) => {
     const sheetId = env.model.getters.getActiveSheetId();
     env.model.dispatch("SET_GRID_LINES_VISIBILITY", {
@@ -197,25 +197,18 @@ export const viewGridlines: ActionSpec = {
       areGridLinesVisible: !env.model.getters.getGridLinesVisibility(sheetId),
     });
   },
-  icon: "o-spreadsheet-Icon.SHOW_HIDE_GRID",
+  isActive: (env) => {
+    const sheetId = env.model.getters.getActiveSheetId();
+    return env.model.getters.getGridLinesVisibility(sheetId);
+  },
 };
 
 export const viewFormulas: ActionSpec = {
-  name: (env: SpreadsheetChildEnv) =>
-    env.model.getters.shouldShowFormulas() ? "Hide formulas" : _t("Show formulas"),
+  name: _t("Formulas"),
+  isActive: (env: SpreadsheetChildEnv) => env.model.getters.shouldShowFormulas(),
   execute: (env) =>
     env.model.dispatch("SET_FORMULA_VISIBILITY", { show: !env.model.getters.shouldShowFormulas() }),
   isReadonlyAllowed: true,
-  icon: "o-spreadsheet-Icon.SHOW_HIDE_FORMULA",
-};
-
-export const createRemoveFilter: ActionSpec = {
-  name: (env) =>
-    selectionContainsFilter(env) ? _t("Remove selected filters") : _t("Create filter"),
-  isActive: (env) => selectionContainsFilter(env),
-  isEnabled: (env) => !cannotCreateFilter(env),
-  execute: (env) => createRemoveFilterAction(env),
-  icon: "o-spreadsheet-Icon.FILTER_ICON_INACTIVE",
 };
 
 export const groupColumns: ActionSpec = {
@@ -293,34 +286,6 @@ export const ungroupRows: ActionSpec = {
   execute: (env) => ungroupHeaders(env, "ROW"),
   icon: "o-spreadsheet-Icon.UNGROUP_ROWS",
 };
-
-function selectionContainsFilter(env: SpreadsheetChildEnv): boolean {
-  const sheetId = env.model.getters.getActiveSheetId();
-  const selectedZones = env.model.getters.getSelectedZones();
-  return env.model.getters.doesZonesContainFilter(sheetId, selectedZones);
-}
-
-function cannotCreateFilter(env: SpreadsheetChildEnv): boolean {
-  return !areZonesContinuous(...env.model.getters.getSelectedZones());
-}
-
-function createRemoveFilterAction(env: SpreadsheetChildEnv) {
-  if (selectionContainsFilter(env)) {
-    env.model.dispatch("REMOVE_FILTER_TABLE", {
-      sheetId: env.model.getters.getActiveSheetId(),
-      target: env.model.getters.getSelectedZones(),
-    });
-    return;
-  }
-
-  if (cannotCreateFilter(env)) {
-    return;
-  }
-  env.model.selection.selectTableAroundSelection();
-  const sheetId = env.model.getters.getActiveSheetId();
-  const selection = env.model.getters.getSelectedZones();
-  interactiveAddFilter(env, sheetId, selection);
-}
 
 function groupHeadersAction(env: SpreadsheetChildEnv, dim: Dimension) {
   const selection = env.model.getters.getSelectedZone();

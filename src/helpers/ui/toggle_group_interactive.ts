@@ -1,4 +1,3 @@
-
 import { _t } from "../../translation";
 import { CommandResult, Dimension, HeaderIndex, SpreadsheetChildEnv, UID } from "../../types";
 

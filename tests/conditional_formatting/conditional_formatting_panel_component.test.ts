@@ -1,7 +1,7 @@
-import { Component, onMounted, onWillUnmount, xml } from "@odoo/owl";
+import { Component } from "@odoo/owl";
 import { Model } from "../../src";
 import { ConditionalFormattingPanel } from "../../src/components/side_panel/conditional_formatting/conditional_formatting";
-import { toZone } from "../../src/helpers";
+import { toHex, toZone } from "../../src/helpers";
 import { ConditionalFormatPlugin } from "../../src/plugins/core/conditional_format";
 import { CellIsRule, CommandResult, SpreadsheetChildEnv, UID } from "../../src/types";
 import {
@@ -12,12 +12,24 @@ import {
   setSelection,
   updateLocale,
 } from "../test_helpers/commands_helpers";
-import { click, dragElement, keyDown, setInputValueAndTrigger } from "../test_helpers/dom_helper";
+import {
+  DOMTarget,
+  click,
+  dragElement,
+  getTarget,
+  keyDown,
+  setInputValueAndTrigger,
+  simulateClick,
+  triggerMouseEvent,
+  triggerWheelEvent,
+} from "../test_helpers/dom_helper";
 import {
   createColorScale,
   createEqualCF,
+  editStandaloneComposer,
+  getHighlightsFromStore,
   getPlugin,
-  mountComponent,
+  mountComponentWithPortalTarget,
   mountSpreadsheet,
   nextTick,
   spyModelDispatch,
@@ -27,22 +39,9 @@ import {
 import { mockGetBoundingClientRect } from "../test_helpers/mock_helpers";
 import { FR_LOCALE } from "./../test_helpers/constants";
 
-interface ParentProps {
-  onCloseSidePanel: () => void;
-}
-
-class Parent extends Component<ParentProps, SpreadsheetChildEnv> {
-  static components = { ConditionalFormattingPanel };
-  static template = xml/*xml*/ `
-  <div class="o-spreadsheet">
-    <ConditionalFormattingPanel onCloseSidePanel="props.onCloseSidePanel"/>
-  </div>
-  `;
-  setup() {
-    onMounted(() => this.env.model.on("update", this, () => this.render(true)));
-    onWillUnmount(() => this.env.model.off("update", this));
-  }
-}
+jest.mock("../../src/components/composer/content_editable_helper.ts", () =>
+  require("../__mocks__/content_editable_helper")
+);
 
 function errorMessages(): string[] {
   return textContentAll(selectors.error);
@@ -54,21 +53,24 @@ const selectors = {
     range: ".o-cf .o-cf-ruleEditor .o-cf-range .o-range input",
     editor: {
       operatorInput: ".o-cf .o-cf-ruleEditor .o-cf-editor .o-cell-is-operator",
-      valueInput: ".o-cf .o-cf-ruleEditor .o-cf-editor .o-cell-is-value",
-      bold: ".o-cf .o-cf-ruleEditor .o-cf-editor .o-sidePanel-tools div.o-tool[title='Bold']",
-      italic: ".o-cf .o-cf-ruleEditor .o-cf-editor .o-sidePanel-tools div.o-tool[title='Italic']",
+      valueInput: ".o-cf .o-cf-ruleEditor .o-cf-editor .o-cell-is-value .o-composer",
+      secondValueInput:
+        ".o-cf .o-cf-ruleEditor .o-cf-editor .o-cell-is-value.o-secondary-value .o-composer",
+      bold: ".o-cf .o-cf-ruleEditor .o-cf-editor .o-sidePanel-tools div.o-menu-item-button[title='Bold']",
+      italic:
+        ".o-cf .o-cf-ruleEditor .o-cf-editor .o-sidePanel-tools div.o-menu-item-button[title='Italic']",
       underline:
-        ".o-cf .o-cf-ruleEditor .o-cf-editor .o-sidePanel-tools div.o-tool[title='Underline']",
+        ".o-cf .o-cf-ruleEditor .o-cf-editor .o-sidePanel-tools div.o-menu-item-button[title='Underline']",
       strikethrough:
-        ".o-cf .o-cf-ruleEditor .o-cf-editor .o-sidePanel-tools div.o-tool[title='Strikethrough']",
+        ".o-cf .o-cf-ruleEditor .o-cf-editor .o-sidePanel-tools div.o-menu-item-button[title='Strikethrough']",
       colorDropdown:
         ".o-cf .o-cf-ruleEditor .o-cf-editor .o-color-picker-widget .o-color-picker-button",
       iconSetRule: {
         container: ".o-cf .o-cf-iconset-rule",
         iconsets: ".o-cf .o-cf-iconset-rule .o-cf-iconsets .o-cf-iconset",
         inflextion: ".o-cf .o-cf-iconset-rule .o-inflection",
-        icons: ".o-cf .o-cf-iconset-rule .o-inflection .o-cf-icon",
-        reverse: ".o-cf .o-cf-iconset-rule .o-cf-iconset-reverse",
+        icons: ".o-cf .o-cf-iconset-rule .o-inflection .o-icon",
+        reverse: ".o-cf .o-cf-iconset-rule .o-button-link",
         rows: ".o-cf .o-cf-iconset-rule .o-inflection tr",
       },
     },
@@ -81,43 +83,57 @@ const selectors = {
     range: ".o-cf-preview-range",
   },
   colorScaleEditor: {
-    minColor: ".o-threshold-minimum .o-color-picker-widget .o-color-picker-button",
+    minColor: ".o-threshold-minimum .o-round-color-picker-button",
     minType: ".o-threshold-minimum > select",
-    minValue: ".o-threshold-minimum .o-threshold-value",
+    minValue: ".o-threshold-minimum .o-threshold-value input",
+    minValueComposer: ".o-threshold-minimum .o-threshold-value .o-composer",
 
-    midColor: ".o-threshold-midpoint .o-color-picker-widget .o-color-picker-button",
+    midColor: ".o-threshold-midpoint .o-round-color-picker-button",
     midType: ".o-threshold-midpoint > select",
-    midValue: ".o-threshold-midpoint .o-threshold-value",
+    midValue: ".o-threshold-midpoint .o-threshold-value input",
+    midValueComposer: ".o-threshold-midpoint .o-threshold-value .o-composer",
 
-    maxColor: ".o-threshold-maximum .o-color-picker-widget .o-color-picker-button",
+    maxColor: ".o-threshold-maximum .o-round-color-picker-button",
     maxType: ".o-threshold-maximum > select",
-    maxValue: ".o-threshold-maximum .o-threshold-value",
+    maxValue: ".o-threshold-maximum .o-threshold-value input",
+    maxValueComposer: ".o-threshold-maximum .o-threshold-value .o-composer",
 
     colorPickerBlue: ".o-color-picker div[data-color='#0000FF']",
     colorPickerOrange: ".o-color-picker div[data-color='#FF9900']",
     colorPickerYellow: ".o-color-picker div[data-color='#FFFF00']",
   },
-  cfTabSelector: ".o-cf-type-selector .o_form_label",
+  cfTabSelector: ".o-cf-type-selector .o-badge-selection button",
   buttonSave: ".o-sidePanelButtons .o-cf-save",
   buttonDelete: ".o-cf-delete-button",
   buttonCancel: ".o-sidePanelButtons .o-cf-cancel",
   buttonAdd: ".o-cf-add",
   buttonReoder: ".o-cf-reorder",
   buttonExitReorder: ".o-cf-exit-reorder",
-  error: ".o-cf-error",
+  error: ".o-validation-error",
   closePanel: ".o-sidePanelClose",
 };
+
+function isInputInvalid(target: DOMTarget): boolean {
+  let el = getTarget(target) as HTMLElement;
+  if (el.className.includes("o-composer")) {
+    const standaloneComposer = el.closest<HTMLElement>(".o-standalone-composer")!;
+    return standaloneComposer.className.includes("o-invalid");
+  }
+  return el.className.includes("o-invalid");
+}
 
 describe("UI of conditional formats", () => {
   let fixture: HTMLElement;
   let model: Model;
   let sheetId: UID;
+  let env: SpreadsheetChildEnv;
 
   mockGetBoundingClientRect({
-    "o-cf-preview": (el: HTMLElement) => ({
+    "o-cf-preview-container": (el: HTMLElement) => ({
       y:
-        model.getters.getConditionalFormats(sheetId).findIndex((cf) => cf.id === el.dataset.id) *
-        100,
+        model.getters
+          .getConditionalFormats(sheetId)
+          .findIndex((cf) => cf.id === (el.firstChild as HTMLElement).dataset.id) * 100,
       height: 100,
     }),
     "o-cf-preview-list": () => ({
@@ -127,7 +143,7 @@ describe("UI of conditional formats", () => {
   });
 
   beforeEach(async () => {
-    ({ model, fixture } = await mountComponent(Parent, {
+    ({ model, fixture, env } = await mountComponentWithPortalTarget(ConditionalFormattingPanel, {
       props: { onCloseSidePanel: () => {} },
     }));
     sheetId = model.getters.getActiveSheetId();
@@ -175,7 +191,7 @@ describe("UI of conditional formats", () => {
       expect(previews[1].querySelector(selectors.description.range)!.textContent).toBe("B1:B5");
       expect(
         window.getComputedStyle(previews[1].querySelector(selectors.previewImage)!).backgroundColor
-      ).toBe("");
+      ).toBeSameColorAs("#fff");
       // TODO VSC: see how we can test the gradient background image
     });
 
@@ -194,6 +210,21 @@ describe("UI of conditional formats", () => {
       );
     });
 
+    test("Ranges of hovered previews are highlighted", async () => {
+      expect(getHighlightsFromStore(env)).toEqual([]);
+      triggerMouseEvent(selectors.listPreview, "mouseenter");
+      expect(getHighlightsFromStore(env)).toMatchObject([{ zone: toZone("A1:A2") }]);
+      triggerMouseEvent(selectors.listPreview, "mouseleave");
+      expect(getHighlightsFromStore(env)).toEqual([]);
+    });
+
+    test("Highlights are removed when cf preview is unmounted", async () => {
+      triggerMouseEvent(selectors.listPreview, "mouseenter");
+      expect(getHighlightsFromStore(env)).not.toEqual([]);
+      await click(fixture.querySelectorAll(selectors.listPreview)[0]);
+      expect(getHighlightsFromStore(env)).toEqual([]);
+    });
+
     test("can edit an existing CellIsRule", async () => {
       await click(fixture.querySelectorAll(selectors.listPreview)[0]);
       await nextTick();
@@ -201,7 +232,7 @@ describe("UI of conditional formats", () => {
       // change every value
       setInputValueAndTrigger(selectors.ruleEditor.range, "A1:A3");
       setInputValueAndTrigger(selectors.ruleEditor.editor.operatorInput, "BeginsWith");
-      setInputValueAndTrigger(selectors.ruleEditor.editor.valueInput, "3");
+      editStandaloneComposer(selectors.ruleEditor.editor.valueInput, "3");
 
       await click(fixture, selectors.ruleEditor.editor.bold);
       await click(fixture, selectors.ruleEditor.editor.italic);
@@ -238,18 +269,14 @@ describe("UI of conditional formats", () => {
       await click(fixture.querySelectorAll(selectors.listPreview)[0]);
       setInputValueAndTrigger(selectors.ruleEditor.editor.operatorInput, "BeginsWith");
 
-      const input = fixture.querySelector(
-        selectors.ruleEditor.editor.valueInput
-      )! as HTMLInputElement;
-      setInputValueAndTrigger(input, "=A2");
-      input.focus();
-      await nextTick();
+      const input = fixture.querySelector<HTMLDivElement>(selectors.ruleEditor.editor.valueInput)!;
+      await editStandaloneComposer(input, "=A2", { confirm: false });
       await keyDown({ key: "F4" });
-      expect(input.value).toBe("=$A$2");
+      expect(input.textContent).toBe("=$A$2");
       await keyDown({ key: "F4" });
-      expect(input.value).toBe("=A$2");
+      expect(input.textContent).toBe("=A$2");
       await keyDown({ key: "F4" });
-      expect(input.value).toBe("=$A2");
+      expect(input.textContent).toBe("=$A2");
     });
 
     test("CellIsRule editor displays the right preview", async () => {
@@ -258,7 +285,7 @@ describe("UI of conditional formats", () => {
         cf: createEqualCF(
           "2",
           {
-            fillColor: "#FFA500",
+            fillColor: "#FF9900",
             textColor: "#ffff00",
             italic: true,
             bold: true,
@@ -274,11 +301,11 @@ describe("UI of conditional formats", () => {
       await click(fixture.querySelectorAll(selectors.listPreview)[0]);
       await nextTick();
 
-      const previewLine = document.querySelector(".o-cf-preview-line")! as HTMLDivElement;
+      const previewLine = document.querySelector(".o-cf-preview-display")! as HTMLDivElement;
       const style = window.getComputedStyle(previewLine);
       expect(previewLine.textContent).toBe("Preview text");
-      expect(style.color).toBe("rgb(255, 255, 0)");
-      expect(style.backgroundColor).toBe("rgb(255, 165, 0)");
+      expect(toHex(style.color)).toBe("#FFFF00");
+      expect(toHex(style.backgroundColor)).toBe("#FF9900");
       expect(style.fontWeight).toBe("bold");
       expect(style.fontStyle).toBe("italic");
       expect(style.textDecoration).toBe("line-through");
@@ -349,7 +376,7 @@ describe("UI of conditional formats", () => {
       await click(fixture.querySelectorAll(selectors.listPreview)[0]);
       await click(fixture.querySelectorAll(selectors.ruleEditor.editor.colorDropdown)[0]);
       expect(fixture.querySelector(".o-color-picker")).toBeTruthy();
-      await click(fixture, ".o-cf-preview-line");
+      await click(fixture, ".o-cf-preview-display");
       expect(fixture.querySelector(".o-color-picker")).toBeFalsy();
     });
 
@@ -360,7 +387,7 @@ describe("UI of conditional formats", () => {
       // change every value
       setInputValueAndTrigger(selectors.ruleEditor.range, "A1:A3");
       await setInputValueAndTrigger(selectors.ruleEditor.editor.operatorInput, "BeginsWith");
-      setInputValueAndTrigger(selectors.ruleEditor.editor.valueInput, "3");
+      editStandaloneComposer(selectors.ruleEditor.editor.valueInput, "3");
 
       await click(fixture, selectors.ruleEditor.editor.bold);
       await click(fixture, selectors.ruleEditor.editor.italic);
@@ -438,7 +465,7 @@ describe("UI of conditional formats", () => {
       const previewEl = fixture.querySelector<HTMLElement>(`.o-cf-preview[data-id="1"]`)!;
       await dragElement(previewEl, { x: 0, y: 200 });
 
-      expect(previewEl.style.transition).toBe("top 0s");
+      expect(previewEl.parentElement!.style.transition).toBe("top 0s");
       model.dispatch("ADD_CONDITIONAL_FORMAT", {
         cf: createEqualCF("2", { bold: true, fillColor: "#ff0000" }, "99"),
         ranges: toRangesData(sheetId, "C1:C5"),
@@ -447,6 +474,31 @@ describe("UI of conditional formats", () => {
       await nextTick();
 
       expect(previewEl.style.transition).toBe("");
+    });
+
+    test("Drag & drop is not canceled on wheel event", async () => {
+      const previewEl = fixture.querySelector<HTMLElement>(`.o-cf-preview[data-id="1"]`)!;
+      await dragElement(previewEl, { x: 0, y: 200 });
+
+      expect(previewEl!.classList).toContain("o-cf-dragging");
+      triggerWheelEvent(previewEl, { deltaY: 100 });
+      await nextTick();
+
+      expect(previewEl!.classList).toContain("o-cf-dragging");
+    });
+
+    test("Drag & drop is canceled on right click", async () => {
+      let previewEl = fixture.querySelector<HTMLElement>(`.o-cf-preview[data-id="1"]`)!;
+      await dragElement(previewEl, { x: 0, y: 200 });
+
+      expect(previewEl!.classList).toContain("o-cf-dragging");
+      triggerMouseEvent(previewEl.parentElement, "pointermove", 0, 0, { button: 2 });
+      await nextTick();
+      expect(previewEl!.classList).not.toContain("o-cf-dragging");
+
+      triggerMouseEvent(previewEl.parentElement, "pointermove", 0, 200);
+      await nextTick();
+      expect(previewEl!.classList).not.toContain("o-cf-dragging");
     });
   });
 
@@ -712,9 +764,7 @@ describe("UI of conditional formats", () => {
     expect(fixture.querySelector(selectors.colorScaleEditor.minValue)?.className).toContain(
       "o-invalid"
     );
-    expect(fixture.querySelector(selectors.colorScaleEditor.midValue)?.className).not.toContain(
-      "o-invalid"
-    );
+    expect(fixture.querySelector(selectors.colorScaleEditor.midValue)).toBe(null);
     expect(fixture.querySelector(selectors.colorScaleEditor.maxValue)?.className).not.toContain(
       "o-invalid"
     );
@@ -816,9 +866,7 @@ describe("UI of conditional formats", () => {
       expect(fixture.querySelector(selectors.colorScaleEditor.minValue)?.className).toContain(
         "o-invalid"
       );
-      expect(fixture.querySelector(selectors.colorScaleEditor.midValue)?.className).not.toContain(
-        "o-invalid"
-      );
+      expect(fixture.querySelector(selectors.colorScaleEditor.midValue)).toBe(null);
       expect(fixture.querySelector(selectors.colorScaleEditor.maxValue)?.className).not.toContain(
         "o-invalid"
       );
@@ -883,9 +931,7 @@ describe("UI of conditional formats", () => {
       expect(fixture.querySelector(selectors.colorScaleEditor.minValue)?.className).not.toContain(
         "o-invalid"
       );
-      expect(fixture.querySelector(selectors.colorScaleEditor.midValue)?.className).not.toContain(
-        "o-invalid"
-      );
+      expect(fixture.querySelector(selectors.colorScaleEditor.midValue)).toBe(null);
       expect(fixture.querySelector(selectors.colorScaleEditor.maxValue)?.className).toContain(
         "o-invalid"
       );
@@ -903,23 +949,17 @@ describe("UI of conditional formats", () => {
     setInputValueAndTrigger(selectors.colorScaleEditor.minType, "formula");
     setInputValueAndTrigger(selectors.colorScaleEditor.midType, "none");
     await setInputValueAndTrigger(selectors.colorScaleEditor.maxType, "formula");
-    setInputValueAndTrigger(selectors.colorScaleEditor.minValue, "=SUM(1");
-    await setInputValueAndTrigger(selectors.colorScaleEditor.maxValue, "=SUM(1,2)");
+    await editStandaloneComposer(selectors.colorScaleEditor.minValueComposer, "=hello()");
+    await editStandaloneComposer(selectors.colorScaleEditor.maxValueComposer, "=SUM(1,2)");
 
     expect(errorMessages()).toHaveLength(0);
 
     await click(fixture, selectors.buttonSave);
     expect(model.getters.getConditionalFormats(model.getters.getActiveSheetId())).toHaveLength(0);
     expect(errorMessages()).toEqual(["Invalid Minpoint formula"]);
-    expect(fixture.querySelector(selectors.colorScaleEditor.minValue)?.className).toContain(
-      "o-invalid"
-    );
-    expect(fixture.querySelector(selectors.colorScaleEditor.midValue)?.className).not.toContain(
-      "o-invalid"
-    );
-    expect(fixture.querySelector(selectors.colorScaleEditor.maxValue)?.className).not.toContain(
-      "o-invalid"
-    );
+    expect(isInputInvalid(selectors.colorScaleEditor.minValueComposer)).toBe(true);
+    expect(fixture.querySelector(selectors.colorScaleEditor.midValue)).toBe(null);
+    expect(isInputInvalid(selectors.colorScaleEditor.maxValueComposer)).toBe(false);
   });
 
   test("will display error if there is an invalid formula for the mid", async () => {
@@ -934,7 +974,7 @@ describe("UI of conditional formats", () => {
     setInputValueAndTrigger(selectors.colorScaleEditor.midType, "formula");
     await setInputValueAndTrigger(selectors.colorScaleEditor.maxType, "number");
     setInputValueAndTrigger(selectors.colorScaleEditor.minValue, "1");
-    setInputValueAndTrigger(selectors.colorScaleEditor.midValue, "=SUM(1");
+    editStandaloneComposer(selectors.colorScaleEditor.midValueComposer, "=hello()");
     await setInputValueAndTrigger(selectors.colorScaleEditor.maxValue, "3");
 
     expect(errorMessages()).toHaveLength(0);
@@ -942,40 +982,46 @@ describe("UI of conditional formats", () => {
     await click(fixture, selectors.buttonSave);
     expect(model.getters.getConditionalFormats(model.getters.getActiveSheetId())).toHaveLength(0);
     expect(errorMessages()).toEqual(["Invalid Midpoint formula"]);
-    expect(fixture.querySelector(selectors.colorScaleEditor.minValue)?.className).not.toContain(
-      "o-invalid"
-    );
-    expect(fixture.querySelector(selectors.colorScaleEditor.midValue)?.className).toContain(
-      "o-invalid"
-    );
-    expect(fixture.querySelector(selectors.colorScaleEditor.maxValue)?.className).not.toContain(
-      "o-invalid"
-    );
+    expect(isInputInvalid(selectors.colorScaleEditor.minValue)).toBe(false);
+    expect(isInputInvalid(selectors.colorScaleEditor.midValueComposer)).toBe(true);
+    expect(isInputInvalid(selectors.colorScaleEditor.maxValue)).toBe(false);
   });
 
   test("single color missing a single value", async () => {
     await click(fixture, selectors.buttonAdd);
-    setInputValueAndTrigger(selectors.ruleEditor.editor.operatorInput, "GreaterThan");
-    expect(fixture.querySelector(".o-invalid")).toBeNull();
+    await setInputValueAndTrigger(selectors.ruleEditor.editor.operatorInput, "GreaterThan");
+    expect(isInputInvalid(selectors.ruleEditor.editor.valueInput)).toBe(false);
     await click(fixture, selectors.buttonSave);
-    expect(fixture.querySelector(".o-invalid")).not.toBeNull();
+    expect(isInputInvalid(selectors.ruleEditor.editor.valueInput)).toBe(true);
     expect(errorMessages()).toEqual(["The argument is missing. Please provide a value"]);
   });
 
   test("single color missing two values", async () => {
     await click(fixture, selectors.buttonAdd);
     setInputValueAndTrigger(selectors.ruleEditor.editor.operatorInput, "Between");
-    expect(fixture.querySelector(".o-invalid")).toBeNull();
     await click(fixture, selectors.buttonSave);
-    expect([...fixture.querySelectorAll(".o-invalid")]).toHaveLength(2);
+    expect(isInputInvalid(selectors.ruleEditor.editor.valueInput)).toBe(true);
+    expect(isInputInvalid(selectors.ruleEditor.editor.secondValueInput)).toBe(true);
     expect(errorMessages()).toEqual([
       "The argument is missing. Please provide a value",
       "The second argument is missing. Please provide a value",
     ]);
-    setInputValueAndTrigger(selectors.ruleEditor.editor.valueInput, "25");
+    await editStandaloneComposer(selectors.ruleEditor.editor.valueInput, "25");
     await click(fixture, selectors.buttonSave);
-    expect([...fixture.querySelectorAll(".o-invalid")]).toHaveLength(1);
+    expect(isInputInvalid(selectors.ruleEditor.editor.valueInput)).toBe(false);
+    expect(isInputInvalid(selectors.ruleEditor.editor.secondValueInput)).toBe(true);
     expect(errorMessages()).toEqual(["The second argument is missing. Please provide a value"]);
+  });
+
+  test("single color with an invalid formula as value", async () => {
+    await click(fixture, selectors.buttonAdd);
+    setInputValueAndTrigger(selectors.ruleEditor.range, "A1:A3");
+    await setInputValueAndTrigger(selectors.ruleEditor.editor.operatorInput, "GreaterThan");
+    expect(fixture.querySelector(".o-invalid")).toBeNull();
+    await editStandaloneComposer(selectors.ruleEditor.editor.valueInput, "=suùù(");
+    await click(fixture, selectors.buttonSave);
+    expect(fixture.querySelector(".o-invalid")).not.toBeNull();
+    expect(errorMessages()).toEqual(["At least one of the provided values is an invalid formula"]);
   });
 
   test("changing rule type resets errors", async () => {
@@ -999,14 +1045,31 @@ describe("UI of conditional formats", () => {
     setInputValueAndTrigger(selectors.colorScaleEditor.minType, "formula");
     setInputValueAndTrigger(selectors.colorScaleEditor.midType, "none");
     await setInputValueAndTrigger(selectors.colorScaleEditor.maxType, "formula");
-    setInputValueAndTrigger(selectors.colorScaleEditor.maxValue, "=SUM(1");
-    await setInputValueAndTrigger(selectors.colorScaleEditor.minValue, "=SUM(1,2)");
+    await editStandaloneComposer(selectors.colorScaleEditor.maxValueComposer, "=hello()");
+    await editStandaloneComposer(selectors.colorScaleEditor.minValueComposer, "=SUM(1,2)");
 
     expect(errorMessages()).toHaveLength(0);
 
     await click(fixture, selectors.buttonSave);
     expect(model.getters.getConditionalFormats(model.getters.getActiveSheetId())).toHaveLength(0);
     expect(errorMessages()).toEqual(["Invalid Maxpoint formula"]);
+  });
+
+  test("Hides the 'No Color' button when the color picker is opened for the color scale", async () => {
+    await simulateClick(selectors.buttonAdd);
+    await simulateClick(document.querySelectorAll(selectors.cfTabSelector)[1]);
+    await simulateClick(selectors.colorScaleEditor.minColor);
+
+    expect(fixture.querySelector(".o-buttons .o-cancel")).toBeNull();
+  });
+
+  test("If there is no midpoint in a color scale, the color picker is invisible", async () => {
+    await click(fixture, selectors.buttonAdd);
+    await click(fixture.querySelectorAll(selectors.cfTabSelector)[1]);
+
+    expect(
+      fixture.querySelector(selectors.colorScaleEditor.midColor)?.parentElement?.classList
+    ).toContain("invisible");
   });
 
   describe("Icon set CF", () => {
@@ -1024,21 +1087,21 @@ describe("UI of conditional formats", () => {
 
       await click(fixture.querySelectorAll(selectors.cfTabSelector)[2]);
       let icons = document.querySelectorAll(selectors.ruleEditor.editor.iconSetRule.icons);
-      expect(icons[0].classList.value).toBe("o-cf-icon arrow-up");
-      expect(icons[1].classList.value).toBe("o-cf-icon arrow-right");
-      expect(icons[2].classList.value).toBe("o-cf-icon arrow-down");
+      expect(icons[0].classList).toContain("arrow-up");
+      expect(icons[1].classList).toContain("arrow-right");
+      expect(icons[2].classList).toContain("arrow-down");
 
       await click(fixture.querySelectorAll(selectors.ruleEditor.editor.iconSetRule.iconsets)[1]);
       icons = document.querySelectorAll(selectors.ruleEditor.editor.iconSetRule.icons);
-      expect(icons[0].classList.value).toBe("o-cf-icon smile");
-      expect(icons[1].classList.value).toBe("o-cf-icon meh");
-      expect(icons[2].classList.value).toBe("o-cf-icon frown");
+      expect(icons[0].classList).toContain("smile");
+      expect(icons[1].classList).toContain("meh");
+      expect(icons[2].classList).toContain("frown");
 
       await click(fixture.querySelectorAll(selectors.ruleEditor.editor.iconSetRule.iconsets)[2]);
       icons = document.querySelectorAll(selectors.ruleEditor.editor.iconSetRule.icons);
-      expect(icons[0].classList.value).toBe("o-cf-icon green-dot");
-      expect(icons[1].classList.value).toBe("o-cf-icon yellow-dot");
-      expect(icons[2].classList.value).toBe("o-cf-icon red-dot");
+      expect(icons[0].classList).toContain("green-dot");
+      expect(icons[1].classList).toContain("yellow-dot");
+      expect(icons[2].classList).toContain("red-dot");
     });
 
     test("inverse checkbox will inverse icons", async () => {
@@ -1047,15 +1110,15 @@ describe("UI of conditional formats", () => {
       await click(fixture.querySelectorAll(selectors.cfTabSelector)[2]);
 
       let icons = document.querySelectorAll(selectors.ruleEditor.editor.iconSetRule.icons);
-      expect(icons[0].classList.value).toBe("o-cf-icon arrow-up");
-      expect(icons[1].classList.value).toBe("o-cf-icon arrow-right");
-      expect(icons[2].classList.value).toBe("o-cf-icon arrow-down");
+      expect(icons[0].classList).toContain("arrow-up");
+      expect(icons[1].classList).toContain("arrow-right");
+      expect(icons[2].classList).toContain("arrow-down");
 
       await click(fixture, selectors.ruleEditor.editor.iconSetRule.reverse);
       icons = document.querySelectorAll(selectors.ruleEditor.editor.iconSetRule.icons);
-      expect(icons[2].classList.value).toBe("o-cf-icon arrow-up");
-      expect(icons[1].classList.value).toBe("o-cf-icon arrow-right");
-      expect(icons[0].classList.value).toBe("o-cf-icon arrow-down");
+      expect(icons[2].classList).toContain("arrow-up");
+      expect(icons[1].classList).toContain("arrow-right");
+      expect(icons[0].classList).toContain("arrow-down");
     });
 
     test("can create a new IconsetRule", async () => {
@@ -1322,7 +1385,7 @@ describe("UI of conditional formats", () => {
     await nextTick();
 
     await setInputValueAndTrigger(selectors.ruleEditor.editor.operatorInput, "Equal");
-    setInputValueAndTrigger(selectors.ruleEditor.editor.valueInput, "3,59");
+    await editStandaloneComposer(selectors.ruleEditor.editor.valueInput, "3,59");
 
     await click(fixture, selectors.buttonSave);
     const sheetId = model.getters.getActiveSheetId();
@@ -1339,7 +1402,7 @@ describe("UI of conditional formats", () => {
     await nextTick();
 
     await setInputValueAndTrigger(selectors.ruleEditor.editor.operatorInput, "Equal");
-    setInputValueAndTrigger(selectors.ruleEditor.editor.valueInput, "01/05/2012");
+    await editStandaloneComposer(selectors.ruleEditor.editor.valueInput, "01/05/2012");
 
     await click(fixture, selectors.buttonSave);
     const sheetId = model.getters.getActiveSheetId();
@@ -1351,6 +1414,32 @@ describe("UI of conditional formats", () => {
 
     const description = fixture.querySelector(selectors.description.ruletype.rule);
     expect(description?.textContent).toContain("01/05/2012");
+  });
+
+  test("Can create a data bar rule", async () => {
+    await click(fixture, selectors.buttonAdd);
+
+    await click(fixture.querySelectorAll(selectors.cfTabSelector)[3]);
+
+    // change every value
+    setInputValueAndTrigger(selectors.ruleEditor.range, "B2:B5");
+
+    const dispatch = spyModelDispatch(model);
+    //  click save
+    await click(fixture, selectors.buttonSave);
+
+    const sheetId = model.getters.getActiveSheetId();
+    expect(dispatch).toHaveBeenCalledWith("ADD_CONDITIONAL_FORMAT", {
+      cf: {
+        id: expect.any(String),
+        rule: {
+          type: "DataBarRule",
+          color: 0xd9ead3,
+        },
+      },
+      ranges: toRangesData(sheetId, "B2:B5"),
+      sheetId,
+    });
   });
 });
 

@@ -1,7 +1,6 @@
 import { DEFAULT_FONT_SIZE } from "../../constants";
-import { splitReference, toUnboundedZone } from "../../helpers";
+import { deepEquals, splitReference, toUnboundedZone } from "../../helpers";
 import {
-  BorderDescr,
   ConditionalFormattingOperatorValues,
   ExcelCellData,
   ExcelWorkbookData,
@@ -12,8 +11,6 @@ import {
 } from "../../types";
 import {
   ExtractedStyle,
-  XLSXBorder,
-  XLSXBorderDescr,
   XLSXHorizontalAlignment,
   XLSXNumFormat,
   XLSXRel,
@@ -30,11 +27,6 @@ import {
   WIDTH_FACTOR,
 } from "../constants";
 import { V_ALIGNMENT_EXPORT_CONVERSION_MAP, XLSX_FORMAT_MAP } from "../conversion/conversion_maps";
-
-type PropertyPosition<T> = {
-  id: number;
-  list: T[];
-};
 
 // -------------------------------------
 //            CF HELPERS
@@ -61,6 +53,19 @@ export function convertOperator(operator: ConditionalFormattingOperatorValues): 
 //        WORKSHEET HELPERS
 // -------------------------------------
 
+export function getCellType(value: number | string | boolean | null): string | undefined {
+  switch (typeof value) {
+    case "boolean":
+      return "b";
+    case "string":
+      return "str";
+    case "number":
+      return "n";
+    default:
+      return undefined;
+  }
+}
+
 export function convertHeightToExcel(height: number): number {
   return Math.round(HEIGHT_FACTOR * height * 100) / 100;
 }
@@ -79,30 +84,12 @@ export function convertWidthFromExcel(width: number | undefined): number | undef
   return Math.round((width / WIDTH_FACTOR) * 100) / 100;
 }
 
-function convertBorderDescr(descr: BorderDescr | undefined): XLSXBorderDescr | undefined {
-  if (!descr) {
-    return undefined;
-  }
-  return {
-    style: descr.style,
-    color: { rgb: descr.color },
-  };
-}
-
 export function extractStyle(cell: ExcelCellData, data: WorkbookData): ExtractedStyle {
   let style: Style = {};
   if (cell.style) {
     style = data.styles[cell.style];
   }
   const format = extractFormat(cell, data);
-  const exportedBorder: XLSXBorder = {};
-  if (cell.border) {
-    const border = data.borders[cell.border];
-    exportedBorder.left = convertBorderDescr(border.left);
-    exportedBorder.right = convertBorderDescr(border.right);
-    exportedBorder.bottom = convertBorderDescr(border.bottom);
-    exportedBorder.top = convertBorderDescr(border.top);
-  }
   const styles = {
     font: {
       size: style?.fontSize || DEFAULT_FONT_SIZE,
@@ -116,13 +103,13 @@ export function extractStyle(cell: ExcelCellData, data: WorkbookData): Extracted
         }
       : { reservedAttribute: "none" },
     numFmt: format ? { format: format, id: 0 /* id not used for export */ } : undefined,
-    border: exportedBorder || {},
+    border: cell.border || 0,
     alignment: {
       horizontal: style.align as XLSXHorizontalAlignment,
       vertical: style.verticalAlign
         ? V_ALIGNMENT_EXPORT_CONVERSION_MAP[style.verticalAlign]
         : undefined,
-      wrapText: style.wrapping === "wrap",
+      wrapText: style.wrapping === "wrap" || undefined,
     },
   };
 
@@ -141,15 +128,12 @@ function extractFormat(cell: ExcelCellData, data: WorkbookData): Format | undefi
 }
 
 export function normalizeStyle(construct: XLSXStructure, styles: ExtractedStyle): number {
-  const { id: fontId } = pushElement(styles["font"], construct.fonts);
-  const { id: fillId } = pushElement(styles["fill"], construct.fills);
-  const { id: borderId } = pushElement(styles["border"], construct.borders);
   // Normalize this
   const numFmtId = convertFormat(styles["numFmt"], construct.numFmts);
   const style = {
-    fontId,
-    fillId,
-    borderId,
+    fontId: pushElement(styles.font, construct.fonts),
+    fillId: pushElement(styles.fill, construct.fills),
+    borderId: styles.border,
     numFmtId,
     alignment: {
       vertical: styles.alignment.vertical,
@@ -158,9 +142,7 @@ export function normalizeStyle(construct: XLSXStructure, styles: ExtractedStyle)
     },
   } as XLSXStyle;
 
-  const { id } = pushElement(style, construct.styles);
-
-  return id;
+  return pushElement(style, construct.styles);
 }
 
 function convertFormat(
@@ -172,8 +154,7 @@ function convertFormat(
   }
   let formatId: number | undefined = XLSX_FORMAT_MAP[format.format];
   if (!formatId) {
-    const { id } = pushElement(format, numFmtStructure);
-    formatId = id + FIRST_NUMFMT_ID;
+    formatId = pushElement(format, numFmtStructure) + FIRST_NUMFMT_ID;
   }
   return formatId;
 }
@@ -202,21 +183,17 @@ export function addRelsToFile(
   return id;
 }
 
-export function pushElement<T>(property: T, propertyList: T[]): PropertyPosition<T> {
-  for (let [key, value] of Object.entries(propertyList)) {
-    if (JSON.stringify(value) === JSON.stringify(property)) {
-      return { id: parseInt(key, 10), list: propertyList };
+export function pushElement<T>(property: T, propertyList: T[]): number {
+  let len = propertyList.length;
+  const operator = typeof property === "object" ? deepEquals : (a: T, b: T) => a === b;
+  for (let i = 0; i < len; i++) {
+    if (operator(property, propertyList[i])) {
+      return i;
     }
   }
-  let elemId = propertyList.findIndex((elem) => JSON.stringify(elem) === JSON.stringify(property));
-  if (elemId === -1) {
-    propertyList.push(property);
-    elemId = propertyList.length - 1;
-  }
-  return {
-    id: elemId,
-    list: propertyList,
-  };
+
+  propertyList[propertyList.length] = property;
+  return propertyList.length - 1;
 }
 
 const chartIds: UID[] = [];

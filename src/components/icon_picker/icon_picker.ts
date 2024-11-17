@@ -1,5 +1,5 @@
 import { Component } from "@odoo/owl";
-import { ComponentsImportance } from "../../constants";
+import { ACTION_COLOR, BADGE_SELECTED_COLOR, ComponentsImportance } from "../../constants";
 import { SpreadsheetChildEnv } from "../../types/env";
 import { css } from "../helpers/css";
 import { ICONS, ICON_SETS } from "../icons/icons";
@@ -18,19 +18,22 @@ css/* scss */ `
   }
   .o-cf-icon-line {
     display: flex;
-    padding: 3px 6px;
+    padding: 0 6px;
   }
   .o-icon-picker-item {
-    margin: 0px 2px;
+    cursor: pointer;
     &:hover {
-      background-color: rgba(0, 0, 0, 0.08);
-      outline: 1px solid gray;
+      background-color: ${BADGE_SELECTED_COLOR};
+      outline: ${ACTION_COLOR} solid 1px;
     }
   }
 `;
 
 export class IconPicker extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-IconPicker";
+  static props = {
+    onIconPicked: Function,
+  };
   icons = ICONS;
   iconSets = ICON_SETS;
 
@@ -40,7 +43,3 @@ export class IconPicker extends Component<Props, SpreadsheetChildEnv> {
     }
   }
 }
-
-IconPicker.props = {
-  onIconPicked: Function,
-};

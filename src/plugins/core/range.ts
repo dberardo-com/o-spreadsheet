@@ -1,16 +1,20 @@
-import { INCORRECT_RANGE_STRING } from "../../constants";
 import {
   createAdaptedZone,
-  getCanonicalSheetName,
+  getCanonicalSymbolName,
   groupConsecutive,
   isZoneInside,
   isZoneValid,
+  largeMax,
+  largeMin,
   numberToLetters,
   RangeImpl,
   rangeReference,
+  recomputeZones,
   splitReference,
   toUnboundedZone,
+  unionUnboundedZones,
 } from "../../helpers/index";
+import { CellErrorType } from "../../types/errors";
 import {
   ApplyRangeChange,
   ApplyRangeChangeResult,
@@ -20,6 +24,7 @@ import {
   CommandResult,
   CoreCommand,
   CoreGetters,
+  Dimension,
   Range,
   RangeData,
   RangeProvider,
@@ -36,6 +41,7 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
   }
 
   static getters = [
+    "extendRange",
     "getRangeString",
     "getRangeFromSheetXC",
     "createAdaptedRanges",
@@ -43,6 +49,10 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
     "getRangeDataFromZone",
     "getRangeFromRangeData",
     "getRangeFromZone",
+    "getRangesUnion",
+    "recomputeRanges",
+    "isRangeValid",
+    "removeRangesSheetPrefix",
   ] as const;
 
   // ---------------------------------------------------------------------------
@@ -74,8 +84,8 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
           let newRange = range;
           let changeType: ChangeType = "NONE";
           for (let group of groups) {
-            const min = Math.min(...group);
-            const max = Math.max(...group);
+            const min = largeMin(group);
+            const max = largeMax(group);
             if (range.zone[start] <= min && min <= range.zone[end]) {
               const toRemove = Math.min(range.zone[end], max) - min + 1;
               changeType = "RESIZE";
@@ -284,12 +294,38 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
   }
 
   /**
+   * Remove the sheet name prefix if a range is part of the given sheet.
+   */
+  removeRangesSheetPrefix(sheetId: UID, ranges: Range[]): Range[] {
+    return ranges.map((range) => {
+      const rangeImpl = RangeImpl.fromRange(range, this.getters);
+      if (rangeImpl.prefixSheet && rangeImpl.sheetId === sheetId) {
+        return rangeImpl.clone({ prefixSheet: false });
+      }
+      return rangeImpl;
+    });
+  }
+
+  extendRange(range: Range, dimension: Dimension, quantity: number): Range {
+    const rangeImpl = RangeImpl.fromRange(range, this.getters);
+    const right = dimension === "COL" ? rangeImpl.zone.right + quantity : rangeImpl.zone.right;
+    const bottom = dimension === "ROW" ? rangeImpl.zone.bottom + quantity : rangeImpl.zone.bottom;
+    const zone = {
+      left: rangeImpl.zone.left,
+      top: rangeImpl.zone.top,
+      right: rangeImpl.isFullRow ? undefined : right,
+      bottom: rangeImpl.isFullCol ? undefined : bottom,
+    };
+    return new RangeImpl({ ...rangeImpl, zone }, this.getters.getSheetSize).orderZone();
+  }
+
+  /**
    * Creates a range from a XC reference that can contain a sheet reference
    * @param defaultSheetId the sheet to default to if the sheetXC parameter does not contain a sheet reference (usually the active sheet Id)
    * @param sheetXC the string description of a range, in the form SheetName!XC:XC
    */
   getRangeFromSheetXC(defaultSheetId: UID, sheetXC: string): RangeImpl {
-    if (!rangeReference.test(sheetXC)) {
+    if (!rangeReference.test(sheetXC) || !this.getters.tryGetSheet(defaultSheetId)) {
       return new RangeImpl(
         {
           sheetId: "",
@@ -329,19 +365,24 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
    *
    * @param range the range (received from getRangeFromXC or getRangeFromZone)
    * @param forSheetId the id of the sheet where the range string is supposed to be used.
+   * @param options
+   * @param options.useFixedReference if true, the range will be returned with fixed row and column
    */
-  getRangeString(range: Range, forSheetId: UID): string {
+  getRangeString(range: Range, forSheetId: UID, options = { useFixedReference: false }): string {
     if (!range) {
-      return INCORRECT_RANGE_STRING;
+      return CellErrorType.InvalidReference;
     }
     if (range.invalidXc) {
       return range.invalidXc;
     }
+    if (!this.getters.tryGetSheet(range.sheetId)) {
+      return CellErrorType.InvalidReference;
+    }
     if (range.zone.bottom - range.zone.top < 0 || range.zone.right - range.zone.left < 0) {
-      return INCORRECT_RANGE_STRING;
+      return CellErrorType.InvalidReference;
     }
     if (range.zone.left < 0 || range.zone.top < 0) {
-      return INCORRECT_RANGE_STRING;
+      return CellErrorType.InvalidReference;
     }
     const rangeImpl = RangeImpl.fromRange(range, this.getters);
     let prefixSheet =
@@ -351,15 +392,15 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
       if (rangeImpl.invalidSheetName) {
         sheetName = rangeImpl.invalidSheetName;
       } else {
-        sheetName = getCanonicalSheetName(this.getters.getSheetName(rangeImpl.sheetId));
+        sheetName = getCanonicalSymbolName(this.getters.getSheetName(rangeImpl.sheetId));
       }
     }
 
     if (prefixSheet && !sheetName) {
-      return INCORRECT_RANGE_STRING;
+      return CellErrorType.InvalidReference;
     }
 
-    let rangeString = this.getRangePartString(rangeImpl, 0);
+    let rangeString = this.getRangePartString(rangeImpl, 0, options);
     if (rangeImpl.parts && rangeImpl.parts.length === 2) {
       // this if converts A2:A2 into A2 except if any part of the original range had fixed row or column (with $)
       if (
@@ -371,7 +412,7 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
         rangeImpl.parts[1].colFixed
       ) {
         rangeString += ":";
-        rangeString += this.getRangePartString(rangeImpl, 1);
+        rangeString += this.getRangePartString(rangeImpl, 1, options);
       }
     }
 
@@ -383,6 +424,7 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
   }
 
   getRangeDataFromZone(sheetId: UID, zone: Zone | UnboundedZone): RangeData {
+    zone = this.getters.getUnboundedZone(sheetId, zone);
     return { _sheetId: sheetId, _zone: zone };
   }
 
@@ -401,6 +443,19 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
     );
   }
 
+  /**
+   * Allows you to recompute ranges from the same sheet
+   */
+  recomputeRanges(ranges: Range[], rangesToRemove: Range[]): Range[] {
+    const zones = ranges.map((range) => RangeImpl.fromRange(range, this.getters).unboundedZone);
+    const zonesToRemove = rangesToRemove.map(
+      (range) => RangeImpl.fromRange(range, this.getters).unboundedZone
+    );
+    return recomputeZones(zones, zonesToRemove).map((zone) =>
+      this.getRangeFromZone(ranges[0].sheetId, zone)
+    );
+  }
+
   getRangeFromRangeData(data: RangeData): Range {
     const rangeInterface = {
       prefixSheet: false,
@@ -416,6 +471,23 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
     return new RangeImpl(rangeInterface, this.getters.getSheetSize);
   }
 
+  isRangeValid(rangeStr: string): boolean {
+    if (!rangeStr) {
+      return false;
+    }
+    const { xc, sheetName } = splitReference(rangeStr);
+    return (
+      xc.match(rangeReference) !== null &&
+      (!sheetName || this.getters.getSheetIdByName(sheetName) !== undefined)
+    );
+  }
+
+  getRangesUnion(ranges: Range[]): Range {
+    const zones = ranges.map((range) => RangeImpl.fromRange(range, this.getters).unboundedZone);
+    const unionOfZones = unionUnboundedZones(...zones);
+    return this.getRangeFromZone(ranges[0].sheetId, unionOfZones);
+  }
+
   // ---------------------------------------------------------------------------
   // Private
   // ---------------------------------------------------------------------------
@@ -423,20 +495,24 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
   /**
    * Get a Xc string that represent a part of a range
    */
-  private getRangePartString(range: RangeImpl, part: 0 | 1): string {
-    const colFixed = range.parts && range.parts[part].colFixed ? "$" : "";
+  private getRangePartString(
+    range: RangeImpl,
+    part: 0 | 1,
+    options: { useFixedReference: boolean } = { useFixedReference: false }
+  ): string {
+    const colFixed = range.parts && range.parts[part]?.colFixed ? "$" : "";
     const col = part === 0 ? numberToLetters(range.zone.left) : numberToLetters(range.zone.right);
-    const rowFixed = range.parts && range.parts[part].rowFixed ? "$" : "";
+    const rowFixed = range.parts && range.parts[part]?.rowFixed ? "$" : "";
     const row = part === 0 ? String(range.zone.top + 1) : String(range.zone.bottom + 1);
 
     let str = "";
-    if (range.isFullCol) {
+    if (range.isFullCol && !options.useFixedReference) {
       if (part === 0 && range.unboundedZone.hasHeader) {
         str = colFixed + col + rowFixed + row;
       } else {
         str = colFixed + col;
       }
-    } else if (range.isFullRow) {
+    } else if (range.isFullRow && !options.useFixedReference) {
       if (part === 0 && range.unboundedZone.hasHeader) {
         str = colFixed + col + rowFixed + row;
       } else {
@@ -455,7 +531,7 @@ export class RangeAdapter implements CommandHandler<CoreCommand> {
       prefixSheet: false,
       zone: { left: -1, top: -1, right: -1, bottom: -1 },
       sheetId: "",
-      invalidXc: INCORRECT_RANGE_STRING,
+      invalidXc: CellErrorType.InvalidReference,
     };
   }
 }

@@ -4,12 +4,14 @@ import {
   isDateTimeFormat,
   positions,
   positionToZone,
+  recomputeZones,
 } from "../../helpers";
 import {
   CellPosition,
   CellValueType,
   Command,
   Format,
+  Position,
   SetDecimalStep,
   UID,
   Zone,
@@ -26,7 +28,57 @@ export class FormatPlugin extends UIPlugin {
       case "SET_DECIMAL":
         this.setDecimal(cmd.sheetId, cmd.target, cmd.step);
         break;
+      case "SET_FORMATTING_WITH_PIVOT": {
+        this.setContextualFormat(cmd.sheetId, cmd.target, cmd.format);
+        break;
+      }
     }
+  }
+
+  private setContextualFormat(sheetId: UID, zones: Zone[], format: Format) {
+    const measurePositions: CellPosition[] = [];
+    const measuresByPivotId: Record<string, Set<string>> = {};
+    for (const zone of recomputeZones(zones)) {
+      for (let col = zone.left; col <= zone.right; col++) {
+        for (let row = zone.top; row <= zone.bottom; row++) {
+          const position = { sheetId, col, row };
+          const pivotCell = this.getters.getPivotCellFromPosition(position);
+          if (pivotCell.type === "VALUE") {
+            measurePositions.push(position);
+            const pivotId = this.getters.getPivotIdFromPosition(position) || "";
+            measuresByPivotId[pivotId] ??= new Set();
+            measuresByPivotId[pivotId].add(pivotCell.measure);
+          }
+        }
+      }
+    }
+    const measureZones = recomputeZones(measurePositions.map(positionToZone));
+    for (const pivotId in measuresByPivotId) {
+      const measures = measuresByPivotId[pivotId];
+      const pivotDefinition = this.getters.getPivotCoreDefinition(pivotId);
+      this.dispatch("UPDATE_PIVOT", {
+        pivotId,
+        pivot: {
+          ...pivotDefinition,
+          measures: pivotDefinition.measures.map((measure) => {
+            if (measures.has(measure.id)) {
+              return { ...measure, format };
+            }
+            return measure;
+          }),
+        },
+      });
+    }
+    this.dispatch("SET_FORMATTING", {
+      sheetId,
+      target: measureZones,
+      format: "",
+    });
+    this.dispatch("SET_FORMATTING", {
+      sheetId,
+      target: recomputeZones(zones, measureZones),
+      format,
+    });
   }
 
   /**
@@ -41,23 +93,26 @@ export class FormatPlugin extends UIPlugin {
    * evaluated and updated with the number type.
    */
   private setDecimal(sheetId: UID, zones: Zone[], step: SetDecimalStep) {
+    const positionsByFormat: Record<Format, Position[]> = {};
     // Find the each cell with a number value and get the format
-    for (const zone of zones) {
+    for (const zone of recomputeZones(zones)) {
       for (const position of positions(zone)) {
         const numberFormat = this.getCellNumberFormat({ sheetId, ...position });
         if (numberFormat !== undefined) {
           // Depending on the step sign, increase or decrease the decimal representation
           // of the format
-          const locale = this.getters.getLocale();
-          const newFormat = changeDecimalPlaces(numberFormat, step, locale);
-          // Apply the new format on the whole zone
-          this.dispatch("SET_FORMATTING", {
-            sheetId,
-            target: [positionToZone(position)],
-            format: newFormat,
-          });
+          const newFormat = changeDecimalPlaces(numberFormat, step);
+          positionsByFormat[newFormat] = positionsByFormat[newFormat] || [];
+          positionsByFormat[newFormat].push(position);
         }
       }
+    }
+    // consolidate all positions with the same format in bigger zones
+    for (const newFormat in positionsByFormat) {
+      const zones = recomputeZones(
+        positionsByFormat[newFormat].map((position) => positionToZone(position))
+      );
+      this.setContextualFormat(sheetId, zones, newFormat);
     }
   }
 

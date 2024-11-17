@@ -1,0 +1,108 @@
+<templates>
+  <t t-name="o-spreadsheet-WaterfallChartDesignPanel">
+    <GeneralDesignEditor
+      figureId="props.figureId"
+      definition="props.definition"
+      updateChart="props.updateChart">
+      <t t-set-slot="general-extension">
+        <Section class="'o-vertical-axis-selection'">
+          <t t-set-slot="title">Vertical axis position</t>
+          <RadioSelection
+            choices="axisChoices"
+            selectedValue="props.definition.verticalAxisPosition"
+            name="'axis'"
+            onChange.bind="updateVerticalAxisPosition"
+          />
+        </Section>
+        <Section>
+          <t t-set-slot="title">Legend position</t>
+          <select
+            t-att-value="props.definition.legendPosition"
+            class="o-input o-chart-legend-position"
+            t-on-change="(ev) => this.updateLegendPosition(ev)">
+            <option value="none">None</option>
+            <option value="top">Top</option>
+            <option value="bottom">Bottom</option>
+            <option value="left">Left</option>
+            <option value="right">Right</option>
+          </select>
+        </Section>
+        <Section>
+          <t t-set-slot="title">Values</t>
+          <Checkbox
+            name="'showValues'"
+            label.translate="Show values"
+            value="props.definition.showValues"
+            onChange="showValues => props.updateChart(this.props.figureId, {showValues})"
+          />
+        </Section>
+      </t>
+    </GeneralDesignEditor>
+    <SidePanelCollapsible collapsedAtInit="true">
+      <t t-set-slot="title">Waterfall design</t>
+      <t t-set-slot="content">
+        <Section class="'pt-0'">
+          <t t-set-slot="title">Options</t>
+          <t t-set="firstValueAsSubtotal">Use first value as subtotal</t>
+          <Checkbox
+            className="'mb-2'"
+            name="'firstValueAsSubtotal'"
+            label="firstValueAsSubtotal"
+            value="props.definition.firstValueAsSubtotal"
+            onChange.bind="onUpdateFirstValueAsSubtotal"
+          />
+          <t t-set="showSubTotalsLabel">Show subtotals at the end of series</t>
+          <Checkbox
+            className="'mb-2'"
+            name="'showSubTotals'"
+            label="showSubTotalsLabel"
+            value="props.definition.showSubTotals"
+            onChange.bind="onUpdateShowSubTotals"
+          />
+          <t t-set="showConnectorLinesLabel">Show connector lines</t>
+          <Checkbox
+            name="'showConnectorLines'"
+            label="showConnectorLinesLabel"
+            value="props.definition.showConnectorLines"
+            onChange.bind="onUpdateShowConnectorLines"
+          />
+        </Section>
+        <Section>
+          <t t-set-slot="title">Colors</t>
+          <div class="o-waterfall-positive-color d-flex align-items-center mb-2">
+            <RoundColorPicker
+              currentColor="positiveValuesColor"
+              onColorPicked="(color) => this.updateColor('positiveValuesColor', color)"
+            />
+            <span class="ps-2">Color of positive values</span>
+          </div>
+          <div class="o-waterfall-negative-color d-flex align-items-center mb-2">
+            <RoundColorPicker
+              currentColor="negativeValuesColor"
+              onColorPicked="(color) => this.updateColor('negativeValuesColor', color)"
+            />
+            <span class="ps-2">Color of negative values</span>
+          </div>
+          <div class="o-waterfall-subtotal-color d-flex align-items-center">
+            <RoundColorPicker
+              currentColor="subTotalValuesColor"
+              onColorPicked="(color) => this.updateColor('subTotalValuesColor', color)"
+            />
+            <span class="ps-2">Color of subtotals</span>
+          </div>
+        </Section>
+      </t>
+    </SidePanelCollapsible>
+    <SidePanelCollapsible collapsedAtInit="true">
+      <t t-set-slot="title">Axes</t>
+      <t t-set-slot="content">
+        <AxisDesignEditor
+          axesList="axesList"
+          figureId="props.figureId"
+          definition="props.definition"
+          updateChart="props.updateChart"
+        />
+      </t>
+    </SidePanelCollapsible>
+  </t>
+</templates>

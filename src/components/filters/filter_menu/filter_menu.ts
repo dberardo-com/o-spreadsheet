@@ -1,5 +1,5 @@
 import { Component, onWillUpdateProps, useRef, useState } from "@odoo/owl";
-import { MENU_ITEM_HEIGHT, MENU_WIDTH } from "../../../constants";
+import { MENU_ITEM_HEIGHT } from "../../../constants";
 import { deepEquals, positions, toLowerCase } from "../../../helpers";
 import { fuzzyLookup } from "../../../helpers/search";
 import { Position, SortDirection, SpreadsheetChildEnv } from "../../../types";
@@ -39,7 +39,7 @@ const CSS = css/* scss */ `
 
     .o-search-icon {
       right: 5px;
-      top: 4px;
+      top: 3px;
       opacity: 0.4;
 
       svg {
@@ -76,30 +76,8 @@ const CSS = css/* scss */ `
     .o-filter-menu-buttons {
       margin-top: 9px;
 
-      .o-filter-menu-button {
-        border: 1px solid lightgrey;
-        padding: 6px 10px;
-        cursor: pointer;
-        border-radius: 4px;
-        font-weight: 500;
-        line-height: 16px;
-      }
-
-      .o-filter-menu-button-cancel {
-        background: white;
-        &:hover {
-          background-color: rgba(0, 0, 0, 0.08);
-        }
-      }
-
-      .o-filter-menu-button-primary {
-        background-color: #188038;
-        &:hover {
-          background-color: #1d9641;
-        }
-        color: white;
-        font-weight: bold;
-        margin-left: 10px;
+      .o-button {
+        height: 26px;
       }
     }
   }
@@ -123,8 +101,11 @@ interface State {
 }
 
 export class FilterMenu extends Component<Props, SpreadsheetChildEnv> {
-  static size = { width: MENU_WIDTH, height: FILTER_MENU_HEIGHT };
   static template = "o-spreadsheet-FilterMenu";
+  static props = {
+    filterPosition: Object,
+    onClosed: { type: Function, optional: true },
+  };
   static style = CSS;
   static components = { FilterMenuValueItem };
 
@@ -139,32 +120,39 @@ export class FilterMenu extends Component<Props, SpreadsheetChildEnv> {
   setup() {
     onWillUpdateProps((nextProps: Props) => {
       if (!deepEquals(nextProps.filterPosition, this.props.filterPosition)) {
-        this.state.values = this.getFilterValues(nextProps.filterPosition);
+        this.state.values = this.getFilterHiddenValues(nextProps.filterPosition);
       }
     });
 
-    this.state.values = this.getFilterValues(this.props.filterPosition);
+    this.state.values = this.getFilterHiddenValues(this.props.filterPosition);
   }
 
-  get isReadonly() {
-    return this.env.model.getters.isReadonly();
+  get isSortable() {
+    if (!this.table) {
+      return false;
+    }
+    const coreTable = this.env.model.getters.getCoreTableMatchingTopLeft(
+      this.table.range.sheetId,
+      this.table.range.zone
+    );
+    return !this.env.model.getters.isReadonly() && coreTable?.type !== "dynamic";
   }
 
-  private getFilterValues(position: Position): Value[] {
+  private getFilterHiddenValues(position: Position): Value[] {
     const sheetId = this.env.model.getters.getActiveSheetId();
     const filter = this.env.model.getters.getFilter({ sheetId, ...position });
     if (!filter) {
       return [];
     }
 
-    const cellValues = (filter.filteredZone ? positions(filter.filteredZone) : [])
+    const cellValues = (filter.filteredRange ? positions(filter.filteredRange.zone) : [])
       .filter(({ row }) => !this.env.model.getters.isRowHidden(sheetId, row))
       .map(
         ({ col, row }) =>
           this.env.model.getters.getEvaluatedCell({ sheetId, col, row }).formattedValue
       );
 
-    const filterValues = this.env.model.getters.getFilterValues({ sheetId, ...position });
+    const filterValues = this.env.model.getters.getFilterHiddenValues({ sheetId, ...position });
 
     const strValues = [...cellValues, ...filterValues];
     const normalizedFilteredValues = filterValues.map(toLowerCase);
@@ -205,10 +193,10 @@ export class FilterMenu extends Component<Props, SpreadsheetChildEnv> {
     this.displayedValues.forEach((value) => (value.checked = false));
   }
 
-  get filterTable() {
+  get table() {
     const sheetId = this.env.model.getters.getActiveSheetId();
     const position = this.props.filterPosition;
-    return this.env.model.getters.getFilterTable({ sheetId, ...position });
+    return this.env.model.getters.getTable({ sheetId, ...position });
   }
 
   get displayedValues() {
@@ -292,26 +280,24 @@ export class FilterMenu extends Component<Props, SpreadsheetChildEnv> {
 
   sortFilterZone(sortDirection: SortDirection) {
     const filterPosition = this.props.filterPosition;
-    const filterTable = this.filterTable;
-    if (!filterPosition || !filterTable || !filterTable.contentZone) {
+    const table = this.table;
+    const tableZone = table?.range.zone;
+    if (!filterPosition || !tableZone || tableZone.top === tableZone.bottom) {
       return;
     }
     const sheetId = this.env.model.getters.getActiveSheetId();
+    const contentZone = { ...tableZone, top: tableZone.top + 1 };
     this.env.model.dispatch("SORT_CELLS", {
       sheetId,
       col: filterPosition.col,
-      row: filterTable.contentZone.top,
-      zone: filterTable.contentZone,
+      row: contentZone.top,
+      zone: contentZone,
       sortDirection,
       sortOptions: { emptyCellAsZero: true, sortHeaders: true },
     });
     this.props.onClosed?.();
   }
 }
-FilterMenu.props = {
-  filterPosition: Object,
-  onClosed: { type: Function, optional: true },
-};
 
 export const FilterMenuPopoverBuilder: PopoverBuilders = {
   onOpen: (position, getters): CellPopoverComponent<typeof FilterMenu> => {

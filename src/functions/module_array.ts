@@ -1,31 +1,24 @@
 import { _t } from "../translation";
-import {
-  AddFunctionDescription,
-  Arg,
-  ArgValue,
-  CellValue,
-  Matrix,
-  Maybe,
-  ValueAndFormat,
-} from "../types";
-import { NotAvailableError } from "../types/errors";
+import { AddFunctionDescription, Arg, FunctionResultObject, Matrix, Maybe } from "../types";
+import { EvaluationError, NotAvailableError } from "../types/errors";
 import { arg } from "./arguments";
 import {
   assertPositive,
   assertSameDimensions,
   assertSingleColOrRow,
   assertSquareMatrix,
-  isNumberMatrix,
 } from "./helper_assert";
 import { invertMatrix, multiplyMatrices } from "./helper_matrices";
 import {
   assert,
   flattenRowFirst,
   generateMatrix,
+  isEvaluationError,
   toBoolean,
   toInteger,
   toMatrix,
   toNumber,
+  toNumberMatrix,
   transposeMatrix,
 } from "./helpers";
 
@@ -39,12 +32,11 @@ export const ARRAY_CONSTRAIN = {
     arg("rows (number)", _t("The number of rows in the constrained array.")),
     arg("columns (number)", _t("The number of columns in the constrained array.")),
   ],
-  returns: ["RANGE<ANY>"],
-  computeValueAndFormat: function (
+  compute: function (
     array: Arg,
-    rows: Maybe<ValueAndFormat>,
-    columns: Maybe<ValueAndFormat>
-  ): Matrix<ValueAndFormat> {
+    rows: Maybe<FunctionResultObject>,
+    columns: Maybe<FunctionResultObject>
+  ): Matrix<FunctionResultObject> {
     const _array = toMatrix(array);
     const _rowsArg = toInteger(rows?.value, this.locale);
     const _columnsArg = toInteger(columns?.value, this.locale);
@@ -82,24 +74,28 @@ export const CHOOSECOLS = {
       _t("The columns indexes of the columns to be returned.")
     ),
   ],
-  returns: ["RANGE<ANY>"],
-  computeValueAndFormat: function (array: Arg, ...columns: Arg[]): Matrix<ValueAndFormat> {
+  compute: function (array: Arg, ...columns: Arg[]): Matrix<FunctionResultObject> {
     const _array = toMatrix(array);
     const _columns = flattenRowFirst(columns, (item) => toInteger(item?.value, this.locale));
 
+    const argOutOfRange = _columns.filter((col) => col === 0 || _array.length < Math.abs(col));
     assert(
-      () => _columns.every((col) => col > 0 && col <= _array.length),
+      () => argOutOfRange.length === 0,
       _t(
-        "The columns arguments must be between 1 and %s (got %s).",
+        "The columns arguments must be between -%s and %s (got %s), excluding 0.",
         _array.length.toString(),
-        (_columns.find((col) => col <= 0 || col > _array.length) || 0).toString()
+        _array.length.toString(),
+        argOutOfRange.join(",")
       )
     );
 
-    const result: Matrix<ValueAndFormat> = Array(_columns.length);
+    const result: Matrix<FunctionResultObject> = Array(_columns.length);
     for (let col = 0; col < _columns.length; col++) {
-      const colIndex = _columns[col] - 1; // -1 because columns arguments are 1-indexed
-      result[col] = _array[colIndex];
+      if (_columns[col] > 0) {
+        result[col] = _array[_columns[col] - 1]; // -1 because columns arguments are 1-indexed
+      } else {
+        result[col] = _array[_array.length + _columns[col]];
+      }
     }
 
     return result;
@@ -120,22 +116,28 @@ export const CHOOSEROWS = {
       _t("The rows indexes of the rows to be returned.")
     ),
   ],
-  returns: ["RANGE<ANY>"],
-  computeValueAndFormat: function (array: Arg, ...rows: Arg[]): Matrix<ValueAndFormat> {
+  compute: function (array: Arg, ...rows: Arg[]): Matrix<FunctionResultObject> {
     const _array = toMatrix(array);
     const _rows = flattenRowFirst(rows, (item) => toInteger(item?.value, this.locale));
     const _nbColumns = _array.length;
 
+    const argOutOfRange = _rows.filter((row) => row === 0 || _array[0].length < Math.abs(row));
     assert(
-      () => _rows.every((row) => row > 0 && row <= _array[0].length),
+      () => argOutOfRange.length === 0,
       _t(
-        "The rows arguments must be between 1 and %s (got %s).",
+        "The rows arguments must be between -%s and %s (got %s), excluding 0.",
         _array[0].length.toString(),
-        (_rows.find((row) => row <= 0 || row > _array[0].length) || 0).toString()
+        _array[0].length.toString(),
+        argOutOfRange.join(",")
       )
     );
 
-    return generateMatrix(_nbColumns, _rows.length, (col, row) => _array[col][_rows[row] - 1]); // -1 because rows arguments are 1-indexed
+    return generateMatrix(_nbColumns, _rows.length, (col, row) => {
+      if (_rows[row] > 0) {
+        return _array[col][_rows[row] - 1]; // -1 because columns arguments are 1-indexed
+      }
+      return _array[col][_array[col].length + _rows[row]];
+    });
   },
   isExported: true,
 } satisfies AddFunctionDescription;
@@ -157,16 +159,16 @@ export const EXPAND = {
     ),
     arg("pad_with (any, default=0)", _t("The value with which to pad.")), // @compatibility: on Excel, pad with #N/A
   ],
-  returns: ["RANGE<ANY>"],
-  computeValueAndFormat: function (
+  compute: function (
     arg: Arg,
-    rows: Maybe<ValueAndFormat>,
-    columns?: Maybe<ValueAndFormat>,
-    padWith: Maybe<ValueAndFormat> = { value: 0 } // TODO : Replace with #N/A errors once it's supported
-  ): Matrix<ValueAndFormat> {
+    rows: Maybe<FunctionResultObject>,
+    columns?: Maybe<FunctionResultObject>,
+    padWith: Maybe<FunctionResultObject> = { value: 0 } // TODO : Replace with #N/A errors once it's supported
+  ): Matrix<FunctionResultObject> {
     const _array = toMatrix(arg);
     const _nbRows = toInteger(rows?.value, this.locale);
-    const _nbColumns = columns !== undefined ? toInteger(columns.value, this.local) : _array.length;
+    const _nbColumns =
+      columns !== undefined ? toInteger(columns.value, this.locale) : _array.length;
 
     assert(
       () => _nbRows >= _array[0].length,
@@ -199,8 +201,7 @@ export const FLATTEN = {
     arg("range (any, range<any>)", _t("The first range to flatten.")),
     arg("range2 (any, range<any>, repeating)", _t("Additional ranges to flatten.")),
   ],
-  returns: ["RANGE<ANY>"],
-  computeValueAndFormat: function (...ranges: Arg[]): Matrix<ValueAndFormat> {
+  compute: function (...ranges: Arg[]): Matrix<FunctionResultObject> {
     return [flattenRowFirst(ranges, (val) => (val === undefined ? { value: "" } : val))];
   },
   isExported: false,
@@ -215,12 +216,14 @@ export const FREQUENCY = {
     arg("data (range<number>)", _t("The array of ranges containing the values to be counted.")),
     arg("classes (number, range<number>)", _t("The range containing the set of classes.")),
   ],
-  returns: ["RANGE<NUMBER>"],
-  compute: function (data: Matrix<CellValue>, classes: Matrix<CellValue>): CellValue[][] {
-    const _data = flattenRowFirst([data], (val) => val).filter(
+  compute: function (
+    data: Matrix<FunctionResultObject>,
+    classes: Matrix<FunctionResultObject>
+  ): Matrix<number> {
+    const _data = flattenRowFirst([data], (data) => data.value).filter(
       (val): val is number => typeof val === "number"
     );
-    const _classes = flattenRowFirst([classes], (val) => val).filter(
+    const _classes = flattenRowFirst([classes], (data) => data.value).filter(
       (val): val is number => typeof val === "number"
     );
 
@@ -273,17 +276,16 @@ export const HSTACK = {
     arg("range1 (any, range<any>)", _t("The first range to be appended.")),
     arg("range2 (any, range<any>, repeating)", _t("Additional ranges to add to range1.")),
   ],
-  returns: ["RANGE<ANY>"],
-  computeValueAndFormat: function (...ranges: Arg[]): Matrix<ValueAndFormat> {
+  compute: function (...ranges: Arg[]): Matrix<FunctionResultObject> {
     const nbRows = Math.max(...ranges.map((r) => r?.[0]?.length ?? 0));
 
-    const result: Matrix<ValueAndFormat> = [];
+    const result: Matrix<FunctionResultObject> = [];
 
     for (const range of ranges) {
       const _range = toMatrix(range);
       for (let col = 0; col < _range.length; col++) {
         //TODO: fill with #N/A for unavailable values instead of zeroes
-        const array: ValueAndFormat[] = Array(nbRows).fill({ value: null });
+        const array: FunctionResultObject[] = Array(nbRows).fill({ value: null });
         for (let row = 0; row < _range[col].length; row++) {
           array[row] = _range[col][row];
         }
@@ -308,20 +310,13 @@ export const MDETERM = {
       )
     ),
   ],
-  returns: ["NUMBER"],
-  compute: function (matrix: ArgValue): number {
-    const _matrix = toMatrix(matrix);
-
+  compute: function (matrix: Arg): number {
+    const _matrix = toNumberMatrix(matrix, "square_matrix");
     assertSquareMatrix(
       _t("The argument square_matrix must have the same number of columns and rows."),
       _matrix
     );
-    if (!isNumberMatrix(_matrix)) {
-      throw new Error(_t("The argument square_matrix must be a matrix of numbers."));
-    }
-    const { determinant } = invertMatrix(_matrix);
-
-    return determinant;
+    return invertMatrix(_matrix).determinant;
   },
   isExported: true,
 } satisfies AddFunctionDescription;
@@ -339,23 +334,16 @@ export const MINVERSE = {
       )
     ),
   ],
-  returns: ["RANGE<NUMBER>"],
-  compute: function (matrix: ArgValue): Matrix<number> {
-    const _matrix = toMatrix(matrix);
-
+  compute: function (matrix: Arg): Matrix<number> {
+    const _matrix = toNumberMatrix(matrix, "square_matrix");
     assertSquareMatrix(
       _t("The argument square_matrix must have the same number of columns and rows."),
       _matrix
     );
-    if (!isNumberMatrix(_matrix)) {
-      throw new Error(_t("The argument square_matrix must be a matrix of numbers."));
-    }
-
     const { inverted } = invertMatrix(_matrix);
     if (!inverted) {
-      throw new Error(_t("The matrix is not invertible."));
+      throw new EvaluationError(_t("The matrix is not invertible."));
     }
-
     return inverted;
   },
   isExported: true,
@@ -376,10 +364,9 @@ export const MMULT = {
       _t("The second matrix in the matrix multiplication operation.")
     ),
   ],
-  returns: ["RANGE<NUMBER>"],
-  compute: function (matrix1: ArgValue, matrix2: ArgValue): Matrix<number> {
-    const _matrix1 = toMatrix(matrix1);
-    const _matrix2 = toMatrix(matrix2);
+  compute: function (matrix1: Arg, matrix2: Arg): Matrix<number> {
+    const _matrix1 = toNumberMatrix(matrix1, "matrix1");
+    const _matrix2 = toNumberMatrix(matrix2, "matrix2");
 
     assert(
       () => _matrix1.length === _matrix2[0].length,
@@ -390,9 +377,6 @@ export const MMULT = {
         _matrix2[0].length.toString()
       )
     );
-    if (!isNumberMatrix(_matrix1) || !isNumberMatrix(_matrix2)) {
-      throw new Error(_t("The arguments matrix1 and matrix2 must be matrices of numbers."));
-    }
 
     return multiplyMatrices(_matrix1, _matrix2);
   },
@@ -420,14 +404,13 @@ export const SUMPRODUCT = {
       )
     ),
   ],
-  returns: ["NUMBER"],
-  compute: function (...args: ArgValue[]): number {
+  compute: function (...args: Arg[]): number {
     assertSameDimensions(_t("All the ranges must have the same dimensions."), ...args);
     const _args = args.map(toMatrix);
     let result = 0;
     for (let col = 0; col < _args[0].length; col++) {
       for (let row = 0; row < _args[0][col].length; row++) {
-        if (!_args.every((range) => typeof range[col][row] === "number")) {
+        if (!_args.every((range) => typeof range[col][row].value === "number")) {
           continue;
         }
         let product = 1;
@@ -451,11 +434,7 @@ export const SUMPRODUCT = {
  *
  * Ignore the pairs X,Y where one of the value isn't a number. Throw an error if no pair of numbers is found.
  */
-function getSumXAndY(
-  arrayX: ArgValue,
-  arrayY: ArgValue,
-  cb: (x: number, y: number) => number
-): number {
+function getSumXAndY(arrayX: Arg, arrayY: Arg, cb: (x: number, y: number) => number): number {
   assertSameDimensions(
     "The arguments array_x and array_y must have the same dimensions.",
     arrayX,
@@ -468,8 +447,8 @@ function getSumXAndY(
   let result = 0;
   for (const col in _arrayX) {
     for (const row in _arrayX[col]) {
-      const arrayXValue = _arrayX[col][row];
-      const arrayYValue = _arrayY[col][row];
+      const arrayXValue = _arrayX[col][row].value;
+      const arrayYValue = _arrayY[col][row].value;
       if (typeof arrayXValue !== "number" || typeof arrayYValue !== "number") {
         continue;
       }
@@ -479,7 +458,9 @@ function getSumXAndY(
   }
 
   if (!validPairFound) {
-    throw new Error("The arguments array_x and array_y must contain at least one pair of numbers.");
+    throw new EvaluationError(
+      _t("The arguments array_x and array_y must contain at least one pair of numbers.")
+    );
   }
 
   return result;
@@ -503,8 +484,7 @@ export const SUMX2MY2 = {
       )
     ),
   ],
-  returns: ["NUMBER"],
-  compute: function (arrayX: ArgValue, arrayY: ArgValue): number {
+  compute: function (arrayX: Arg, arrayY: Arg): number {
     return getSumXAndY(arrayX, arrayY, (x, y) => x ** 2 - y ** 2);
   },
   isExported: true,
@@ -529,8 +509,7 @@ export const SUMX2PY2 = {
       )
     ),
   ],
-  returns: ["NUMBER"],
-  compute: function (arrayX: ArgValue, arrayY: ArgValue): number {
+  compute: function (arrayX: Arg, arrayY: Arg): number {
     return getSumXAndY(arrayX, arrayY, (x, y) => x ** 2 + y ** 2);
   },
   isExported: true,
@@ -555,8 +534,7 @@ export const SUMXMY2 = {
       )
     ),
   ],
-  returns: ["NUMBER"],
-  compute: function (arrayX: ArgValue, arrayY: ArgValue): number {
+  compute: function (arrayX: Arg, arrayY: Arg): number {
     return getSumXAndY(arrayX, arrayY, (x, y) => (x - y) ** 2);
   },
   isExported: true,
@@ -584,30 +562,38 @@ const TO_COL_ROW_ARGS = [
   ),
 ];
 
+function shouldKeepValue(ignore: number): (data: FunctionResultObject) => boolean {
+  const _ignore = Math.trunc(ignore);
+  if (_ignore === 0) {
+    return () => true;
+  }
+  if (_ignore === 1) {
+    return (data) => data.value !== null;
+  }
+  if (_ignore === 2) {
+    return (data) => !isEvaluationError(data.value);
+  }
+  if (_ignore === 3) {
+    return (data) => data.value !== null && !isEvaluationError(data.value);
+  }
+  throw new EvaluationError(_t("Argument ignore must be between 0 and 3"));
+}
+
 export const TOCOL = {
   description: _t("Transforms a range of cells into a single column."),
   args: TO_COL_ROW_ARGS,
-  returns: ["RANGE<ANY>"],
-  computeValueAndFormat: function (
+  compute: function (
     array: Arg,
-    ignore: Maybe<ValueAndFormat> = { value: TO_COL_ROW_DEFAULT_IGNORE },
-    scanByColumn: Maybe<ValueAndFormat> = { value: TO_COL_ROW_DEFAULT_SCAN }
+    ignore: Maybe<FunctionResultObject> = { value: TO_COL_ROW_DEFAULT_IGNORE },
+    scanByColumn: Maybe<FunctionResultObject> = { value: TO_COL_ROW_DEFAULT_SCAN }
   ) {
     const _array = toMatrix(array);
-    const _ignore = toInteger(ignore.value, this.locale);
+    const _ignore = toNumber(ignore.value, this.locale);
     const _scanByColumn = toBoolean(scanByColumn.value);
 
-    assert(() => _ignore >= 0 && _ignore <= 3, _t("Argument ignore must be between 0 and 3"));
-
-    // TODO : implement ignore value 2 (ignore error) & 3 (ignore blanks and errors) once we can have errors in
-    // the array w/o crashing
     const result = (_scanByColumn ? _array : transposeMatrix(_array))
       .flat()
-      .filter(
-        (item) =>
-          (_ignore !== 1 && _ignore !== 3) || (item.value !== undefined && item.value !== null)
-      );
-
+      .filter(shouldKeepValue(_ignore));
     if (result.length === 0) {
       throw new NotAvailableError(_t("No results for the given arguments of TOCOL."));
     }
@@ -622,26 +608,17 @@ export const TOCOL = {
 export const TOROW = {
   description: _t("Transforms a range of cells into a single row."),
   args: TO_COL_ROW_ARGS,
-  returns: ["RANGE<ANY>"],
-  computeValueAndFormat: function (
+  compute: function (
     array: Arg,
-    ignore: Maybe<ValueAndFormat> = { value: TO_COL_ROW_DEFAULT_IGNORE },
-    scanByColumn: Maybe<ValueAndFormat> = { value: TO_COL_ROW_DEFAULT_SCAN }
-  ): Matrix<ValueAndFormat> {
+    ignore: Maybe<FunctionResultObject> = { value: TO_COL_ROW_DEFAULT_IGNORE },
+    scanByColumn: Maybe<FunctionResultObject> = { value: TO_COL_ROW_DEFAULT_SCAN }
+  ): Matrix<FunctionResultObject> {
     const _array = toMatrix(array);
-    const _ignore = toInteger(ignore.value, this.locale);
+    const _ignore = toNumber(ignore.value, this.locale);
     const _scanByColumn = toBoolean(scanByColumn.value);
-
-    assert(() => _ignore >= 0 && _ignore <= 3, _t("Argument ignore must be between 0 and 3"));
-
-    // TODO : implement ignore value 2 (ignore error) & 3 (ignore blanks and errors) once we can have errors in
-    // the array w/o crashing
     const result = (_scanByColumn ? _array : transposeMatrix(_array))
       .flat()
-      .filter(
-        (item) =>
-          (_ignore !== 1 && _ignore !== 3) || (item.value !== undefined && item.value !== null)
-      )
+      .filter(shouldKeepValue(_ignore))
       .map((item) => [item]);
 
     if (result.length === 0 || result[0].length === 0) {
@@ -658,8 +635,7 @@ export const TOROW = {
 export const TRANSPOSE = {
   description: _t("Transposes the rows and columns of a range."),
   args: [arg("range (any, range<any>)", _t("The range to be transposed."))],
-  returns: ["RANGE"],
-  computeValueAndFormat: function (arg: Arg): Matrix<ValueAndFormat> {
+  compute: function (arg: Arg): Matrix<FunctionResultObject> {
     const _array = toMatrix(arg);
     const nbColumns = _array[0].length;
     const nbRows = _array.length;
@@ -678,12 +654,11 @@ export const VSTACK = {
     arg("range1 (any, range<any>)", _t("The first range to be appended.")),
     arg("range2 (any, range<any>, repeating)", _t("Additional ranges to add to range1.")),
   ],
-  returns: ["RANGE<ANY>"],
-  computeValueAndFormat: function (...ranges: Arg[]): Matrix<ValueAndFormat> {
+  compute: function (...ranges: Arg[]): Matrix<FunctionResultObject> {
     const nbColumns = Math.max(...ranges.map((range) => toMatrix(range).length));
     const nbRows = ranges.reduce((acc, range) => acc + toMatrix(range)[0].length, 0);
 
-    const result: Matrix<ValueAndFormat> = Array(nbColumns)
+    const result: Matrix<FunctionResultObject> = Array(nbColumns)
       .fill([])
       .map(() => Array(nbRows).fill({ value: 0 })); // TODO fill with #N/A
 
@@ -721,12 +696,11 @@ export const WRAPCOLS = {
       _t("The value with which to fill the extra cells in the range.")
     ),
   ],
-  returns: ["RANGE<ANY>"],
-  computeValueAndFormat: function (
+  compute: function (
     range: Arg,
-    wrapCount: Maybe<ValueAndFormat>,
-    padWith: Maybe<ValueAndFormat> = { value: 0 }
-  ): Matrix<ValueAndFormat> {
+    wrapCount: Maybe<FunctionResultObject>,
+    padWith: Maybe<FunctionResultObject> = { value: 0 }
+  ): Matrix<FunctionResultObject> {
     const _array = toMatrix(range);
     const nbRows = toInteger(wrapCount?.value, this.locale);
 
@@ -761,12 +735,11 @@ export const WRAPROWS = {
       _t("The value with which to fill the extra cells in the range.")
     ),
   ],
-  returns: ["RANGE<ANY>"],
-  computeValueAndFormat: function (
+  compute: function (
     range: Arg,
-    wrapCount: Maybe<ValueAndFormat>,
-    padWith: Maybe<ValueAndFormat> = { value: 0 }
-  ): Matrix<ValueAndFormat> {
+    wrapCount: Maybe<FunctionResultObject>,
+    padWith: Maybe<FunctionResultObject> = { value: 0 }
+  ): Matrix<FunctionResultObject> {
     const _array = toMatrix(range);
     const nbColumns = toInteger(wrapCount?.value, this.locale);
 

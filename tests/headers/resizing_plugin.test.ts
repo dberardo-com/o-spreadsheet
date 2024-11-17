@@ -6,7 +6,7 @@ import {
 } from "../../src/constants";
 import { getDefaultCellHeight as getDefaultCellHeightHelper, toXC } from "../../src/helpers";
 import { Model } from "../../src/model";
-import { Cell, CommandResult, Sheet } from "../../src/types";
+import { Cell, CommandResult, Sheet, Wrapping } from "../../src/types";
 import {
   activateSheet,
   addColumns,
@@ -297,6 +297,19 @@ describe("Model resizer", () => {
       expect(model.getters.getRowSize(sheetId, 0)).toEqual(font36CellHeight);
       expect(model.getters.getRowSize(sheetId, 1)).toEqual(DEFAULT_CELL_HEIGHT);
     });
+
+    test("resizing rows/columns and removing rows/columns maintains expected sizes in new sheet", () => {
+      const sheetId = "sh2";
+      createSheet(model, { sheetId });
+
+      resizeRows(model, [5], 200, sheetId);
+      deleteRows(model, [10], sheetId);
+      expect(model.getters.getRowSize(sheetId, 5)).toEqual(200);
+
+      resizeColumns(model, ["B"], 200, sheetId);
+      deleteColumns(model, ["E"], sheetId);
+      expect(model.getters.getColSize(sheetId, 1)).toEqual(200);
+    });
   });
 
   describe("resize rows when changing font", () => {
@@ -313,7 +326,10 @@ describe("Model resizer", () => {
             cells: {
               A1: { content: "A1" },
               B1: { content: "B1" },
-              A4: { content: "A4", style: 1 },
+              A4: { content: "A4" },
+            },
+            styles: {
+              A4: 1,
             },
           },
         ],
@@ -413,6 +429,33 @@ describe("Model resizer", () => {
       expect(expectedHeight).toBeGreaterThan(DEFAULT_CELL_HEIGHT);
       expect(model.getters.getRowSize(sheet.id, 0)).toBe(expectedHeight);
     });
+
+    test("wrapping long text in a cell does not break the rendering", () => {
+      const LONG_TEXT = "This is a very long text that should be wrapped";
+
+      setCellContent(model, "A1", LONG_TEXT);
+      const initialCellHeight = model.getters.getColRowOffset("ROW", 0, 1);
+      expect(initialCellHeight).toEqual(DEFAULT_CELL_HEIGHT);
+
+      setStyle(model, "A1", { wrapping: "wrap" });
+      const wrappedCellHeight = model.getters.getColRowOffset("ROW", 0, 1);
+
+      expect(wrappedCellHeight).toBeGreaterThan(initialCellHeight);
+      expect(model.getters.getRowSize(sheet.id, 0)).toBe(wrappedCellHeight);
+    });
+
+    test.each<Wrapping>(["overflow", "clip"])(
+      `wrapping text with style %s does not update the row size`,
+      (wrap: Wrapping) => {
+        const LONG_TEXT = "This is a very long text that should be wrapped";
+
+        setCellContent(model, "A1", LONG_TEXT);
+        const initialCellHeight = model.getters.getColRowOffset("ROW", 0, 1);
+        setStyle(model, "A1", { wrapping: wrap });
+        const wrappedCellHeight = model.getters.getColRowOffset("ROW", 0, 1);
+        expect(wrappedCellHeight).toEqual(initialCellHeight);
+      }
+    );
 
     test("text that is no longer wrapped updates the row size", () => {
       setStyle(model, "C1", { fontSize: 10, wrapping: "wrap" });

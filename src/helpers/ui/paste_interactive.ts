@@ -1,7 +1,14 @@
-import { DispatchResult } from "../..";
-
+import { CURRENT_VERSION } from "../../migrations/data";
 import { _t } from "../../translation";
-import { ClipboardPasteOptions, SpreadsheetChildEnv, Zone } from "../../types";
+import {
+  ClipboardContent,
+  ClipboardMIMEType,
+  ClipboardPasteOptions,
+  CommandResult,
+  DispatchResult,
+  SpreadsheetChildEnv,
+  Zone,
+} from "../../types";
 
 export const enum CommandResult {
   Success = "Success",
@@ -150,9 +157,38 @@ export function interactivePaste(
 export function interactivePasteFromOS(
   env: SpreadsheetChildEnv,
   target: Zone[],
-  text: string,
+  clipboardContent: ClipboardContent,
   pasteOption?: ClipboardPasteOptions
 ) {
-  const result = env.model.dispatch("PASTE_FROM_OS_CLIPBOARD", { target, text, pasteOption });
+  let result: DispatchResult;
+  // We do not trust the clipboard content to be accurate and comprehensive.
+  // Therefore, to ensure reliability, we handle unexpected errors that may
+  // arise from content that would not be suitable for the current version.
+  try {
+    result = env.model.dispatch("PASTE_FROM_OS_CLIPBOARD", {
+      target,
+      clipboardContent,
+      pasteOption,
+    });
+  } catch (error) {
+    const parsedSpreadsheetContent = clipboardContent[ClipboardMIMEType.OSpreadsheet]
+      ? JSON.parse(clipboardContent[ClipboardMIMEType.OSpreadsheet])
+      : {};
+    if (parsedSpreadsheetContent.version && parsedSpreadsheetContent.version !== CURRENT_VERSION) {
+      env.raiseError(
+        _t(
+          "An unexpected error occurred while pasting content.\
+          This is probably due to a spreadsheet version mismatch."
+        )
+      );
+    }
+    result = env.model.dispatch("PASTE_FROM_OS_CLIPBOARD", {
+      target,
+      clipboardContent: {
+        [ClipboardMIMEType.PlainText]: clipboardContent[ClipboardMIMEType.PlainText],
+      },
+      pasteOption,
+    });
+  }
   handlePasteResult(env, result);
 }

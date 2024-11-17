@@ -1,11 +1,9 @@
 <templates>
   <t t-name="o-spreadsheet-SplitIntoColumnsPanel">
     <div class="o-split-to-cols-panel">
-      <div class="o-section">
-        <div class="o-section-title">Separator</div>
-        <select
-          class="o-input o-type-selector"
-          t-on-change="(ev) => this.onSeparatorChange(ev.target.value)">
+      <Section>
+        <t t-set-slot="title">Separator</t>
+        <select class="o-input mb-3" t-on-change="(ev) => this.onSeparatorChange(ev.target.value)">
           <option
             t-foreach="separators"
             t-as="separator"
@@ -17,7 +15,7 @@
         </select>
 
         <input
-          class="o-input o-required mt-3"
+          class="o-input mb-3"
           type="text"
           t-if="state.separatorValue === 'custom'"
           t-att-value="state.customSeparator"
@@ -25,28 +23,27 @@
           placeholder="Add any characters or symbol"
         />
 
-        <label class="o-checkbox">
-          <input
-            type="checkbox"
-            name="add columns"
-            t-att-checked="state.addNewColumns"
-            t-on-change="updateAddNewColumnsCheckbox"
-          />
-          Add new columns to avoid overwriting cells
-        </label>
-
+        <t t-set="addColumnsLabel">Add new columns to avoid overwriting cells</t>
+        <Checkbox
+          value="state.addNewColumns"
+          label="addColumnsLabel"
+          onChange.bind="updateAddNewColumnsCheckbox"
+        />
+      </Section>
+      <Section>
         <div class="o-sidePanelButtons">
           <button
-            class="o-button"
+            class="o-button primary"
             t-att-class="{'o-disabled': isConfirmDisabled}"
             t-on-click="confirm">
             Confirm
           </button>
         </div>
-
+      </Section>
+      <Section t-if="errorMessages.length || warningMessages.length" class="'pb-0 pt-2'">
         <ValidationMessages messages="errorMessages" msgType="'error'"/>
         <ValidationMessages messages="warningMessages" msgType="'warning'"/>
-      </div>
+      </Section>
     </div>
   </t>
 </templates>

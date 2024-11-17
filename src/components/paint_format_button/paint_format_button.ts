@@ -1,5 +1,7 @@
 import { Component } from "@odoo/owl";
+import { Store, useStore } from "../../store_engine";
 import { SpreadsheetChildEnv } from "../../types";
+import { PaintFormatStore } from "./paint_format_store";
 
 interface Props {
   class?: string;
@@ -7,23 +9,29 @@ interface Props {
 
 export class PaintFormatButton extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-PaintFormatButton";
+  static props = {
+    class: { type: String, optional: true },
+  };
+
+  private paintFormatStore!: Store<PaintFormatStore>;
+
+  setup() {
+    this.paintFormatStore = useStore(PaintFormatStore);
+  }
 
   get isActive() {
-    return this.env.model.getters.isPaintingFormat();
+    return this.paintFormatStore.isActive;
   }
 
   onDblClick() {
-    this.env.model.dispatch("ACTIVATE_PAINT_FORMAT", { persistent: true });
+    this.paintFormatStore.activate({ persistent: true });
   }
 
   togglePaintFormat() {
     if (this.isActive) {
-      this.env.model.dispatch("CANCEL_PAINT_FORMAT");
+      this.paintFormatStore.cancel();
     } else {
-      this.env.model.dispatch("ACTIVATE_PAINT_FORMAT", { persistent: false });
+      this.paintFormatStore.activate({ persistent: false });
     }
   }
 }
-PaintFormatButton.props = {
-  class: { type: String, optional: true },
-};

@@ -8,6 +8,8 @@
  * - interface GridState: the internal type of the state managed by the model
  */
 
+import { Chart } from "chart.js";
+
 export * from "./autofill";
 export * from "./cells";
 export * from "./chart/chart";
@@ -26,6 +28,15 @@ export * from "./getters";
 export * from "./history";
 export * from "./locale";
 export * from "./misc";
+export * from "./pivot";
+export * from "./pivot_runtime";
 export * from "./range";
 export * from "./rendering";
+export * from "./table";
 export * from "./workbook_data";
+
+declare global {
+  interface Window {
+    Chart: typeof Chart;
+  }
+}

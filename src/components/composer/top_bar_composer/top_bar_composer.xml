@@ -5,9 +5,11 @@
       t-on-click.stop=""
       t-att-style="containerStyle">
       <Composer
-        focus="props.focus"
+        focus="focus"
         inputStyle="composerStyle"
-        onComposerContentFocused="props.onComposerContentFocused"
+        onComposerContentFocused.bind="onFocus"
+        composerStore="composerStore"
+        placeholder="composerStore.placeholder"
       />
     </div>
   </t>

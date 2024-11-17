@@ -4,6 +4,7 @@ import {
   getCellPositionsInRanges,
   isInside,
   recomputeZones,
+  toXC,
 } from "../../helpers";
 import { dataValidationEvaluatorRegistry } from "../../registries/data_validation_registry";
 import {
@@ -78,6 +79,7 @@ export class DataValidationPlugin
         return this.checkValidations(
           cmd,
           this.chainValidations(
+            this.checkEmptyRange,
             this.checkCriterionTypeIsValid,
             this.checkCriterionHasValidNumberOfValues,
             this.checkCriterionValuesAreValid
@@ -122,6 +124,30 @@ export class DataValidationPlugin
         this.addDataValidationRule(cmd.sheetId, { ...cmd.rule, ranges });
         break;
       }
+      case "DELETE_CONTENT": {
+        const zones = recomputeZones(cmd.target);
+        const sheetId = cmd.sheetId;
+        for (const zone of zones) {
+          for (let row = zone.top; row <= zone.bottom; row++) {
+            for (let col = zone.left; col <= zone.right; col++) {
+              const dataValidation = this.getValidationRuleForCell({ sheetId, col, row });
+              if (!dataValidation) {
+                continue;
+              }
+              if (
+                dataValidation.criterion.type === "isBoolean" ||
+                (dataValidation.criterion.type === "isValueInList" &&
+                  !this.getters.getCell({ sheetId, col, row })?.content)
+              ) {
+                const rules = this.rules[sheetId];
+                const ranges = [this.getters.getRangeFromSheetXC(sheetId, toXC(col, row))];
+                const adaptedRules = this.removeRangesFromRules(sheetId, ranges, rules);
+                this.history.update("rules", sheetId, adaptedRules);
+              }
+            }
+          }
+        }
+      }
     }
   }
 
@@ -134,6 +160,9 @@ export class DataValidationPlugin
   }
 
   getValidationRuleForCell({ sheetId, col, row }: CellPosition): DataValidationRule | undefined {
+    if (!this.rules[sheetId]) {
+      return undefined;
+    }
     for (const rule of this.rules[sheetId]) {
       for (const range of rule.ranges) {
         if (isInside(col, row, range.zone)) {
@@ -159,7 +188,10 @@ export class DataValidationPlugin
 
     if (newRule.criterion.type === "isBoolean") {
       this.setCenterStyleToBooleanCells(newRule);
+    } else if (newRule.criterion.type === "isValueInList") {
+      newRule.criterion.values = Array.from(new Set(newRule.criterion.values));
     }
+
     const adaptedRules = this.removeRangesFromRules(sheetId, newRule.ranges, rules);
     const ruleIndex = adaptedRules.findIndex((rule) => rule.id === newRule.id);
 
@@ -173,12 +205,8 @@ export class DataValidationPlugin
 
   private removeRangesFromRules(sheetId: UID, ranges: Range[], rules: DataValidationRule[]) {
     rules = deepCopy(rules);
-    const rangesXcs = ranges.map((range) => this.getters.getRangeString(range, sheetId));
     for (const rule of rules) {
-      const ruleRanges = rule.ranges.map((range) => this.getters.getRangeString(range, sheetId));
-      rule.ranges = recomputeZones(ruleRanges, rangesXcs).map((xc) =>
-        this.getters.getRangeFromSheetXC(sheetId, xc)
-      );
+      rule.ranges = this.getters.recomputeRanges(rule.ranges, ranges);
     }
     return rules.filter((rule) => rule.ranges.length > 0);
   }
@@ -192,14 +220,17 @@ export class DataValidationPlugin
   private setCenterStyleToBooleanCells(rule: DataValidationRule) {
     for (const position of getCellPositionsInRanges(rule.ranges)) {
       const cell = this.getters.getCell(position);
-      const { sheetId, col, row } = position;
       const style: Style = {
         ...cell?.style,
         align: cell?.style?.align ?? "center",
         verticalAlign: cell?.style?.verticalAlign ?? "middle",
       };
-      this.dispatch("UPDATE_CELL", { sheetId, col, row, style });
+      this.dispatch("UPDATE_CELL", { ...position, style });
     }
+  }
+
+  private checkEmptyRange(cmd: AddDataValidationCommand) {
+    return cmd.ranges.length ? CommandResult.Success : CommandResult.EmptyRange;
   }
 
   import(data: WorkbookData) {

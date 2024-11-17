@@ -6,7 +6,7 @@ import { ValidationMessages } from "../validation_messages/validation_messages";
 
 css/* scss */ `
   .o-grid-add-rows {
-    input {
+    input.o-input {
       box-sizing: border-box;
       width: 60px;
       height: 30px;
@@ -26,6 +26,9 @@ interface Props {
 
 export class GridAddRowsFooter extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-GridAddRowsFooter";
+  static props = {
+    focusGrid: Function,
+  };
   static components = { ValidationMessages };
   inputRef = useRef<HTMLInputElement>("inputRef");
   state = useState({
@@ -103,7 +106,3 @@ export class GridAddRowsFooter extends Component<Props, SpreadsheetChildEnv> {
     this.props.focusGrid();
   }
 }
-
-GridAddRowsFooter.props = {
-  focusGrid: Function,
-};

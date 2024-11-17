@@ -1,12 +1,12 @@
-import { Model } from "../../src";
+import "../test_helpers/helpers";
+
 import { buildSheetLink, toCartesian, toZone } from "../../src/helpers";
-import { AutofillPlugin } from "../../src/plugins/ui_feature/autofill";
 import { Border, ConditionalFormat, Style } from "../../src/types";
-import { DIRECTION } from "../../src/types/index";
 import {
   addDataValidation,
   createSheet,
   createSheetWithName,
+  createTable,
   deleteColumns,
   deleteRows,
   merge,
@@ -21,15 +21,20 @@ import {
   getCellText,
   getMerges,
   getStyle,
-} from "../test_helpers/getters_helpers"; // to have getcontext mocks
-import "../test_helpers/helpers";
+} from "../test_helpers/getters_helpers";
 import {
   XCToMergeCellMap,
   getDataValidationRules,
   getMergeCellMap,
   getPlugin,
+  makeTestComposerStore,
   toRangesData,
 } from "../test_helpers/helpers";
+
+import { Model } from "../../src";
+import { functionRegistry } from "../../src/functions";
+import { AutofillPlugin } from "../../src/plugins/ui_feature/autofill";
+import { DIRECTION } from "../../src/types/index";
 
 let autoFill: AutofillPlugin;
 let model: Model;
@@ -142,10 +147,11 @@ describe("Autofill", () => {
   });
 
   test("Autofill a date displays a date in the composer", () => {
+    const composerStore = makeTestComposerStore(model);
     setCellContent(model, "A1", "1/1/2017");
     autofill("A1", "A2");
     selectCell(model, "A2");
-    expect(model.getters.getCurrentContent()).toBe("1/2/2017");
+    expect(composerStore.currentContent).toBe("1/2/2017");
   });
 
   test("Autofill add CF to target cell if present in origin cell", () => {
@@ -212,14 +218,150 @@ describe("Autofill", () => {
       expect(getCellContent(model, "A6")).toBe("6");
     });
 
-    test("Autofill dates", () => {
-      setCellContent(model, "A1", "3/3/2003");
-      setCellContent(model, "A2", "3/4/2003");
-      autofill("A1:A2", "A6");
-      expect(getCellText(model, "A3")).toBe("3/5/2003");
-      expect(getCellText(model, "A4")).toBe("3/6/2003");
-      expect(getCellText(model, "A5")).toBe("3/7/2003");
-      expect(getCellText(model, "A6")).toBe("3/8/2003");
+    describe("Autofill dates", () => {
+      test("consecutive dates", () => {
+        setCellContent(model, "A1", "3/28/2003");
+        setCellContent(model, "A2", "3/29/2003");
+        setCellContent(model, "A3", "3/30/2003");
+        autofill("A1:A3", "A6");
+        expect(getCellText(model, "A4")).toBe("3/31/2003");
+        expect(getCellText(model, "A5")).toBe("4/1/2003");
+        expect(getCellText(model, "A6")).toBe("4/2/2003");
+      });
+
+      test("Descending dates", () => {
+        setCellContent(model, "A1", "3/4/2003");
+        setCellContent(model, "A2", "3/3/2003");
+        autofill("A1:A2", "A5");
+        expect(getCellText(model, "A3")).toBe("3/2/2003");
+        expect(getCellText(model, "A4")).toBe("3/1/2003");
+        expect(getCellText(model, "A5")).toBe("2/28/2003");
+      });
+
+      test("Autofill upwards consecutive dates", () => {
+        setCellContent(model, "A4", "3/31/2003");
+        setCellContent(model, "A5", "4/1/2003");
+        setCellContent(model, "A6", "4/2/2003");
+        autofill("A4:A6", "A1");
+        expect(getCellText(model, "A1")).toBe("3/28/2003");
+        expect(getCellText(model, "A2")).toBe("3/29/2003");
+        expect(getCellText(model, "A3")).toBe("3/30/2003");
+      });
+
+      test("dates with consistent day gap", () => {
+        setCellContent(model, "A1", "4/21/2003");
+        setCellContent(model, "A2", "4/23/2003");
+        setCellContent(model, "A3", "4/25/2003");
+        autofill("A1:A3", "A7");
+        expect(getCellText(model, "A4")).toBe("4/27/2003");
+        expect(getCellText(model, "A5")).toBe("4/29/2003");
+        expect(getCellText(model, "A6")).toBe("5/1/2003");
+        expect(getCellText(model, "A7")).toBe("5/3/2003");
+      });
+
+      test("dates with consistent month gap", () => {
+        setCellContent(model, "A1", "3/24/2003");
+        setCellContent(model, "A2", "5/24/2003");
+        setCellContent(model, "A3", "7/24/2003");
+        autofill("A1:A3", "A6");
+        expect(getCellText(model, "A4")).toBe("9/24/2003");
+        expect(getCellText(model, "A5")).toBe("11/24/2003");
+        expect(getCellText(model, "A6")).toBe("1/24/2004");
+      });
+
+      test("dates with consistent year gap", () => {
+        setCellContent(model, "A1", "3/24/2000");
+        setCellContent(model, "A2", "3/24/2003");
+        setCellContent(model, "A3", "3/24/2006");
+        autofill("A1:A3", "A6");
+        expect(getCellText(model, "A4")).toBe("3/24/2009");
+        expect(getCellText(model, "A5")).toBe("3/24/2012");
+        expect(getCellText(model, "A6")).toBe("3/24/2015");
+      });
+
+      test("dates 2 year apart with leap year", () => {
+        setCellContent(model, "A1", "3/24/2000");
+        setCellContent(model, "A2", "3/24/2002");
+        autofill("A1:A2", "A6");
+        expect(getCellText(model, "A3")).toBe("3/24/2004");
+        expect(getCellText(model, "A4")).toBe("3/24/2006");
+        expect(getCellText(model, "A5")).toBe("3/24/2008");
+        expect(getCellText(model, "A6")).toBe("3/24/2010");
+      });
+
+      test("dates with inconsistent day gap", () => {
+        setCellContent(model, "A1", "4/11/2003");
+        setCellContent(model, "A2", "4/12/2003");
+        setCellContent(model, "A3", "4/25/2003");
+        autofill("A1:A3", "A7");
+        expect(getCellText(model, "A4")).toBe("4/11/2003");
+        expect(getCellText(model, "A5")).toBe("4/12/2003");
+        expect(getCellText(model, "A6")).toBe("4/25/2003");
+        expect(getCellText(model, "A7")).toBe("4/11/2003");
+      });
+
+      test("dates with inconsistent month gap", () => {
+        setCellContent(model, "A1", "4/11/2003");
+        setCellContent(model, "A2", "5/11/2003");
+        setCellContent(model, "A3", "7/11/2003");
+        autofill("A1:A3", "A7");
+        expect(getCellText(model, "A4")).toBe("4/11/2003");
+        expect(getCellText(model, "A5")).toBe("5/11/2003");
+        expect(getCellText(model, "A6")).toBe("7/11/2003");
+        expect(getCellText(model, "A7")).toBe("4/11/2003");
+      });
+
+      test("dates with inconsistent year gap", () => {
+        setCellContent(model, "A1", "4/11/2003");
+        setCellContent(model, "A2", "4/11/2005");
+        setCellContent(model, "A3", "4/11/2006");
+        autofill("A1:A3", "A7");
+        expect(getCellText(model, "A4")).toBe("4/11/2003");
+        expect(getCellText(model, "A5")).toBe("4/11/2005");
+        expect(getCellText(model, "A6")).toBe("4/11/2006");
+        expect(getCellText(model, "A7")).toBe("4/11/2003");
+      });
+
+      test("dates with random gaps", () => {
+        setCellContent(model, "A1", "3/24/2000");
+        setCellContent(model, "A2", "3/25/2003");
+        setCellContent(model, "A3", "4/24/1997");
+        autofill("A1:A3", "A6");
+        expect(getCellText(model, "A4")).toBe("3/24/2000");
+        expect(getCellText(model, "A5")).toBe("3/25/2003");
+        expect(getCellText(model, "A6")).toBe("4/24/1997");
+      });
+
+      test("dates wich constant year/month gap", () => {
+        setCellContent(model, "A1", "2/1/2001");
+        setCellContent(model, "A2", "3/1/2002");
+        setCellContent(model, "A3", "4/1/2003");
+        autofill("A1:A3", "A6");
+        expect(getCellText(model, "A4")).toBe("5/1/2004");
+        expect(getCellText(model, "A5")).toBe("6/1/2005");
+        expect(getCellText(model, "A6")).toBe("7/1/2006");
+      });
+
+      test("dates with constant month/day gap", () => {
+        setCellContent(model, "A1", "2/1/2001");
+        setCellContent(model, "A2", "3/2/2001");
+        setCellContent(model, "A3", "4/3/2001");
+        autofill("A1:A3", "A6");
+        // Note: differs from Excel but consistent with other cases
+        expect(getCellText(model, "A4")).toBe("5/4/2001");
+        expect(getCellText(model, "A5")).toBe("6/5/2001");
+        expect(getCellText(model, "A6")).toBe("7/6/2001");
+      });
+
+      test("dates with constant year/day gap", () => {
+        setCellContent(model, "A1", "1/3/2001");
+        setCellContent(model, "A2", "1/5/2002");
+        setCellContent(model, "A3", "1/7/2003");
+        autofill("A1:A3", "A6");
+        expect(getCellText(model, "A4")).toBe("1/9/2004");
+        expect(getCellText(model, "A5")).toBe("1/10/2005");
+        expect(getCellText(model, "A6")).toBe("1/12/2006");
+      });
     });
 
     test("Autofill hours", () => {
@@ -338,6 +480,28 @@ describe("Autofill", () => {
       expect(getCellContent(model, "A9")).toBe("test");
     });
 
+    test("Autofill dates mixed with numbers", () => {
+      setCellContent(model, "A1", "1/8/2023");
+      setCellContent(model, "A2", "2/8/2023");
+      setCellContent(model, "A3", "5");
+      autofill("A1:A3", "A7");
+      expect(getCellContent(model, "A4")).toBe("3/8/2023");
+      expect(getCellContent(model, "A5")).toBe("4/8/2023");
+      expect(getCellContent(model, "A6")).toBe("6");
+      expect(getCellContent(model, "A7")).toBe("5/8/2023");
+    });
+
+    test("Autofill dates mixed with text", () => {
+      setCellContent(model, "A1", "1/8/2023");
+      setCellContent(model, "A2", "2/8/2023");
+      setCellContent(model, "A3", "text");
+      autofill("A1:A3", "A7");
+      expect(getCellContent(model, "A4")).toBe("3/8/2023");
+      expect(getCellContent(model, "A5")).toBe("4/8/2023");
+      expect(getCellContent(model, "A6")).toBe("text");
+      expect(getCellContent(model, "A7")).toBe("5/8/2023");
+    });
+
     test("Autofill number and text", () => {
       setCellContent(model, "A1", "1");
       setCellContent(model, "A2", "test");
@@ -378,6 +542,19 @@ describe("Autofill", () => {
         expect(getCellContent(model, "A3")).toBe("prefix123and9");
         expect(getCellContent(model, "A4")).toBe("prefix123and11");
       });
+    });
+
+    test("Autofill number and formulas", () => {
+      setCellContent(model, "A1", "1");
+      setCellContent(model, "A2", "2");
+      setCellContent(model, "A3", "=A1 + 10");
+      autofill("A1:A3", "A9");
+      expect(getCellContent(model, "A4")).toBe("3");
+      expect(getCellContent(model, "A5")).toBe("4");
+      expect(getCellContent(model, "A6")).toBe("13");
+      expect(getCellContent(model, "A7")).toBe("5");
+      expect(getCellContent(model, "A8")).toBe("6");
+      expect(getCellContent(model, "A9")).toBe("15");
     });
 
     test.each([
@@ -510,6 +687,20 @@ describe("Autofill", () => {
     expect(getCell(model, "B5")).toBeUndefined();
   });
 
+  test("Auto-autofill multiple cells left", () => {
+    setCellContent(model, "A2", "1");
+    setCellContent(model, "A3", "1");
+    setCellContent(model, "A4", "1");
+    setCellContent(model, "A5", "1");
+    setCellContent(model, "B2", "2");
+    setCellContent(model, "B3", "3");
+    setSelection(model, ["B2:B3"]);
+    model.dispatch("AUTOFILL_AUTO");
+    expect(getCellContent(model, "B4")).toBe("4");
+    expect(getCellContent(model, "B5")).toBe("5");
+    expect(getCell(model, "B6")).toBeUndefined();
+  });
+
   test("Auto-autofill right", () => {
     setCellContent(model, "B2", "1");
     setCellContent(model, "B3", "1");
@@ -522,6 +713,99 @@ describe("Autofill", () => {
     expect(getCell(model, "A5")).toBeUndefined();
   });
 
+  test("Auto-autofill multiple cells right", () => {
+    setCellContent(model, "B2", "1");
+    setCellContent(model, "B3", "1");
+    setCellContent(model, "B4", "1");
+    setCellContent(model, "B5", "1");
+    setCellContent(model, "A2", "2");
+    setCellContent(model, "A3", "3");
+    setSelection(model, ["A2:A3"]);
+    model.dispatch("AUTOFILL_AUTO");
+    expect(getCellContent(model, "A4")).toBe("4");
+    expect(getCellContent(model, "A5")).toBe("5");
+    expect(getCell(model, "A6")).toBeUndefined();
+  });
+
+  test("Auto-autofill considers cells with a content", () => {
+    setCellContent(model, "B2", "1");
+    setCellContent(model, "B3", '=""');
+    setCellContent(model, "B4", '=""');
+    setCellContent(model, "A2", "2");
+    setSelection(model, ["A2"]);
+    model.dispatch("AUTOFILL_AUTO");
+    expect(getCellContent(model, "A3")).toBe("2");
+    expect(getCellContent(model, "A4")).toBe("2");
+    expect(getCell(model, "A5")).toBeUndefined();
+  });
+
+  test("Auto-autofill of multiple cells considers cells with a content", () => {
+    setCellContent(model, "B2", "1");
+    setCellContent(model, "B3", '=""');
+    setCellContent(model, "B4", '=""');
+    setCellContent(model, "B5", '=""');
+    setCellContent(model, "A2", "2");
+    setCellContent(model, "A3", "3");
+    setSelection(model, ["A2:A3"]);
+    model.dispatch("AUTOFILL_AUTO");
+    expect(getCellContent(model, "A4")).toBe("4");
+    expect(getCellContent(model, "A5")).toBe("5");
+    expect(getCell(model, "A6")).toBeUndefined();
+  });
+
+  test("Auto-autofill considers formula spreaded value", () => {
+    functionRegistry.add("SPREAD.EMPTY", {
+      description: "spreads empty values",
+      args: [],
+      compute: function (): null[][] {
+        return [
+          [null, null, null], // return 2 col, 3 row matrix
+          [null, null, null],
+        ];
+      },
+      isExported: false,
+    });
+    setCellContent(model, "A1", "=SPREAD.EMPTY()");
+    setCellContent(model, "C1", "2");
+    setSelection(model, ["C1"]);
+    model.dispatch("AUTOFILL_AUTO");
+    expect(getCellContent(model, "C1")).toBe("2");
+    expect(getCellContent(model, "C2")).toBe("2");
+    expect(getCellContent(model, "C3")).toBe("2");
+    expect(getCell(model, "C4")).toBeUndefined();
+  });
+
+  test("Auto-autofill in a table fill until the end of the table", () => {
+    createTable(model, "A1:B3");
+    setCellContent(model, "A1", "=C1");
+    model.dispatch("AUTOFILL_AUTO");
+    expect(getCell(model, "A2")?.content).toBe("=C2");
+    expect(getCell(model, "A3")?.content).toBe("=C3");
+    expect(getCell(model, "A4")?.content).toBe(undefined);
+  });
+
+  test("Auto-autofill stops at non empty cell", () => {
+    // On standard range
+    setCellContent(model, "A1", "1");
+    setCellContent(model, "A2", "2");
+    setCellContent(model, "A3", "3");
+    setCellContent(model, "B1", "=A1");
+    setCellContent(model, "B3", "Text not overwritten");
+    setSelection(model, ["B1"]);
+    model.dispatch("AUTOFILL_AUTO");
+    expect(getCell(model, "B2")?.content).toBe("=A2");
+    expect(getCell(model, "B3")?.content).toBe("Text not overwritten");
+
+    // On a table
+    createTable(model, "C1:C3");
+    setCellContent(model, "C1", "=D1");
+    setCellContent(model, "C3", "Text not overwritten");
+    setSelection(model, ["C1"]);
+    model.dispatch("AUTOFILL_AUTO");
+    expect(getCell(model, "C2")?.content).toBe("=D2");
+    expect(getCell(model, "C3")?.content).toBe("Text not overwritten");
+  });
+
   test("autofill with merge in selection", () => {
     merge(model, "A1:A2");
     setCellContent(model, "A1", "1");
@@ -530,9 +814,9 @@ describe("Autofill", () => {
       XCToMergeCellMap(model, ["A1", "A2", "A4", "A5", "A7", "A8"])
     );
     expect(getMerges(model)).toEqual({
-      "1": { bottom: 1, id: 1, left: 0, right: 0, top: 0, topLeft: toCartesian("A1") },
-      "2": { bottom: 4, id: 2, left: 0, right: 0, top: 3, topLeft: toCartesian("A4") },
-      "3": { bottom: 7, id: 3, left: 0, right: 0, top: 6, topLeft: toCartesian("A7") },
+      "1": { bottom: 1, id: 1, left: 0, right: 0, top: 0 },
+      "2": { bottom: 4, id: 2, left: 0, right: 0, top: 3 },
+      "3": { bottom: 7, id: 3, left: 0, right: 0, top: 6 },
     });
     expect(getCellContent(model, "A1")).toBe("1");
     expect(getCellContent(model, "A4")).toBe("2");
@@ -545,8 +829,8 @@ describe("Autofill", () => {
     autofill("A1:A2", "A5");
     expect(getMergeCellMap(model)).toEqual(XCToMergeCellMap(model, ["A1", "A2", "A3", "A4"]));
     expect(getMerges(model)).toEqual({
-      "1": { bottom: 1, id: 1, left: 0, right: 0, top: 0, topLeft: toCartesian("A1") },
-      "2": { bottom: 3, id: 2, left: 0, right: 0, top: 2, topLeft: toCartesian("A3") },
+      "1": { bottom: 1, id: 1, left: 0, right: 0, top: 0 },
+      "2": { bottom: 3, id: 2, left: 0, right: 0, top: 2 },
     });
   });
 

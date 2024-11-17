@@ -6,17 +6,29 @@ import { DataValidationListIcon } from "./dv_list_icon/dv_list_icon";
 
 export class DataValidationOverlay extends Component<{}, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-DataValidationOverlay";
+  static props = {};
   static components = { GridCellIcon, DataValidationCheckbox, DataValidationListIcon };
 
   get checkBoxCellPositions(): CellPosition[] {
-    return this.env.model.getters.getDataValidationCheckBoxCellPositions();
+    return this.env.model.getters
+      .getVisibleCellPositions()
+      .filter(
+        (position) =>
+          this.env.model.getters.isCellValidCheckbox(position) &&
+          !this.env.model.getters.isFilterHeader(position)
+      );
   }
 
   get listIconsCellPositions(): CellPosition[] {
-    return this.env.model.getters.isReadonly()
-      ? []
-      : this.env.model.getters.getDataValidationListCellsPositions();
+    if (this.env.model.getters.isReadonly()) {
+      return [];
+    }
+    return this.env.model.getters
+      .getVisibleCellPositions()
+      .filter(
+        (position) =>
+          this.env.model.getters.cellHasListDataValidationIcon(position) &&
+          !this.env.model.getters.isFilterHeader(position)
+      );
   }
 }
-
-DataValidationOverlay.props = {};

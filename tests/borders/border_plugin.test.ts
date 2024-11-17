@@ -1,19 +1,27 @@
 import { DEFAULT_BORDER_DESC } from "../../src/constants";
 import { Model } from "../../src/model";
-import { BorderDescr } from "../../src/types/index";
+import { BorderDescr, CommandResult } from "../../src/types/index";
 import {
   addColumns,
   addRows,
   cut,
   deleteCells,
+  deleteColumns,
+  deleteRows,
   paste,
   selectCell,
   setAnchorCorner,
+  setBorders,
   setCellContent,
   setZoneBorders,
   undo,
 } from "../test_helpers/commands_helpers";
-import { getBorder, getCell, getCellContent } from "../test_helpers/getters_helpers";
+import {
+  getBorder,
+  getCell,
+  getCellContent,
+  getComputedBorder,
+} from "../test_helpers/getters_helpers";
 import "../test_helpers/helpers"; // to have getcontext mocks
 
 describe("borders", () => {
@@ -97,6 +105,21 @@ describe("borders", () => {
     setZoneBorders(model, { position: "clear" });
 
     expect(getCell(model, "C3")).toBeUndefined();
+  });
+
+  test("set the same border twice is cancelled", () => {
+    const model = new Model();
+    const border = { top: DEFAULT_BORDER_DESC };
+    setBorders(model, "A1", border);
+    expect(setBorders(model, "A1", border)).toBeCancelledBecause(CommandResult.NoChanges);
+  });
+
+  test("reset border when there is no border is cancelled", () => {
+    const model = new Model();
+    expect(setBorders(model, "A1", undefined)).toBeCancelledBecause(CommandResult.NoChanges);
+    expect(setBorders(model, "A1", { top: undefined })).toBeCancelledBecause(
+      CommandResult.NoChanges
+    );
   });
 
   test("can set all borders in a zone", () => {
@@ -557,6 +580,21 @@ describe("Grid manipulation", () => {
     expect(getBorder(model, "B4")).toEqual({ top: DEFAULT_BORDER_DESC });
   });
 
+  test("Remove multiple headers before the borders", () => {
+    const b = DEFAULT_BORDER_DESC;
+    setZoneBorders(model, { position: "external" }, ["C3"]);
+    deleteRows(model, [0, 1]);
+    expect(getBorder(model, "B1")).toEqual({ right: b });
+    expect(getBorder(model, "C1")).toEqual({ top: b, left: b, right: b, bottom: b });
+    expect(getBorder(model, "D1")).toEqual({ left: b });
+    expect(getBorder(model, "C2")).toEqual({ top: b });
+
+    deleteColumns(model, ["A", "B"]);
+    expect(getBorder(model, "A1")).toEqual({ top: b, left: b, right: b, bottom: b });
+    expect(getBorder(model, "B1")).toEqual({ left: b });
+    expect(getBorder(model, "A2")).toEqual({ top: b });
+  });
+
   test("Borders are correctly duplicated on sheet dup", () => {
     setZoneBorders(model, { position: "external" }, ["B2"]);
     const sheetId = model.getters.getActiveSheetId();
@@ -636,6 +674,34 @@ describe("Grid manipulation", () => {
     });
     expect(getBorder(model, "C3")).toEqual({ left: DEFAULT_BORDER_DESC });
   });
+
+  test("Remove multiple rows before borders at the bottom of the sheet starting from the first column", () => {
+    const b = DEFAULT_BORDER_DESC;
+    setZoneBorders(model, { position: "external" }, ["A98:C100"]);
+    deleteRows(model, [0, 1, 2, 3]);
+    expect(getBorder(model, "A94")).toEqual({ left: b, top: b });
+    expect(getBorder(model, "B94")).toEqual({ top: b });
+    expect(getBorder(model, "C94")).toEqual({ top: b, right: b });
+    expect(getBorder(model, "A95")).toEqual({ left: b });
+    expect(getBorder(model, "C95")).toEqual({ right: b });
+    expect(getBorder(model, "A96")).toEqual({ bottom: b, left: b });
+    expect(getBorder(model, "B96")).toEqual({ bottom: b });
+    expect(getBorder(model, "C96")).toEqual({ right: b, bottom: b });
+  });
+
+  test("Remove multiple rows before borders at the bottom of the sheet starting from the second column", () => {
+    const b = DEFAULT_BORDER_DESC;
+    setZoneBorders(model, { position: "external" }, ["B98:D100"]);
+    deleteRows(model, [0, 1, 2, 3]);
+    expect(getBorder(model, "B94")).toEqual({ left: b, top: b });
+    expect(getBorder(model, "C94")).toEqual({ top: b });
+    expect(getBorder(model, "D94")).toEqual({ top: b, right: b });
+    expect(getBorder(model, "B95")).toEqual({ left: b });
+    expect(getBorder(model, "D95")).toEqual({ right: b });
+    expect(getBorder(model, "B96")).toEqual({ bottom: b, left: b });
+    expect(getBorder(model, "C96")).toEqual({ bottom: b });
+    expect(getBorder(model, "D96")).toEqual({ right: b, bottom: b });
+  });
 });
 
 test("Cells that have undefined borders don't override borders of neighboring cells at import", () => {
@@ -647,26 +713,18 @@ test("Cells that have undefined borders don't override borders of neighboring ce
         colNumber: 26,
         rowNumber: 100,
         cells: {
-          B2: {
-            content: "5",
-            border: 1,
-          },
-          B1: {
-            content: "3",
-            border: 2,
-          },
-          A2: {
-            content: "3",
-            border: 2,
-          },
-          B3: {
-            content: "3",
-            border: 2,
-          },
-          C2: {
-            content: "3",
-            border: 2,
-          },
+          B2: { content: "5" },
+          B1: { content: "3" },
+          A2: { content: "3" },
+          B3: { content: "3" },
+          C2: { content: "3" },
+        },
+        borders: {
+          B2: 1,
+          B1: 2,
+          A2: 2,
+          B3: 2,
+          C2: 2,
         },
       },
     ],
@@ -721,5 +779,21 @@ describe("Borders formatting", () => {
       bottom: DEFAULT_BORDER_DESC,
       right: { style: "dashed", color: "#0000FF" },
     });
+  });
+});
+
+describe("Computed borders", () => {
+  test("SET_BORDER command recomputes the borders", () => {
+    const model = new Model();
+    expect(getComputedBorder(model, "A1")).toBeNull();
+    setBorders(model, "A1", { top: DEFAULT_BORDER_DESC });
+    expect(getComputedBorder(model, "A1")).not.toBeNull();
+  });
+
+  test("SET_ZONE_BORDERS command recomputes the borders", () => {
+    const model = new Model();
+    expect(getComputedBorder(model, "A1")).toBeNull();
+    setZoneBorders(model, { position: "all" }, ["A1"]);
+    expect(getComputedBorder(model, "A1")).not.toBeNull();
   });
 });

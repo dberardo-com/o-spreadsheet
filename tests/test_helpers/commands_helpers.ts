@@ -1,11 +1,21 @@
+import {
+  DEFAULT_SCORECARD_BASELINE_COLOR_DOWN,
+  DEFAULT_SCORECARD_BASELINE_COLOR_UP,
+} from "../../src/constants";
 import { isInside, lettersToNumber, toCartesian, toZone } from "../../src/helpers/index";
+import { DEFAULT_TABLE_CONFIG } from "../../src/helpers/table_presets";
 import { Model } from "../../src/model";
 import {
   AnchorZone,
+  Border,
   BorderData,
   ChartDefinition,
+  ChartWithAxisDefinition,
+  ClipboardContent,
   ClipboardPasteOptions,
+  Color,
   CreateSheetCommand,
+  CreateTableStyleCommand,
   DataValidationCriterion,
   Dimension,
   Direction,
@@ -18,14 +28,15 @@ import {
   Style,
   UID,
 } from "../../src/types";
-import { BarChartDefinition } from "../../src/types/chart/bar_chart";
+import { target, toRangeData, toRangesData } from "./helpers";
+
+import { ComboChartDefinition } from "../../src/types/chart/combo_chart";
 import { GaugeChartDefinition } from "../../src/types/chart/gauge_chart";
-import { LineChartDefinition } from "../../src/types/chart/line_chart";
-import { PieChartDefinition } from "../../src/types/chart/pie_chart";
 import { ScorecardChartDefinition } from "../../src/types/chart/scorecard_chart";
+import { WaterfallChartDefinition } from "../../src/types/chart/waterfall_chart";
 import { Image } from "../../src/types/image";
+import { CoreTableType, TableConfig } from "../../src/types/table";
 import { FigureSize } from "./../../src/types/figure";
-import { target, toRangesData } from "./helpers";
 
 /**
  * Dispatch an UNDO to the model
@@ -55,7 +66,7 @@ export function activateSheet(
  */
 export function createSheet(
   model: Model,
-  data: Partial<CreateSheetCommand & { activate: boolean }>
+  data: Partial<CreateSheetCommand & { activate: boolean; hidden: boolean; color: Color }>
 ) {
   const sheetId = data.sheetId || model.uuidGenerator.uuidv4();
   const result = model.dispatch("CREATE_SHEET", {
@@ -65,14 +76,24 @@ export function createSheet(
     rows: data.rows,
     name: data.name,
   });
+  if (data.hidden) {
+    hideSheet(model, sheetId);
+  }
   if (data.activate) {
     activateSheet(model, sheetId);
+  }
+  if (data.color) {
+    colorSheet(model, sheetId, data.color);
   }
   return result;
 }
 
 export function renameSheet(model: Model, sheetId: UID, name: string): DispatchResult {
   return model.dispatch("RENAME_SHEET", { sheetId, name });
+}
+
+export function colorSheet(model: Model, sheetId: UID, color: Color | undefined): DispatchResult {
+  return model.dispatch("COLOR_SHEET", { sheetId, color });
 }
 
 export function createSheetWithName(
@@ -129,7 +150,41 @@ export function createImage(
  */
 export function createChart(
   model: Model,
-  data: Partial<LineChartDefinition | BarChartDefinition | PieChartDefinition>,
+  data: { type: ChartDefinition["type"] } & Partial<ChartWithAxisDefinition>,
+  chartId?: UID,
+  sheetId?: UID
+) {
+  const id = chartId || model.uuidGenerator.uuidv4();
+  sheetId = sheetId || model.getters.getActiveSheetId();
+  const definition = {
+    ...data,
+    title: data.title || { text: "test" },
+    dataSets: ("dataSets" in data && data.dataSets) || [],
+    dataSetsHaveTitle:
+      "dataSetsHaveTitle" in data && data.dataSetsHaveTitle !== undefined
+        ? data.dataSetsHaveTitle
+        : true,
+    labelRange: "labelRange" in data ? data.labelRange : undefined,
+    verticalAxisPosition: ("verticalAxisPosition" in data && data.verticalAxisPosition) || "left",
+    background: data.background,
+    legendPosition: ("legendPosition" in data && data.legendPosition) || "top",
+    stacked: ("stacked" in data && data.stacked) || false,
+    labelsAsText: ("labelsAsText" in data && data.labelsAsText) || false,
+    aggregated: ("aggregated" in data && data.aggregated) || false,
+    cumulative: ("cumulative" in data && data.cumulative) || false,
+    showSubTotals: ("showSubTotals" in data && data.showSubTotals) || false,
+    showConnectorLines: ("showConnectorLines" in data && data.showConnectorLines) || false,
+  };
+  return model.dispatch("CREATE_CHART", {
+    id,
+    sheetId,
+    definition,
+  });
+}
+
+export function createComboChart(
+  model: Model,
+  data: Partial<ComboChartDefinition>,
   chartId?: UID,
   sheetId?: UID
 ) {
@@ -140,20 +195,22 @@ export function createChart(
     id,
     sheetId,
     definition: {
-      title: data.title || "test",
+      title: data.title || { text: "test" },
       dataSets: data.dataSets || [],
       dataSetsHaveTitle: data.dataSetsHaveTitle !== undefined ? data.dataSetsHaveTitle : true,
       labelRange: data.labelRange,
-      type: data.type || "bar",
+      type: "combo",
       background: data.background,
-      verticalAxisPosition: ("verticalAxisPosition" in data && data.verticalAxisPosition) || "left",
       legendPosition: data.legendPosition || "top",
-      stacked: ("stacked" in data && data.stacked) || false,
-      labelsAsText: ("labelsAsText" in data && data.labelsAsText) || false,
       aggregated: ("aggregated" in data && data.aggregated) || false,
-      cumulative: ("cumulative" in data && data.cumulative) || false,
     },
   });
+}
+
+export function createWaterfallChart(model: Model, def?: Partial<WaterfallChartDefinition>): UID {
+  createChart(model, { ...def, type: "waterfall" });
+  const sheetId = model.getters.getActiveSheetId();
+  return model.getters.getChartIds(sheetId)[0];
 }
 
 export function createScorecardChart(
@@ -170,14 +227,15 @@ export function createScorecardChart(
     sheetId,
     definition: {
       type: "scorecard",
-      title: data.title || "",
+      title: data.title || { text: "" },
       baseline: data.baseline || "",
       keyValue: data.keyValue || "",
       baselineDescr: data.baselineDescr || "",
       baselineMode: data.baselineMode || "difference",
-      baselineColorDown: data.baselineColorDown || "#DC6965",
-      baselineColorUp: data.baselineColorUp || "#00A04A",
+      baselineColorDown: data.baselineColorDown || DEFAULT_SCORECARD_BASELINE_COLOR_DOWN,
+      baselineColorUp: data.baselineColorUp || DEFAULT_SCORECARD_BASELINE_COLOR_UP,
       background: data.background,
+      humanize: data.humanize || false,
     },
   });
 }
@@ -197,7 +255,7 @@ export function createGaugeChart(
     definition: {
       type: "gauge",
       background: data.background,
-      title: data.title || "",
+      title: data.title || { text: "" },
       dataRange: data.dataRange || "",
       sectionRule: data.sectionRule || {
         rangeMin: "0",
@@ -210,10 +268,12 @@ export function createGaugeChart(
         lowerInflectionPoint: {
           type: "number",
           value: "33",
+          operator: "<=",
         },
         upperInflectionPoint: {
           type: "number",
           value: "66",
+          operator: "<=",
         },
       },
     },
@@ -279,11 +339,11 @@ export function paste(
 export function pasteFromOSClipboard(
   model: Model,
   range: string,
-  content: string,
+  content: ClipboardContent,
   pasteOption?: ClipboardPasteOptions
 ): DispatchResult {
   return model.dispatch("PASTE_FROM_OS_CLIPBOARD", {
-    text: content,
+    clipboardContent: content,
     target: target(range),
     pasteOption,
   });
@@ -528,6 +588,21 @@ export function setZoneBorders(model: Model, border: BorderData, xcs?: string[])
   });
 }
 
+export function setBorders(
+  model: Model,
+  xc: string,
+  border?: Border,
+  sheetId: UID = model.getters.getActiveSheetId()
+) {
+  const { col, row } = toCartesian(xc);
+  return model.dispatch("SET_BORDER", {
+    sheetId,
+    col,
+    row,
+    border,
+  });
+}
+
 /**
  * Clear a cell
  */
@@ -537,7 +612,18 @@ export function clearCell(
   sheetId: UID = model.getters.getActiveSheetId()
 ) {
   const { col, row } = toCartesian(xc);
-  model.dispatch("CLEAR_CELL", { col, row, sheetId });
+  return model.dispatch("CLEAR_CELL", { col, row, sheetId });
+}
+
+/**
+ * Clear cells in zones
+ */
+export function clearCells(
+  model: Model,
+  xcs: string[],
+  sheetId: UID = model.getters.getActiveSheetId()
+) {
+  return model.dispatch("CLEAR_CELLS", { target: xcs.map(toZone), sheetId });
 }
 
 /**
@@ -760,6 +846,7 @@ export function moveColumns(
   model: Model,
   target: string,
   columns: string[],
+  position: "before" | "after" = "before",
   sheetId: UID = model.getters.getActiveSheetId()
 ): DispatchResult {
   return model.dispatch("MOVE_COLUMNS_ROWS", {
@@ -767,6 +854,7 @@ export function moveColumns(
     base: lettersToNumber(target),
     dimension: "COL",
     elements: columns.map(lettersToNumber),
+    position,
   });
 }
 
@@ -774,6 +862,7 @@ export function moveRows(
   model: Model,
   target: number,
   rows: number[],
+  position: "before" | "after" = "before",
   sheetId: UID = model.getters.getActiveSheetId()
 ): DispatchResult {
   return model.dispatch("MOVE_COLUMNS_ROWS", {
@@ -781,6 +870,7 @@ export function moveRows(
     base: target,
     dimension: "ROW",
     elements: rows,
+    position,
   });
 }
 
@@ -863,15 +953,88 @@ export function unfreezeColumns(model: Model, sheetId: UID = model.getters.getAc
   });
 }
 
-export function createFilter(
+export function createTable(
   model: Model,
   range: string,
+  config?: Partial<TableConfig>,
+  tableType: CoreTableType = "static",
   sheetId: UID = model.getters.getActiveSheetId()
 ): DispatchResult {
   model.selection.selectTableAroundSelection();
-  return model.dispatch("CREATE_FILTER_TABLE", {
+  return model.dispatch("CREATE_TABLE", {
     sheetId,
-    target: target(range),
+    ranges: toRangesData(sheetId, range),
+    config: { ...DEFAULT_TABLE_CONFIG, ...config },
+    tableType,
+  });
+}
+
+export function createDynamicTable(
+  model: Model,
+  range: string,
+  config?: Partial<TableConfig>,
+  sheetId: UID = model.getters.getActiveSheetId()
+): DispatchResult {
+  return createTable(model, range, config, "dynamic", sheetId);
+}
+
+export function updateTableConfig(
+  model: Model,
+  range: string,
+  config: Partial<TableConfig>,
+  tableType?: CoreTableType,
+  sheetId: UID = model.getters.getActiveSheetId()
+): DispatchResult {
+  const zone = toZone(range);
+  const table = model.getters.getTable({ sheetId, col: zone.left, row: zone.top });
+  if (!table) {
+    throw new Error(`No table found at ${range}`);
+  }
+  return model.dispatch("UPDATE_TABLE", {
+    sheetId,
+    zone: table.range.zone,
+    config,
+    tableType,
+  });
+}
+
+export function updateTableZone(
+  model: Model,
+  range: string,
+  newZone: string,
+  tableType?: CoreTableType,
+  sheetId: UID = model.getters.getActiveSheetId()
+): DispatchResult {
+  const zone = toZone(range);
+  const table = model.getters.getTable({ sheetId, col: zone.left, row: zone.top });
+  if (!table) {
+    throw new Error(`No table found at ${range}`);
+  }
+  return model.dispatch("UPDATE_TABLE", {
+    sheetId,
+    zone: table.range.zone,
+    newTableRange: toRangeData(sheetId, newZone),
+    tableType,
+  });
+}
+
+export function resizeTable(
+  model: Model,
+  range: string,
+  newZone: string,
+  tableType?: CoreTableType,
+  sheetId: UID = model.getters.getActiveSheetId()
+): DispatchResult {
+  const zone = toZone(range);
+  const table = model.getters.getTable({ sheetId, col: zone.left, row: zone.top });
+  if (!table) {
+    throw new Error(`No table found at ${range}`);
+  }
+  return model.dispatch("RESIZE_TABLE", {
+    sheetId,
+    zone: table.range.zone,
+    newTableRange: toRangeData(sheetId, newZone),
+    tableType,
   });
 }
 
@@ -885,23 +1048,35 @@ export function updateFilter(
   return model.dispatch("UPDATE_FILTER", { col, row, sheetId, hiddenValues });
 }
 
-export function deleteFilter(
+export function deleteTable(
   model: Model,
   range: string,
   sheetId: UID = model.getters.getActiveSheetId()
 ): DispatchResult {
-  return model.dispatch("REMOVE_FILTER_TABLE", { sheetId, target: target(range) });
+  return model.dispatch("REMOVE_TABLE", { sheetId, target: target(range) });
 }
 
+export function createTableStyle(
+  model: Model,
+  tableStyleId: string,
+  style?: Partial<Omit<CreateTableStyleCommand, "type" | "styleId">>
+): DispatchResult {
+  return model.dispatch("CREATE_TABLE_STYLE", {
+    tableStyleId,
+    primaryColor: style?.primaryColor || "#FF0000",
+    templateName: style?.templateName || "mediumBandedBorders",
+    tableStyleName: style?.tableStyleName || tableStyleId,
+  });
+}
 export function setFormat(
   model: Model,
+  targetXc: string,
   format: string,
-  target = model.getters.getSelectedZones(),
   sheetId = model.getters.getActiveSheetId()
 ) {
-  model.dispatch("SET_FORMATTING", {
+  return model.dispatch("SET_FORMATTING", {
     sheetId,
-    target,
+    target: target(targetXc),
     format,
   });
 }
@@ -1068,4 +1243,14 @@ export function removeDataValidation(
   sheetId: UID = model.getters.getActiveSheetId()
 ) {
   return model.dispatch("REMOVE_DATA_VALIDATION_RULE", { sheetId, id });
+}
+
+export function insertPivot(
+  model: Model,
+  xc: string,
+  pivotId: UID = "1",
+  newSheetId: UID = "newSheet1"
+) {
+  setSelection(model, [xc]);
+  return model.dispatch("INSERT_NEW_PIVOT", { pivotId, newSheetId });
 }

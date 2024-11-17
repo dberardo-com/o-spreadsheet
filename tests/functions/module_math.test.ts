@@ -1,7 +1,8 @@
 import { Model } from "../../src";
 import { toNumber } from "../../src/functions/helpers";
 import { DEFAULT_LOCALE } from "../../src/types";
-import { setCellContent } from "../test_helpers/commands_helpers";
+import { setCellContent, updateLocale } from "../test_helpers/commands_helpers";
+import { FR_LOCALE } from "../test_helpers/constants";
 import { getEvaluatedCell } from "../test_helpers/getters_helpers";
 import {
   checkFunctionDoesntSpreadBeyondRange,
@@ -178,7 +179,7 @@ describe("ATAN2 formula", () => {
   });
 
   test.each([["0", "0"]])("take 2 parameter, return an error", (a, b) => {
-    expect(evaluateCell("A1", { A1: "=ATAN2(A2, A3)", A2: a, A3: b })).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!
+    expect(evaluateCell("A1", { A1: "=ATAN2(A2, A3)", A2: a, A3: b })).toBe("#DIV/0!");
   });
 });
 
@@ -452,7 +453,7 @@ describe("COT formula", () => {
   });
 
   test.each([["0"]])("take 1 parameter, return an error", (a) => {
-    expect(evaluateCell("A1", { A1: "=COT(A2)", A2: a })).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!!
+    expect(evaluateCell("A1", { A1: "=COT(A2)", A2: a })).toBe("#DIV/0!");
   });
 });
 
@@ -468,7 +469,7 @@ describe("COTH formula", () => {
   });
 
   test.each([["0"]])("take 1 parameter(s), return an error", (a) => {
-    expect(evaluateCell("A1", { A1: "=COTH(A2)", A2: a })).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!!
+    expect(evaluateCell("A1", { A1: "=COTH(A2)", A2: a })).toBe("#DIV/0!");
   });
 });
 
@@ -530,6 +531,15 @@ describe("COUNTBLANK formula", () => {
     expect(gridResult.A2).toBe(4);
     expect(gridResult.A3).toBe(2);
     expect(gridResult.B3).toBe(2);
+  });
+
+  test("COUNTBLANK accepts errors in parameters", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "=KABOUM",
+      A2: "1",       B2: "=1/0",
+    };
+    expect(evaluateCell("A3", { A3: "=COUNTBLANK(A1:B2)", ...grid })).toBe(1);
   });
 });
 
@@ -813,6 +823,91 @@ describe("COUNTIF formula", () => {
     expect(grid5Result.J81).toBe(0);
     expect(grid5Result.J82).toBe(1);
   });
+
+  test("COUNTIF does not accept errors in first parameter", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "=KABOUM", B1: "42",
+      A2: "42",      B2: "=1/0",
+    };
+    expect(evaluateCell("A3", { A3: "=COUNTIF(A1:B2, 42)", ...grid })).toBe(2);
+  });
+
+  // @compatibility: should be able to count errors !
+  test("COUNTIF can't count errors", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "40", B1: "41",
+      A2: "42", B2: "43",
+    };
+    expect(evaluateCell("A3", { A3: "=COUNTIF(A1:B2, KABOUM)", ...grid })).toBe("#BAD_EXPR"); // @compatibility: should be 4
+  });
+
+  test("COUNTIF on empty range", () => {
+    const grid = {
+      A1: '=COUNTIF(B1, "<>Hi")',
+      A2: '=COUNTIF(B1, "=Hi")',
+      A3: '=COUNTIF(B1, "*")',
+    };
+    const gridResult = evaluateGrid(grid);
+    expect(gridResult.A1).toBe(1);
+    expect(gridResult.A2).toBe(0);
+    expect(gridResult.A3).toBe(0);
+  });
+
+  test("COUNTIF with date predicate", () => {
+    const grid = {
+      A1: "01/01/2024",
+      A2: "01/02/2024",
+      A3: '="01/01/2024"',
+      B1: '=COUNTIF(A1, "<01/02/2024")',
+      B2: '=COUNTIF(A2, "<01/02/2024")',
+      B3: '=COUNTIF(A2, "<=01/02/2024")',
+      B4: '=COUNTIF(A3, "01/01/2024")',
+      B5: '=COUNTIF(A3, "<=01/01/2024")',
+      B6: '=COUNTIF(A3, "01/2024")',
+    };
+    expect(evaluateGrid(grid)).toMatchObject({
+      B1: 1,
+      B2: 0,
+      B3: 1,
+      B4: 1,
+      B5: 0,
+      B6: 1,
+    });
+  });
+
+  test("COUNTIF with string against a date predicate", () => {
+    const grid = {
+      A1: "hello",
+      B1: '=COUNTIF(A1, "01/02/2024")',
+    };
+    expect(evaluateGrid(grid)).toMatchObject({
+      B1: 0,
+    });
+  });
+
+  test("COUNTIF with number against a date predicate", () => {
+    const grid = {
+      A1: "0",
+      B1: '=COUNTIF(A1, "12/30/1899")',
+      B2: '=COUNTIF(A1, "<=12/30/1899")',
+    };
+    expect(evaluateGrid(grid)).toMatchObject({
+      B1: 1,
+      B2: 1,
+    });
+  });
+
+  test("COUNTIF date predicates are localized", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "01/02/2024");
+    setCellContent(model, "A2", '=COUNTIF(A1, "<02/01/2024")');
+    expect(getEvaluatedCell(model, "A2").value).toBe(1);
+
+    updateLocale(model, FR_LOCALE);
+    expect(getEvaluatedCell(model, "A2").value).toBe(0);
+  });
 });
 
 describe("COUNTIFS formula", () => {
@@ -850,6 +945,38 @@ describe("COUNTIFS formula", () => {
     expect(gridResult.D7).toBe(1);
     expect(gridResult.D8).toBe(4);
     expect(gridResult.D9).toBe(4);
+  });
+
+  test("COUNTIFS does not accept errors in 2n+1 parameters", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "=KABOUM", B1: "42",
+      A2: "42",      B2: "=1/0",
+    };
+    expect(evaluateCell("A3", { A3: "=COUNTIFS(A1:B2, 42)", ...grid })).toBe(2);
+  });
+
+  // @compatibility: should be able to count errors !
+  test("COUNTIFS does not accept errors on 2n parameters", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "40", B1: "41",
+      A2: "42", B2: "43",
+    };
+    expect(evaluateCell("A3", { A3: "=COUNTIFS(A1:B2, KABOUM)", ...grid })).toBe("#BAD_EXPR"); // @compatibility: should be 4
+  });
+
+  test("COUNTIFS on empty range", () => {
+    const grid = {
+      A1: "Alice",
+      A2: '=COUNTIFS(A1, "Alice", B1, "<>Hi")',
+      A3: '=COUNTIFS(A1, "Alice", B1, "=Hi")',
+      A4: '=COUNTIFS(A1, "Alice", B1, "*")',
+    };
+    const gridResult = evaluateGrid(grid);
+    expect(gridResult.A2).toBe(1);
+    expect(gridResult.A3).toBe(0);
+    expect(gridResult.A4).toBe(0);
   });
 });
 
@@ -973,6 +1100,16 @@ describe("COUNTUNIQUE formula", () => {
     expect(gridResult.D1).toBe(2);
     expect(gridResult.E1).toBe(3);
   });
+
+  // @compatibility: should count errors of the same type as being the same
+  test("COUNTUNIQUE counts each error as unique", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "=KABOUM_1", B1: "=KABOUM_2",
+      A2: "42",        B2: "=KABOUM_3",
+    };
+    expect(evaluateCell("A3", { A3: "=COUNTUNIQUE(A1:B2)", ...grid })).toBe(2);
+  });
 });
 
 describe("COUNTUNIQUEIFS formula", () => {
@@ -1004,6 +1141,53 @@ describe("COUNTUNIQUEIFS formula", () => {
     expect(gridResult.A15).toBe(3);
     expect(gridResult.A16).toBe(2);
   });
+
+  // @compatibility: should count errors of the same type as being the same
+  test("COUNTUNIQUEIFS counts each error as unique", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "=KABOUM_1", B1: "1",
+      A2: "=KABOUM_2", B2: "1",
+      A3: "42"       , B3: "1",
+    };
+    expect(evaluateCell("A4", { A4: "=COUNTUNIQUEIFS(A1:A3, B1:B3, 1)", ...grid })).toBe(2);
+  });
+
+  test("COUNTUNIQUEIFS does not accept errors in 2n+2 parameters", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "40", B1: "1",
+      A2: "41", B2: "1",
+      A3: "42", B3: "=KABOUM",
+    };
+    expect(evaluateCell("A4", { A4: "=COUNTUNIQUEIFS(A1:A3, B1:B3, 1)", ...grid })).toBe(2);
+  });
+
+  // @compatibility: should be able to count errors !
+  test("COUNTUNIQUEIFS does not accept errors on 2n+3 parameters", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "40", B1: "1",
+      A2: "41", B2: "1",
+      A3: "42", B3: "1",
+    };
+    expect(evaluateCell("A4", { A4: "=COUNTUNIQUEIFS(A1:A3, B1:B3, KABOUM)", ...grid })).toBe(
+      "#BAD_EXPR"
+    ); // @compatibility: should be 0
+  });
+
+  test("COUNTUNIQUEIFS on empty range", () => {
+    const grid = {
+      A1: "Alice",
+      A2: '=COUNTUNIQUEIFS(A1, A1, "Alice", B1, "<>Hi")',
+      A3: '=COUNTUNIQUEIFS(A1, A1, "Alice", B1, "=Hi")',
+      A4: '=COUNTUNIQUEIFS(A1, A1, "Alice", B1, "*")',
+    };
+    const gridResult = evaluateGrid(grid);
+    expect(gridResult.A2).toBe(1);
+    expect(gridResult.A3).toBe(0);
+    expect(gridResult.A4).toBe(0);
+  });
 });
 
 describe("CSC formula", () => {
@@ -1018,7 +1202,7 @@ describe("CSC formula", () => {
   });
 
   test.each([["0"]])("take 1 parameter(s), return an error", (a) => {
-    expect(evaluateCell("A1", { A1: "=CSC(A2)", A2: a })).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!
+    expect(evaluateCell("A1", { A1: "=CSC(A2)", A2: a })).toBe("#DIV/0!");
   });
 });
 
@@ -1033,7 +1217,7 @@ describe("CSCH formula", () => {
   });
 
   test.each([["0"]])("take 1 parameter, return an error", (a) => {
-    expect(evaluateCell("A1", { A1: "=CSCH(A2)", A2: a })).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!
+    expect(evaluateCell("A1", { A1: "=CSCH(A2)", A2: a })).toBe("#DIV/0!");
   });
 });
 
@@ -1381,6 +1565,20 @@ describe("FLOOR / FLOOR.MATH / FLOOR.PRECISE formulas", () => {
   );
 });
 
+describe("INT formula", () => {
+  test.each([
+    ["0", 0],
+    ["6", 6],
+    ["6.7", 6],
+    ["7.89", 7],
+    ["-6", -6],
+    ["-6.7", -7],
+    ["-7.89", -8],
+  ])("return the nearest rounded down integer", (a, expected) => {
+    expect(evaluateCell("A1", { A1: "=INT(A2)", A2: a })).toBe(expected);
+  });
+});
+
 describe("ISEVEN formula", () => {
   test.each([
     ["-3", false],
@@ -1529,36 +1727,36 @@ describe("MOD formula", () => {
     ["0", "0"],
     ["2.2", "0"],
   ])("take 2 parameters, return error on parameter 2", (a, b) => {
-    expect(evaluateCell("A1", { A1: "=MOD(A2, A3)", A2: a, A3: b })).toBe("#ERROR"); // @compatibility: on google sheets, return #VALUE!
+    expect(evaluateCell("A1", { A1: "=MOD(A2, A3)", A2: a, A3: b })).toBe("#DIV/0!");
   });
 
   test("special value testing", () => {
     expect(evaluateCell("A1", { A1: "=MOD()" })).toBe("#BAD_EXPR"); // @compatibility: on google sheets, return #N/A
-    expect(evaluateCell("A1", { A1: "=MOD( , )" })).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!
+    expect(evaluateCell("A1", { A1: "=MOD( , )" })).toBe("#DIV/0!");
     expect(evaluateCell("A1", { A1: "=MOD(42, 12)" })).toBe(6);
     expect(evaluateCell("A1", { A1: "=MOD( , 12)" })).toBe(0);
-    expect(evaluateCell("A1", { A1: "=MOD(42, )" })).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!
+    expect(evaluateCell("A1", { A1: "=MOD(42, )" })).toBe("#DIV/0!");
     expect(evaluateCell("A1", { A1: "=MOD(42.42, TRUE)" })).toBeCloseTo(0.42, 9);
-    expect(evaluateCell("A1", { A1: "=MOD(42, FALSE)" })).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!
+    expect(evaluateCell("A1", { A1: "=MOD(42, FALSE)" })).toBe("#DIV/0!");
     expect(evaluateCell("A1", { A1: "=MOD(TRUE, 10)" })).toBe(1);
     expect(evaluateCell("A1", { A1: "=MOD(FALSE, 10)" })).toBe(0);
 
-    expect(evaluateCell("A1", { A1: '=MOD("" , "")' })).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!
+    expect(evaluateCell("A1", { A1: '=MOD("" , "")' })).toBe("#DIV/0!");
     expect(evaluateCell("A1", { A1: '=MOD("" , 12)' })).toBe(0);
     expect(evaluateCell("A1", { A1: '=MOD(" " , 12)' })).toBe("#ERROR"); // @compatibility: on google sheets, return #VALUE!
     expect(evaluateCell("A1", { A1: '=MOD("42", 12)' })).toBe(6);
     expect(evaluateCell("A1", { A1: '=MOD("42", "12")' })).toBe(6);
-    expect(evaluateCell("A1", { A1: '=MOD("42", "")' })).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!
+    expect(evaluateCell("A1", { A1: '=MOD("42", "")' })).toBe("#DIV/0!");
 
-    expect(evaluateCell("A1", { A1: "=MOD(A2, A3)", A2: "", A3: "" })).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!
+    expect(evaluateCell("A1", { A1: "=MOD(A2, A3)", A2: "", A3: "" })).toBe("#DIV/0!");
     expect(evaluateCell("A1", { A1: "=MOD(A2, A3)", A2: "42", A3: "12" })).toBe(6);
     expect(evaluateCell("A1", { A1: "=MOD(A2, A3)", A2: "", A3: "12" })).toBe(0);
-    expect(evaluateCell("A1", { A1: "=MOD(A2, A3)", A2: "42", A3: "" })).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!
+    expect(evaluateCell("A1", { A1: "=MOD(A2, A3)", A2: "42", A3: "" })).toBe("#DIV/0!");
     expect(evaluateCell("A1", { A1: "=MOD(A2, A3)", A2: "42.42", A3: "TRUE" })).toBeCloseTo(
       0.42,
       9
     );
-    expect(evaluateCell("A1", { A1: "=MOD(A2, A3)", A2: "42.42", A3: "FALSE" })).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!
+    expect(evaluateCell("A1", { A1: "=MOD(A2, A3)", A2: "42.42", A3: "FALSE" })).toBe("#DIV/0!");
     expect(evaluateCell("A1", { A1: "=MOD(A2, A3)", A2: "TRUE", A3: "10" })).toBe(1);
     expect(evaluateCell("A1", { A1: "=MOD(A2, A3)", A2: "FALSE", A3: "10" })).toBe(0);
 
@@ -1840,6 +2038,11 @@ describe("PRODUCT formula", () => {
     expect(evaluateCellFormat("A1", { A1: "=PRODUCT(A2:A3)", A2: "42%", A3: "1" })).toBe("0%");
     expect(evaluateCellFormat("A1", { A1: "=PRODUCT(A2:A3)", A2: "1", A3: "42%" })).toBe("");
   });
+
+  test("PRODUCT does not accept error in values", () => {
+    expect(evaluateCell("A1", { A1: "=PRODUCT(1, KABOUM)" })).toBe("#BAD_EXPR");
+    expect(evaluateCell("A1", { A1: "=PRODUCT(1, A2)", A2: "=KABOUM" })).toBe("#BAD_EXPR");
+  });
 });
 
 describe("RAND formula", () => {
@@ -1885,17 +2088,17 @@ describe("RANDARRAY function", () => {
     setCellContent(model, "A1", "=RANDARRAY(2)");
     expect(getEvaluatedCell(model, "A1").value).toBeBetween(0, 1);
     expect(getEvaluatedCell(model, "A2").value).toBeBetween(0, 1);
-    expect(getEvaluatedCell(model, "B1").value).toBe("");
-    expect(getEvaluatedCell(model, "B21").value).toBe("");
+    expect(getEvaluatedCell(model, "B1").value).toBe(null);
+    expect(getEvaluatedCell(model, "B21").value).toBe(null);
   });
 
   test("Random columns", () => {
     const model = new Model();
     setCellContent(model, "A1", "=RANDARRAY(1, 2)");
     expect(getEvaluatedCell(model, "A1").value).toBeBetween(0, 1);
-    expect(getEvaluatedCell(model, "A2").value).toBe("");
+    expect(getEvaluatedCell(model, "A2").value).toBe(null);
     expect(getEvaluatedCell(model, "B1").value).toBeBetween(0, 1);
-    expect(getEvaluatedCell(model, "B2").value).toBe("");
+    expect(getEvaluatedCell(model, "B2").value).toBe(null);
   });
 
   test("Random rows and columns", () => {
@@ -2242,6 +2445,90 @@ describe("SECH formula", () => {
   });
 });
 
+describe("SEQUENCE formula", () => {
+  test("only positive rows parameter", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "=SEQUENCE(3)");
+    expect(getRangeValuesAsMatrix(model, "A1:A3")).toEqual([[1], [2], [3]]);
+    expect(checkFunctionDoesntSpreadBeyondRange(model, "A1:A3")).toBeTruthy();
+  });
+
+  test("rows and step", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "=SEQUENCE(3,,,2)");
+    expect(getRangeValuesAsMatrix(model, "A1:A3")).toEqual([[1], [3], [5]]);
+    expect(checkFunctionDoesntSpreadBeyondRange(model, "A1:A3")).toBeTruthy();
+  });
+
+  test("rows and negative step", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "=SEQUENCE(4,,,-1)");
+    expect(getRangeValuesAsMatrix(model, "A1:A4")).toEqual([[1], [0], [-1], [-2]]);
+    expect(checkFunctionDoesntSpreadBeyondRange(model, "A1:A4")).toBeTruthy();
+  });
+
+  test("step can be zero", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "=SEQUENCE(3,,,0)");
+    expect(getRangeValuesAsMatrix(model, "A1:A3")).toEqual([[1], [1], [1]]);
+    expect(checkFunctionDoesntSpreadBeyondRange(model, "A1:A3")).toBeTruthy();
+  });
+
+  test("step can be omitted", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "=SEQUENCE(3,,,)");
+    expect(getRangeValuesAsMatrix(model, "A1:A3")).toEqual([[1], [2], [3]]);
+    expect(checkFunctionDoesntSpreadBeyondRange(model, "A1:A3")).toBeTruthy();
+  });
+
+  test("positive rows and columns parameters", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "=SEQUENCE(3, 4)");
+    expect(getRangeValuesAsMatrix(model, "A1:D3")).toEqual([
+      [1, 2, 3, 4],
+      [5, 6, 7, 8],
+      [9, 10, 11, 12],
+    ]);
+    expect(checkFunctionDoesntSpreadBeyondRange(model, "A1:D3")).toBeTruthy();
+  });
+
+  test("rows, columns and step parameters", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "=SEQUENCE(3,4,,2)");
+    expect(getRangeValuesAsMatrix(model, "A1:D3")).toEqual([
+      [1, 3, 5, 7],
+      [9, 11, 13, 15],
+      [17, 19, 21, 23],
+    ]);
+    expect(checkFunctionDoesntSpreadBeyondRange(model, "A1:D3")).toBeTruthy();
+  });
+
+  test("rows, columns, start and step parameters", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "=SEQUENCE(3,2,2,2)");
+    expect(getRangeValuesAsMatrix(model, "A1:B3")).toEqual([
+      [2, 4],
+      [6, 8],
+      [10, 12],
+    ]);
+    expect(checkFunctionDoesntSpreadBeyondRange(model, "A1:B3")).toBeTruthy();
+  });
+
+  test("float rows and columns parameters", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "=SEQUENCE(1.6, 2.9)");
+    expect(getRangeValuesAsMatrix(model, "A1:B1")).toEqual([[1, 2]]);
+    expect(checkFunctionDoesntSpreadBeyondRange(model, "A1:B1")).toBeTruthy();
+  });
+
+  test("rows and columns parameters not positive", () => {
+    expect(evaluateCell("A1", { A1: "=SEQUENCE(-1, 1)" })).toBe("#ERROR");
+    expect(evaluateCell("A1", { A1: "=SEQUENCE(1, -1)" })).toBe("#ERROR");
+    expect(evaluateCell("A1", { A1: "=SEQUENCE(0, 1)" })).toBe("#ERROR");
+    expect(evaluateCell("A1", { A1: "=SEQUENCE(1, 0)" })).toBe("#ERROR");
+  });
+});
+
 describe("SIN formula", () => {
   test.each([
     ["0", 0],
@@ -2453,6 +2740,11 @@ describe("SUM formula", () => {
     expect(evaluateCellFormat("A1", { A1: "=SUM(A2:A3)", A2: "42%", A3: "1" })).toBe("0%");
     expect(evaluateCellFormat("A1", { A1: "=SUM(A2:A3)", A2: "1", A3: "42%" })).toBe("");
   });
+
+  test("SUM does not accept error in values", () => {
+    expect(evaluateCell("A1", { A1: "=SUM(1, KABOUM)" })).toBe("#BAD_EXPR");
+    expect(evaluateCell("A1", { A1: "=SUM(1, A2)", A2: "=KABOUM" })).toBe("#BAD_EXPR");
+  });
 });
 
 describe("SUMIF formula", () => {
@@ -2473,6 +2765,7 @@ describe("SUMIF formula", () => {
       A13: '=SUMIF(B1:B8, ">=10", B1:B8)',
       A14: '=SUMIF(B1:B8, ">=10")',
       A15: '=SUMIF(A1:A8, "G*", B1:B8)',
+      A16: '=SUMIF(A1:A8, "G*", B2:B8)',
     };
 
     const gridResult = evaluateGrid(grid);
@@ -2480,6 +2773,26 @@ describe("SUMIF formula", () => {
     expect(gridResult.A13).toBe(113);
     expect(gridResult.A14).toBe(113);
     expect(gridResult.A15).toBe(72);
+    expect(gridResult.A16).toBe(39);
+  });
+
+  test("SUMIF does not accept errors in first parameter", () => {
+    // prettier-ignore
+    const grid = {
+        A1: "=KABOUM", B1: "42",
+        A2: "42",      B2: "=1/0",
+      };
+    expect(evaluateCell("A3", { A3: "=SUMIF(A1:B2, 42)", ...grid })).toBe(84);
+  });
+
+  // @compatibility: should be able to accept errors !
+  test("SUMIF does not accept error on second parameter", () => {
+    // prettier-ignore
+    const grid = {
+        A1: "40", B1: "42",
+        A2: "41", B2: "43",
+      };
+    expect(evaluateCell("A3", { A3: "=SUMIF(A1:A2, KABOUM, B1:B2)", ...grid })).toBe("#BAD_EXPR"); // @compatibility: should be 4
   });
 });
 
@@ -2511,6 +2824,36 @@ describe("SUMIFS formula", () => {
     expect(gridResult.A13).toBe(90);
     expect(gridResult.A14).toBe(106);
     expect(gridResult.A15).toBe(90);
+  });
+  test("SUMIFS accepts error in first parameter", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "=KABOUM_1", B1: "1",
+      A2: "=KABOUM_2", B2: "1",
+      A3: "42"       , B3: "24",
+    };
+    expect(evaluateCell("A4", { A4: "=SUMIFS(A1:A3, B1:B3, 24)", ...grid })).toBe(42);
+  });
+
+  test("SUMIFS does not accept errors in 2n+2 parameters", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "40", B1: "1",
+      A2: "41", B2: "1",
+      A3: "42", B3: "=KABOUM",
+    };
+    expect(evaluateCell("A4", { A4: "=SUMIFS(A1:A3, B1:B3, 1)", ...grid })).toBe(81);
+  });
+
+  // @compatibility: should be able to count errors !
+  test("SUMIFS does not accept errors on 2n+3 parameters", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "40", B1: "1",
+      A2: "41", B2: "1",
+      A3: "42", B3: "1",
+    };
+    expect(evaluateCell("A4", { A4: "=SUMIFS(A1:A3, B1:B3, KABOUM)", ...grid })).toBe("#BAD_EXPR"); // @compatibility: should be 0
   });
 });
 

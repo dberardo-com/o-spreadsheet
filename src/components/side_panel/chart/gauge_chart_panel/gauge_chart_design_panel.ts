@@ -1,6 +1,5 @@
-import { Component, useExternalListener, useState } from "@odoo/owl";
+import { Component, useState } from "@odoo/owl";
 import { deepCopy } from "../../../../helpers/index";
-import { _t } from "../../../../translation";
 import { GaugeChartDefinition, SectionRule } from "../../../../types/chart/gauge_chart";
 import {
   Color,
@@ -11,8 +10,11 @@ import {
 } from "../../../../types/index";
 import { css } from "../../../helpers/css";
 import { ChartTerms } from "../../../translations_terms";
-import { ValidationMessages } from "../../../validation_messages/validation_messages";
-import { ColorPickerWidget } from "./../../../color_picker/color_picker_widget";
+import { SidePanelCollapsible } from "../../components/collapsible/side_panel_collapsible";
+import { RoundColorPicker } from "../../components/round_color_picker/round_color_picker";
+import { Section } from "../../components/section/section";
+import { ChartErrorSection } from "../building_blocks/error_section/error_section";
+import { GeneralDesignEditor } from "../building_blocks/general_design/general_design_editor";
 
 css/* scss */ `
   .o-gauge-color-set {
@@ -24,12 +26,22 @@ css/* scss */ `
       font-size: 12px;
       line-height: 18px;
       width: 100%;
+      font-size: 12px;
+    }
+
+    td {
+      box-sizing: border-box;
+      height: 30px;
+      padding: 6px 0;
     }
     th.o-gauge-color-set-colorPicker {
       width: 8%;
     }
     th.o-gauge-color-set-text {
-      width: 40%;
+      width: 25%;
+    }
+    th.o-gauge-color-set-operator {
+      width: 10%;
     }
     th.o-gauge-color-set-value {
       width: 22%;
@@ -46,40 +58,41 @@ css/* scss */ `
   }
 `;
 
-type GaugeMenu =
-  | "backgroundColor"
-  | "sectionColor-lowerColor"
-  | "sectionColor-middleColor"
-  | "sectionColor-upperColor";
-
-interface Props {
-  figureId: UID;
-  definition: GaugeChartDefinition;
-  canUpdateChart: (figureId: UID, definition: Partial<GaugeChartDefinition>) => DispatchResult;
-  updateChart: (figureId: UID, definition: Partial<GaugeChartDefinition>) => DispatchResult;
-}
-
 interface PanelState {
-  title: string;
-  openedMenu?: GaugeMenu;
   sectionRuleDispatchResult?: DispatchResult;
   sectionRule: SectionRule;
 }
 
+interface Props {
+  figureId: UID;
+  definition: GaugeChartDefinition;
+  canUpdateChart: (figureID: UID, definition: Partial<GaugeChartDefinition>) => DispatchResult;
+  updateChart: (figureId: UID, definition: Partial<GaugeChartDefinition>) => DispatchResult;
+}
+
 export class GaugeChartDesignPanel extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-GaugeChartDesignPanel";
-  static components = { ColorPickerWidget, ValidationMessages };
+  static components = {
+    SidePanelCollapsible,
+    Section,
+    RoundColorPicker,
+    GeneralDesignEditor,
+    ChartErrorSection,
+  };
+  static props = {
+    figureId: String,
+    definition: Object,
+    updateChart: Function,
+    canUpdateChart: { type: Function, optional: true },
+  };
 
-  private state: PanelState = useState({
-    title: "",
-    openedMenu: undefined,
-    sectionRuleDispatchResult: undefined,
-    sectionRule: deepCopy(this.props.definition.sectionRule),
-  });
+  protected state!: PanelState;
 
   setup() {
-    this.state.title = _t(this.props.definition.title);
-    useExternalListener(window, "click", this.closeMenus);
+    this.state = useState<PanelState>({
+      sectionRuleDispatchResult: undefined,
+      sectionRule: deepCopy(this.props.definition.sectionRule),
+    });
   }
 
   get designErrorMessages(): string[] {
@@ -87,19 +100,6 @@ export class GaugeChartDesignPanel extends Component<Props, SpreadsheetChildEnv>
     return cancelledReasons.map(
       (error) => ChartTerms.Errors[error] || ChartTerms.Errors.Unexpected
     );
-  }
-
-  updateBackgroundColor(color: Color) {
-    this.state.openedMenu = undefined;
-    this.props.updateChart(this.props.figureId, {
-      background: color,
-    });
-  }
-
-  updateTitle() {
-    this.props.updateChart(this.props.figureId, {
-      title: this.state.title,
-    });
   }
 
   isRangeMinInvalid() {
@@ -152,21 +152,15 @@ export class GaugeChartDesignPanel extends Component<Props, SpreadsheetChildEnv>
     const sectionRule = deepCopy(this.state.sectionRule);
     sectionRule.colors[target] = color;
     this.updateSectionRule(sectionRule);
-    this.closeMenus();
-  }
-
-  toggleMenu(menu: GaugeMenu) {
-    const isSelected: boolean = this.state.openedMenu === menu;
-    this.closeMenus();
-    if (!isSelected) {
-      this.state.openedMenu = menu;
-    }
   }
 
   updateSectionRule(sectionRule: SectionRule) {
     this.state.sectionRuleDispatchResult = this.props.updateChart(this.props.figureId, {
       sectionRule,
     });
+    if (this.state.sectionRuleDispatchResult.isSuccessful) {
+      this.state.sectionRule = deepCopy(sectionRule);
+    }
   }
 
   canUpdateSectionRule(sectionRule: SectionRule) {
@@ -174,15 +168,4 @@ export class GaugeChartDesignPanel extends Component<Props, SpreadsheetChildEnv>
       sectionRule,
     });
   }
-
-  private closeMenus() {
-    this.state.openedMenu = undefined;
-  }
 }
-
-GaugeChartDesignPanel.props = {
-  figureId: String,
-  definition: Object,
-  updateChart: Function,
-  canUpdateChart: Function,
-};

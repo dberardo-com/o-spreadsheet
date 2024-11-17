@@ -22,8 +22,10 @@ export function getDefaultCellHeight(
   cell: Cell | undefined,
   colSize: number
 ) {
-  if (!cell || !cell.content) return DEFAULT_CELL_HEIGHT;
-  const maxWidth = cell.style?.wrapping ? colSize - 2 * MIN_CELL_TEXT_MARGIN : undefined;
+  if (!cell || (!cell.isFormula && !cell.content)) {
+    return DEFAULT_CELL_HEIGHT;
+  }
+  const maxWidth = cell.style?.wrapping === "wrap" ? colSize - 2 * MIN_CELL_TEXT_MARGIN : undefined;
 
   const numberOfLines = cell.isFormula
     ? 1
@@ -34,32 +36,86 @@ export function getDefaultCellHeight(
   return computeTextLinesHeight(fontSize, numberOfLines) + 2 * PADDING_AUTORESIZE_VERTICAL;
 }
 
+export function getDefaultContextFont(
+  fontSize: number,
+  bold: boolean | undefined = false,
+  italic: boolean | undefined = false
+): string {
+  const italicStr = italic ? "italic" : "";
+  const weight = bold ? "bold" : "";
+  return `${italicStr} ${weight} ${fontSize}px ${DEFAULT_FONT}`;
+}
+
 const textWidthCache: Record<string, Record<string, number>> = {};
 
-export function computeTextWidth(context: CanvasRenderingContext2D, text: string, style: Style) {
-  const font = computeTextFont(style);
+export function computeTextWidth(
+  context: CanvasRenderingContext2D,
+  text: string,
+  style: Style,
+  fontUnit: "px" | "pt" = "pt"
+) {
+  const font = computeTextFont(style, fontUnit);
+  context.save();
+  context.font = font;
+  const width = computeCachedTextWidth(context, text);
+  context.restore();
+  return width;
+}
+
+export function computeCachedTextWidth(context: CanvasRenderingContext2D, text: string) {
+  const font = context.font;
   if (!textWidthCache[font]) {
     textWidthCache[font] = {};
   }
   if (textWidthCache[font][text] === undefined) {
-    context.save();
-    context.font = font;
     const textWidth = context.measureText(text).width;
-    context.restore();
     textWidthCache[font][text] = textWidth;
   }
   return textWidthCache[font][text];
+}
+
+const textDimensionsCache: Record<string, Record<string, { width: number; height: number }>> = {};
+
+export function computeTextDimension(
+  context: CanvasRenderingContext2D,
+  text: string,
+  style: Style,
+  fontUnit: "px" | "pt" = "pt"
+): { width: number; height: number } {
+  const font = computeTextFont(style, fontUnit);
+  context.save();
+  context.font = font;
+  const dimensions = computeCachedTextDimension(context, text);
+  context.restore();
+  return dimensions;
+}
+
+function computeCachedTextDimension(
+  context: CanvasRenderingContext2D,
+  text: string
+): { width: number; height: number } {
+  const font = context.font;
+  if (!textDimensionsCache[font]) {
+    textDimensionsCache[font] = {};
+  }
+  if (textDimensionsCache[font][text] === undefined) {
+    const measure = context.measureText(text);
+    const width = measure.width;
+    const height = measure.fontBoundingBoxAscent + measure.fontBoundingBoxDescent;
+    textDimensionsCache[font][text] = { width, height };
+  }
+  return textDimensionsCache[font][text];
 }
 
 export function fontSizeInPixels(fontSize: number) {
   return Math.round((fontSize * 96) / 72);
 }
 
-export function computeTextFont(style: Style): string {
+export function computeTextFont(style: Style, fontUnit: "px" | "pt" = "pt"): string {
   const italic = style.italic ? "italic " : "";
   const weight = style.bold ? "bold" : DEFAULT_FONT_WEIGHT;
-  const size = computeTextFontSizeInPixels(style);
-  return `${italic}${weight} ${size}px ${DEFAULT_FONT}`;
+  const size = fontUnit === "pt" ? computeTextFontSizeInPixels(style) : style.fontSize;
+  return `${italic}${weight} ${size ?? DEFAULT_FONT_SIZE}px ${DEFAULT_FONT}`;
 }
 
 export function computeTextFontSizeInPixels(style?: Style): number {
@@ -217,6 +273,29 @@ export function toLowerCase(str: string | undefined): string {
 const pxRegex = /([0-9\.]*)px/;
 export function getContextFontSize(font: string): Pixel {
   return Number(font.match(pxRegex)?.[1]);
+}
+
+// Inspired from https://stackoverflow.com/a/10511598
+export function clipTextWithEllipsis(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number
+) {
+  let width = computeCachedTextWidth(ctx, text);
+  if (width <= maxWidth) {
+    return text;
+  }
+  const ellipsis = "…";
+  const ellipsisWidth = computeCachedTextWidth(ctx, ellipsis);
+  if (width <= ellipsisWidth) {
+    return text;
+  }
+  let len = text.length;
+  while (width >= maxWidth - ellipsisWidth && len-- > 0) {
+    text = text.substring(0, len);
+    width = computeCachedTextWidth(ctx, text);
+  }
+  return text + ellipsis;
 }
 
 export function drawDecoratedText(

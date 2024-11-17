@@ -3,8 +3,8 @@ import {
   DEFAULT_SCORECARD_BASELINE_COLOR_UP,
   DEFAULT_SCORECARD_BASELINE_MODE,
 } from "../../../constants";
+import { isEvaluationError } from "../../../functions/helpers";
 import { chartRegistry } from "../../../registries/chart_types";
-import { _t } from "../../../translation";
 import {
   AddColumnsRowsCommand,
   CellValueType,
@@ -13,17 +13,14 @@ import {
   UID,
   Zone,
 } from "../../../types";
-import {
-  ChartCreationContext,
-  ChartDefinition,
-  ChartRuntime,
-  ChartType,
-} from "../../../types/chart/chart";
+import { ChartDefinition, ChartRuntime } from "../../../types/chart/chart";
 import { CoreGetters, Getters } from "../../../types/getters";
 import { Validator } from "../../../types/validator";
-import { getZoneArea, zoneToXc } from "../../zones";
+import { getZoneArea, zoneToDimension, zoneToXc } from "../../zones";
 import { AbstractChart } from "./abstract_chart";
-import { canChartParseLabels } from "./line_chart";
+import { createDataSets } from "./chart_common";
+import { canChartParseLabels } from "./chart_common_line_scatter";
+import { getData } from "./chart_ui_common";
 
 /**
  * Create a function used to create a Chart based on the definition
@@ -87,25 +84,6 @@ export function transformDefinition(
 }
 
 /**
- * Get an empty definition based on the given context and the given type
- */
-export function getChartDefinitionFromContextCreation(
-  context: ChartCreationContext,
-  type: ChartType
-) {
-  const chartClass = chartRegistry.get(type);
-  return chartClass.getChartDefinitionFromContextCreation(context);
-}
-
-export function getChartTypes(): Record<string, string> {
-  const result = {};
-  for (const key of chartRegistry.getKeys()) {
-    result[key] = chartRegistry.get(key).name;
-  }
-  return result;
-}
-
-/**
  * Return a "smart" chart definition in the given zone. The definition is "smart" because it will
  * use the best type of chart to display the data of the zone.
  *
@@ -118,17 +96,19 @@ export function getChartTypes(): Record<string, string> {
  */
 export function getSmartChartDefinition(zone: Zone, getters: Getters): ChartDefinition {
   let dataSetZone = zone;
-  if (zone.left !== zone.right) {
+  const singleColumn = zoneToDimension(zone).numberOfCols === 1;
+  if (!singleColumn) {
     dataSetZone = { ...zone, left: zone.left + 1 };
   }
-  const dataSets = [zoneToXc(dataSetZone)];
+  const dataRange = zoneToXc(dataSetZone);
+  const dataSets = [{ dataRange, yAxisId: "y" }];
   const sheetId = getters.getActiveSheetId();
 
   const topLeftCell = getters.getCell({ sheetId, col: zone.left, row: zone.top });
   if (getZoneArea(zone) === 1 && topLeftCell?.content) {
     return {
       type: "scorecard",
-      title: "",
+      title: {},
       background: topLeftCell.style?.fillColor || undefined,
       keyValue: zoneToXc(zone),
       baselineMode: DEFAULT_SCORECARD_BASELINE_MODE,
@@ -137,7 +117,6 @@ export function getSmartChartDefinition(zone: Zone, getters: Getters): ChartDefi
     };
   }
 
-  let title = "";
   const cellsInFirstRow = getters.getEvaluatedCellsInZone(sheetId, {
     ...dataSetZone,
     bottom: dataSetZone.top,
@@ -146,20 +125,8 @@ export function getSmartChartDefinition(zone: Zone, getters: Getters): ChartDefi
     (cell) => cell.type !== CellValueType.empty && cell.type !== CellValueType.number
   );
 
-  if (dataSetsHaveTitle) {
-    const texts = cellsInFirstRow
-      .filter((cell) => cell.type !== CellValueType.error && cell.type !== CellValueType.empty)
-      .map((cell) => cell.formattedValue);
-
-    const lastElement = texts.splice(-1)[0];
-    title = texts.join(", ");
-    if (lastElement) {
-      title += (title ? " " + _t("and") + " " : "") + lastElement;
-    }
-  }
-
   let labelRangeXc: string | undefined;
-  if (zone.left !== zone.right) {
+  if (!singleColumn) {
     labelRangeXc = zoneToXc({
       ...zone,
       right: zone.left,
@@ -171,7 +138,7 @@ export function getSmartChartDefinition(zone: Zone, getters: Getters): ChartDefi
   const labelRange = labelRangeXc ? getters.getRangeFromSheetXC(sheetId, labelRangeXc) : undefined;
   if (canChartParseLabels(labelRange, getters)) {
     return {
-      title,
+      title: {},
       dataSets,
       labelsAsText: false,
       stacked: false,
@@ -180,19 +147,32 @@ export function getSmartChartDefinition(zone: Zone, getters: Getters): ChartDefi
       labelRange: labelRangeXc,
       type: "line",
       dataSetsHaveTitle,
-      verticalAxisPosition: "left",
       legendPosition: newLegendPos,
     };
   }
+  const _dataSets = createDataSets(getters, dataSets, sheetId, dataSetsHaveTitle);
+  if (
+    singleColumn &&
+    getData(getters, _dataSets[0]).every((e) => typeof e === "string" && !isEvaluationError(e))
+  ) {
+    return {
+      title: {},
+      dataSets: [{ dataRange }],
+      aggregated: true,
+      labelRange: dataRange,
+      type: "pie",
+      legendPosition: "top",
+      dataSetsHaveTitle: false,
+    };
+  }
   return {
-    title,
+    title: {},
     dataSets,
     labelRange: labelRangeXc,
     type: "bar",
     stacked: false,
     aggregated: false,
     dataSetsHaveTitle,
-    verticalAxisPosition: "left",
     legendPosition: newLegendPos,
   };
 }

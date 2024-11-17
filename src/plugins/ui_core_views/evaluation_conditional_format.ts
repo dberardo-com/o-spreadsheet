@@ -1,8 +1,7 @@
-import { LINK_COLOR } from "../../constants";
 import { compile } from "../../formulas";
 import { parseLiteral } from "../../helpers/cells";
 import { colorNumberString, percentile } from "../../helpers/index";
-import { clip, lazy } from "../../helpers/misc";
+import { clip, largeMax, largeMin, lazy } from "../../helpers/misc";
 import { _t } from "../../translation";
 import {
   CellIsRule,
@@ -12,6 +11,8 @@ import {
   ColorScaleRule,
   ColorScaleThreshold,
   DEFAULT_LOCALE,
+  DataBarFill,
+  DataBarRule,
   EvaluatedCell,
   HeaderIndex,
   IconSetRule,
@@ -25,17 +26,23 @@ import {
   isMatrix,
 } from "../../types/index";
 import { UIPlugin } from "../ui_plugin";
-import { CoreViewCommand } from "./../../types/commands";
+import { CoreViewCommand, invalidateEvaluationCommands } from "./../../types/commands";
 
 type ComputedStyles = { [col: HeaderIndex]: (Style | undefined)[] };
 type ComputedIcons = { [col: HeaderIndex]: (string | undefined)[] };
+type ComputedDataBars = { [col: HeaderIndex]: (DataBarFill | undefined)[] };
 
 export class EvaluationConditionalFormatPlugin extends UIPlugin {
-  static getters = ["getConditionalIcon", "getCellComputedStyle"] as const;
+  static getters = [
+    "getConditionalIcon",
+    "getCellConditionalFormatStyle",
+    "getConditionalDataBar",
+  ] as const;
   private isStale: boolean = true;
   // stores the computed styles in the format of computedStyles.sheetName[col][row] = Style
   private computedStyles: { [sheet: string]: Lazy<ComputedStyles> } = {};
   private computedIcons: { [sheet: string]: Lazy<ComputedIcons> } = {};
+  private computedDataBars: { [sheet: string]: Lazy<ComputedDataBars> } = {};
 
   // ---------------------------------------------------------------------------
   // Command Handling
@@ -43,8 +50,9 @@ export class EvaluationConditionalFormatPlugin extends UIPlugin {
 
   handle(cmd: CoreViewCommand) {
     if (
+      invalidateEvaluationCommands.has(cmd.type) ||
       invalidateCFEvaluationCommands.has(cmd.type) ||
-      (cmd.type === "UPDATE_CELL" && "content" in cmd)
+      (cmd.type === "UPDATE_CELL" && ("content" in cmd || "format" in cmd))
     ) {
       this.isStale = true;
     }
@@ -55,6 +63,7 @@ export class EvaluationConditionalFormatPlugin extends UIPlugin {
       for (const sheetId of this.getters.getSheetIds()) {
         this.computedStyles[sheetId] = lazy(() => this.getComputedStyles(sheetId));
         this.computedIcons[sheetId] = lazy(() => this.getComputedIcons(sheetId));
+        this.computedDataBars[sheetId] = lazy(() => this.getComputedDataBars(sheetId));
       }
       this.isStale = false;
     }
@@ -64,31 +73,22 @@ export class EvaluationConditionalFormatPlugin extends UIPlugin {
   // Getters
   // ---------------------------------------------------------------------------
 
-  getCellComputedStyle(position: CellPosition): Style {
-    // TODO move this getter out of CF: it also depends on filters and link
+  getCellConditionalFormatStyle(position: CellPosition): Style | undefined {
     const { sheetId, col, row } = position;
-    const cell = this.getters.getCell(position);
     const styles = this.computedStyles[sheetId]();
-    const cfStyle = styles && styles[col]?.[row];
-    const computedStyle = {
-      ...cell?.style,
-      ...cfStyle,
-    };
-    const evaluatedCell = this.getters.getEvaluatedCell(position);
-    if (evaluatedCell.link && !computedStyle.textColor) {
-      computedStyle.textColor = LINK_COLOR;
-    }
-
-    if (this.getters.isFilterHeader(position)) {
-      computedStyle.bold = true;
-    }
-    return computedStyle;
+    return styles && styles[col]?.[row];
   }
 
   getConditionalIcon({ sheetId, col, row }: CellPosition): string | undefined {
     const icons = this.computedIcons[sheetId]();
     return icons && icons[col]?.[row];
   }
+
+  getConditionalDataBar({ sheetId, col, row }: CellPosition): DataBarFill | undefined {
+    const dataBars = this.computedDataBars[sheetId]();
+    return dataBars && dataBars[col]?.[row];
+  }
+
   // ---------------------------------------------------------------------------
   // Private
   // ---------------------------------------------------------------------------
@@ -106,55 +106,46 @@ export class EvaluationConditionalFormatPlugin extends UIPlugin {
   private getComputedStyles(sheetId: UID): ComputedStyles {
     const computedStyle: ComputedStyles = {};
     for (let cf of this.getters.getConditionalFormats(sheetId).reverse()) {
-      try {
-        switch (cf.rule.type) {
-          case "ColorScaleRule":
-            for (let range of cf.ranges) {
-              this.applyColorScale(sheetId, range, cf.rule, computedStyle);
-            }
-            break;
-          case "CellIsRule":
-            const formulas = cf.rule.values.map((value) =>
-              value.startsWith("=") ? compile(value) : undefined
-            );
-            for (let ref of cf.ranges) {
-              const zone: Zone = this.getters.getRangeFromSheetXC(sheetId, ref).zone;
-              for (let row = zone.top; row <= zone.bottom; row++) {
-                for (let col = zone.left; col <= zone.right; col++) {
-                  const predicate = this.rulePredicate[cf.rule.type];
-                  const target = { sheetId, col, row };
-                  const values = cf.rule.values.map((value, i) => {
-                    const compiledFormula = formulas[i];
-                    if (compiledFormula) {
-                      return this.getters.getTranslatedCellFormula(
-                        sheetId,
-                        col - zone.left,
-                        row - zone.top,
-                        {
-                          ...compiledFormula,
-                          dependencies: compiledFormula.dependencies.map((d) =>
-                            this.getters.getRangeFromSheetXC(sheetId, d)
-                          ),
-                        }
-                      );
-                    }
-                    return value;
-                  });
-                  if (predicate && predicate(target, { ...cf.rule, values })) {
-                    if (!computedStyle[col]) computedStyle[col] = [];
-                    // we must combine all the properties of all the CF rules applied to the given cell
-                    computedStyle[col][row] = Object.assign(
-                      computedStyle[col]?.[row] || {},
-                      cf.rule.style
+      switch (cf.rule.type) {
+        case "ColorScaleRule":
+          for (let range of cf.ranges) {
+            this.applyColorScale(sheetId, range, cf.rule, computedStyle);
+          }
+          break;
+        case "CellIsRule":
+          const formulas = cf.rule.values.map((value) =>
+            value.startsWith("=") ? compile(value) : undefined
+          );
+          for (let ref of cf.ranges) {
+            const zone: Zone = this.getters.getRangeFromSheetXC(sheetId, ref).zone;
+            for (let row = zone.top; row <= zone.bottom; row++) {
+              for (let col = zone.left; col <= zone.right; col++) {
+                const predicate = this.rulePredicate[cf.rule.type];
+                const target = { sheetId, col, row };
+                const values = cf.rule.values.map((value, i) => {
+                  const compiledFormula = formulas[i];
+                  if (compiledFormula) {
+                    return this.getters.getTranslatedCellFormula(
+                      sheetId,
+                      col - zone.left,
+                      row - zone.top,
+                      compiledFormula.tokens
                     );
                   }
+                  return value;
+                });
+                if (predicate && predicate(target, { ...cf.rule, values })) {
+                  if (!computedStyle[col]) computedStyle[col] = [];
+                  // we must combine all the properties of all the CF rules applied to the given cell
+                  computedStyle[col][row] = Object.assign(
+                    computedStyle[col]?.[row] || {},
+                    cf.rule.style
+                  );
                 }
               }
             }
-            break;
-        }
-      } catch (_) {
-        // we don't care about the errors within the evaluation of a rule
+          }
+          break;
       }
     }
     return computedStyle;
@@ -172,6 +163,18 @@ export class EvaluationConditionalFormatPlugin extends UIPlugin {
     return computedIcons;
   }
 
+  private getComputedDataBars(sheetId: UID): ComputedDataBars {
+    const computedDataBars: ComputedDataBars = {};
+    for (let cf of this.getters.getConditionalFormats(sheetId).reverse()) {
+      if (cf.rule.type !== "DataBarRule") continue;
+
+      for (let range of cf.ranges) {
+        this.applyDataBar(sheetId, range, cf.rule, computedDataBars);
+      }
+    }
+    return computedDataBars;
+  }
+
   private parsePoint(
     sheetId: UID,
     range: string,
@@ -184,13 +187,13 @@ export class EvaluationConditionalFormatPlugin extends UIPlugin {
       .map((cell) => cell.value);
     switch (threshold.type) {
       case "value":
-        const result = functionName === "max" ? Math.max(...rangeValues) : Math.min(...rangeValues);
+        const result = functionName === "max" ? largeMax(rangeValues) : largeMin(rangeValues);
         return result;
       case "number":
         return Number(threshold.value);
       case "percentage":
-        const min = Math.min(...rangeValues);
-        const max = Math.max(...rangeValues);
+        const min = largeMin(rangeValues);
+        const max = largeMax(rangeValues);
         const delta = max - min;
         return min + (delta * Number(threshold.value)) / 100;
       case "percentile":
@@ -271,6 +274,54 @@ export class EvaluationConditionalFormatPlugin extends UIPlugin {
     }
 
     return icons[2];
+  }
+
+  private applyDataBar(
+    sheetId: UID,
+    range: string,
+    rule: DataBarRule,
+    computedDataBars: ComputedDataBars
+  ): void {
+    const rangeValues = this.getters.getRangeFromSheetXC(sheetId, rule.rangeValues || range);
+    const allValues = this.getters
+      .getEvaluatedCellsInZone(sheetId, rangeValues.zone)
+      .filter((cell): cell is NumberCell => cell.type === CellValueType.number)
+      .map((cell) => cell.value);
+    const max = largeMax(allValues);
+    if (max <= 0) {
+      // no need to apply the data bar if all values are negative or 0
+      return;
+    }
+    const color = rule.color;
+    const zone: Zone = this.getters.getRangeFromSheetXC(sheetId, range).zone;
+    const zoneOfValues: Zone = rangeValues.zone;
+
+    for (let row = zone.top; row <= zone.bottom; row++) {
+      for (let col = zone.left; col <= zone.right; col++) {
+        const cell = this.getEvaluatedCellInZone(sheetId, zone, col, row, zoneOfValues);
+        if (cell.type !== CellValueType.number || cell.value <= 0) {
+          // values negatives or 0 are ignored
+          continue;
+        }
+        if (!computedDataBars[col]) computedDataBars[col] = [];
+        computedDataBars[col][row] = {
+          color: colorNumberString(color),
+          percentage: (cell.value * 100) / max,
+        };
+      }
+    }
+  }
+
+  private getEvaluatedCellInZone(
+    sheetId: UID,
+    zone: Zone,
+    col: HeaderIndex,
+    row: HeaderIndex,
+    targetZone: Zone
+  ) {
+    const targetCol = col - zone.left + targetZone.left;
+    const targetRow = row - zone.top + targetZone.top;
+    return this.getters.getEvaluatedCell({ sheetId, col: targetCol, row: targetRow });
   }
 
   /** Compute the color scale for the given range and CF rule, and apply in in the given computedStyle object */
@@ -411,7 +462,7 @@ export class EvaluationConditionalFormatPlugin extends UIPlugin {
       if (cell.type === CellValueType.error) {
         return false;
       }
-      const [value0, value1] = rule.values.map((val) => {
+      let [value0, value1] = rule.values.map((val) => {
         if (val.startsWith("=")) {
           return this.getters.evaluateFormula(target.sheetId, val) ?? "";
         }
@@ -421,47 +472,50 @@ export class EvaluationConditionalFormatPlugin extends UIPlugin {
         return false;
       }
 
+      const cellValue = cell.value ?? "";
+      value0 = value0 ?? "";
+      value1 = value1 ?? "";
       switch (rule.operator) {
         case "IsEmpty":
-          return cell.value.toString().trim() === "";
+          return cellValue.toString().trim() === "";
         case "IsNotEmpty":
-          return cell.value.toString().trim() !== "";
+          return cellValue.toString().trim() !== "";
         case "BeginsWith":
           if (value0 === "") {
             return false;
           }
-          return cell.value.toString().startsWith(value0.toString());
+          return cellValue.toString().startsWith(value0.toString());
         case "EndsWith":
           if (value0 === "") {
             return false;
           }
-          return cell.value.toString().endsWith(value0.toString());
+          return cellValue.toString().endsWith(value0.toString());
         case "Between":
-          return cell.value >= value0 && cell.value <= value1;
+          return cellValue >= value0 && cellValue <= value1;
         case "NotBetween":
-          return !(cell.value >= value0 && cell.value <= value1);
+          return !(cellValue >= value0 && cellValue <= value1);
         case "ContainsText":
-          return cell.value.toString().indexOf(value0.toString()) > -1;
+          return cellValue.toString().indexOf(value0.toString()) > -1;
         case "NotContains":
-          return !cell.value || cell.value.toString().indexOf(value0.toString()) === -1;
+          return !cellValue || cellValue.toString().indexOf(value0.toString()) === -1;
         case "GreaterThan":
-          return cell.value > value0;
+          return cellValue > value0;
         case "GreaterThanOrEqual":
-          return cell.value >= value0;
+          return cellValue >= value0;
         case "LessThan":
-          return cell.value < value0;
+          return cellValue < value0;
         case "LessThanOrEqual":
-          return cell.value <= value0;
+          return cellValue <= value0;
         case "NotEqual":
           if (value0 === "") {
             return false;
           }
-          return cell.value !== value0;
+          return cellValue !== value0;
         case "Equal":
           if (value0 === "") {
             return true;
           }
-          return cell.value === value0;
+          return cellValue === value0;
         default:
           console.warn(
             _t(

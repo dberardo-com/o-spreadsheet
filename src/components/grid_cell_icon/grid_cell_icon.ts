@@ -1,16 +1,10 @@
 import { Component } from "@odoo/owl";
 import { DEFAULT_VERTICAL_ALIGN, GRID_ICON_EDGE_LENGTH, GRID_ICON_MARGIN } from "../../constants";
 import { positionToZone } from "../../helpers";
-import {
-  Align,
-  CellPosition,
-  DOMCoordinates,
-  SpreadsheetChildEnv,
-  VerticalAlign,
-} from "../../types";
+import { Align, CellPosition, Rect, SpreadsheetChildEnv, VerticalAlign } from "../../types";
 import { css, cssPropertiesToCss } from "../helpers";
 
-const CSS = css/* scss */ `
+css/* scss */ `
   .o-grid-cell-icon {
     width: ${GRID_ICON_EDGE_LENGTH}px;
     height: ${GRID_ICON_EDGE_LENGTH}px;
@@ -21,32 +15,35 @@ export interface GridCellIconProps {
   cellPosition: CellPosition;
   horizontalAlign?: Align;
   verticalAlign?: VerticalAlign;
-  offset?: DOMCoordinates;
 }
 
 export class GridCellIcon extends Component<GridCellIconProps, SpreadsheetChildEnv> {
-  static style = CSS;
   static template = "o-spreadsheet-GridCellIcon";
+  static props = {
+    cellPosition: Object,
+    horizontalAlign: { type: String, optional: true },
+    verticalAlign: { type: String, optional: true },
+    slots: Object,
+  };
 
-  get iconStyle() {
-    const x = this.getIconHorizontalPosition();
-    const y = this.getIconVerticalPosition();
+  get iconStyle(): string {
+    const cellPosition = this.props.cellPosition;
+    const merge = this.env.model.getters.getMerge(cellPosition);
+    const zone = merge || positionToZone(cellPosition);
+    const rect = this.env.model.getters.getVisibleRectWithoutHeaders(zone);
+    const x = this.getIconHorizontalPosition(rect, cellPosition);
+    const y = this.getIconVerticalPosition(rect, cellPosition);
     return cssPropertiesToCss({
-      top: `${y + (this.props.offset?.y || 0)}px`,
-      left: `${x + (this.props.offset?.x || 0)}px`,
+      top: `${y}px`,
+      left: `${x}px`,
     });
   }
 
-  private getIconVerticalPosition(): number {
-    const { sheetId, row } = this.props.cellPosition;
-    const merge = this.env.model.getters.getMerge(this.props.cellPosition);
-    const start = this.env.model.getters.getRowDimensionsInViewport(sheetId, row).start;
-    const end = this.env.model.getters.getRowDimensionsInViewport(
-      sheetId,
-      merge ? merge.bottom : row
-    ).end;
+  private getIconVerticalPosition(rect: Rect, cellPosition: CellPosition): number {
+    const start = rect.y;
+    const end = rect.y + rect.height;
 
-    const cell = this.env.model.getters.getCell(this.props.cellPosition);
+    const cell = this.env.model.getters.getCell(cellPosition);
     const align = this.props.verticalAlign || cell?.style?.verticalAlign || DEFAULT_VERTICAL_ALIGN;
 
     switch (align) {
@@ -60,17 +57,12 @@ export class GridCellIcon extends Component<GridCellIconProps, SpreadsheetChildE
     }
   }
 
-  private getIconHorizontalPosition(): number {
-    const { sheetId, col } = this.props.cellPosition;
-    const merge = this.env.model.getters.getMerge(this.props.cellPosition);
-    const start = this.env.model.getters.getColDimensionsInViewport(sheetId, col).start;
-    const end = this.env.model.getters.getColDimensionsInViewport(
-      sheetId,
-      merge ? merge.right : col
-    ).end;
+  private getIconHorizontalPosition(rect: Rect, cellPosition: CellPosition): number {
+    const start = rect.x;
+    const end = rect.x + rect.width;
 
-    const cell = this.env.model.getters.getCell(this.props.cellPosition);
-    const evaluatedCell = this.env.model.getters.getEvaluatedCell(this.props.cellPosition);
+    const cell = this.env.model.getters.getCell(cellPosition);
+    const evaluatedCell = this.env.model.getters.getEvaluatedCell(cellPosition);
     const align = this.props.horizontalAlign || cell?.style?.align || evaluatedCell.defaultAlign;
 
     switch (align) {
@@ -89,11 +81,3 @@ export class GridCellIcon extends Component<GridCellIconProps, SpreadsheetChildE
     return !(rect.width === 0 || rect.height === 0);
   }
 }
-
-GridCellIcon.props = {
-  cellPosition: Object,
-  horizontalAlign: { type: String, optional: true },
-  verticalAlign: { type: String, optional: true },
-  offset: { type: Object, optional: true },
-  slots: Object,
-};

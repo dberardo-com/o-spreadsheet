@@ -1,15 +1,14 @@
-import { Component, xml } from "@odoo/owl";
 import { Model } from "../../src";
 import { ColorPicker, ColorPickerProps } from "../../src/components/color_picker/color_picker";
 import { toHex } from "../../src/helpers";
-import { Color, SpreadsheetChildEnv } from "../../src/types";
+import { Color } from "../../src/types";
 import { setStyle } from "../test_helpers/commands_helpers";
 import {
   getElComputedStyle,
   setInputValueAndTrigger,
   simulateClick,
 } from "../test_helpers/dom_helper";
-import { mountComponent } from "../test_helpers/helpers";
+import { mountComponentWithPortalTarget } from "../test_helpers/helpers";
 import { mockGetBoundingClientRect } from "../test_helpers/mock_helpers";
 
 mockGetBoundingClientRect({
@@ -18,23 +17,15 @@ mockGetBoundingClientRect({
 
 let fixture: HTMLElement;
 
-class ColorPickerTestParent extends Component<ColorPickerProps, SpreadsheetChildEnv> {
-  static template = xml/* xml */ `
-    <div class="o-spreadsheet">
-      <ColorPicker t-props="props"/>
-    </div>
-  `;
-  static components = { ColorPicker };
-}
-
 async function mountColorPicker(partialProps: Partial<ColorPickerProps> = {}, model = new Model()) {
   const props = {
     onColorPicked: partialProps.onColorPicked || (() => {}),
     currentColor: partialProps.currentColor || "#000000",
     maxHeight: partialProps.maxHeight !== undefined ? partialProps.maxHeight : 1000,
     anchorRect: partialProps.anchorRect || { x: 0, y: 0, width: 0, height: 0 },
+    disableNoColor: partialProps.disableNoColor || false,
   };
-  ({ fixture } = await mountComponent(ColorPickerTestParent, { model, props }));
+  ({ fixture } = await mountComponentWithPortalTarget(ColorPicker, { model, props }));
 }
 
 test("Color picker is correctly positioned", async () => {
@@ -166,6 +157,11 @@ describe("Color Picker buttons", () => {
     await mountColorPicker({ currentColor: "#45818e", maxHeight: 0 });
     const picker = fixture.querySelector<HTMLElement>(".o-color-picker")!;
     expect(picker.style["display"]).toEqual("none");
+  });
+
+  test("Hides the 'No Color' button when disableNoColor prop is set to true", async () => {
+    await mountColorPicker({ disableNoColor: true });
+    expect(fixture.querySelector(".o-buttons .o-cancel")).toBeNull();
   });
 
   test.each([

@@ -1,15 +1,15 @@
 import { Component, onWillUpdateProps, useRef, useState } from "@odoo/owl";
-import { BACKGROUND_GRAY_COLOR, HEADER_WIDTH, TEXT_HEADER_COLOR } from "../../constants";
+import { BACKGROUND_GRAY_COLOR, HEADER_WIDTH } from "../../constants";
 import { deepEquals } from "../../helpers";
 import { MenuItemRegistry } from "../../registries/menu_items_registry";
 import { _t } from "../../translation";
 import { MenuMouseEvent, Pixel, Rect, SpreadsheetChildEnv, UID } from "../../types";
 import { Ripple } from "../animation/ripple";
-import { BottomBarSheet } from "../bottom_bar_sheet/bottom_bar_sheet";
-import { BottomBarStatistic } from "../bottom_bar_statistic/bottom_bar_statistic";
 import { css } from "../helpers/css";
 import { useDragAndDropListItems } from "../helpers/drag_and_drop_hook";
 import { Menu, MenuState } from "../menu/menu";
+import { BottomBarSheet } from "./bottom_bar_sheet/bottom_bar_sheet";
+import { BottomBarStatistic } from "./bottom_bar_statistic/bottom_bar_statistic";
 
 // -----------------------------------------------------------------------------
 // SpreadSheet
@@ -19,7 +19,6 @@ const MENU_MAX_HEIGHT = 250;
 
 css/* scss */ `
   .o-spreadsheet-bottom-bar {
-    color: ${TEXT_HEADER_COLOR};
     background-color: ${BACKGROUND_GRAY_COLOR};
     padding-left: ${HEADER_WIDTH}px;
     font-size: 15px;
@@ -41,6 +40,17 @@ css/* scss */ `
       .o-bottom-bar-fade-in {
         background-image: linear-gradient(90deg, #cfcfcf, transparent 1%);
       }
+
+      .o-sheet-list {
+        overflow-y: hidden;
+        overflow-x: auto;
+
+        &::-webkit-scrollbar {
+          display: none; /* Chrome */
+        }
+        -ms-overflow-style: none; /* IE and Edge */
+        scrollbar-width: none; /* Firefox */
+      }
     }
 
     .o-bottom-bar-arrows {
@@ -55,6 +65,7 @@ css/* scss */ `
         .o-icon {
           height: 18px;
           width: 18px;
+          font-size: 18px;
         }
       }
     }
@@ -76,6 +87,9 @@ interface BottomBarMenuState extends MenuState {
 
 export class BottomBar extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-BottomBar";
+  static props = {
+    onClick: Function,
+  };
   static components = { Menu, Ripple, BottomBarSheet, BottomBarStatistic };
 
   private bottomBarRef = useRef("bottomBar");
@@ -138,10 +152,16 @@ export class BottomBar extends Component<Props, SpreadsheetChildEnv> {
         name: sheet.name,
         sequence: i,
         isReadonlyAllowed: true,
-        textColor: sheet.isVisible ? undefined : "grey",
+        textColor: sheet.isVisible ? undefined : "#808080",
         execute: (env) => {
+          if (!this.env.model.getters.isSheetVisible(sheetId)) {
+            this.env.model.dispatch("SHOW_SHEET", { sheetId });
+          }
           env.model.dispatch("ACTIVATE_SHEET", { sheetIdFrom: from, sheetIdTo: sheetId });
         },
+        isEnabled: (env) => (env.model.getters.isReadonly() ? sheet.isVisible : true),
+        icon: sheet.color ? "o-spreadsheet-Icon.SMALL_DOT_RIGHT_ALIGN" : undefined,
+        iconColor: sheet.color,
       });
       i++;
     }
@@ -220,7 +240,7 @@ export class BottomBar extends Component<Props, SpreadsheetChildEnv> {
   }
 
   onSheetMouseDown(sheetId: UID, event: MouseEvent) {
-    if (event.button !== 0) return;
+    if (event.button !== 0 || this.env.model.getters.isReadonly()) return;
     this.closeMenu();
 
     const visibleSheets = this.getVisibleSheets();
@@ -281,7 +301,3 @@ export class BottomBar extends Component<Props, SpreadsheetChildEnv> {
     return this.sheetListRef.el.scrollWidth - this.sheetListRef.el.clientWidth;
   }
 }
-
-BottomBar.props = {
-  onClick: Function,
-};

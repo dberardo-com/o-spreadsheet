@@ -9,9 +9,10 @@ import {
   rgbaToHSLA,
   toHex,
 } from "../../helpers";
-import { GaugeChart, ScorecardChart } from "../../helpers/figures/charts";
-import { Color, CoreViewCommand, Immutable, RGBA, UID } from "../../types";
-import { UIPlugin } from "../ui_plugin";
+import { Color, Command, Immutable, RGBA, TableElementStyle, UID } from "../../types";
+import { UIPlugin, UIPluginConfig } from "../ui_plugin";
+
+const chartColorRegex = /"(#[0-9a-fA-F]{6})"/g;
 
 /**
  * https://tomekdev.com/posts/sorting-colors-in-js
@@ -71,50 +72,60 @@ interface CustomColorState {
  */
 export class CustomColorsPlugin extends UIPlugin<CustomColorState> {
   private readonly customColors: Immutable<Record<Color, true>> = {};
-  private readonly shouldUpdateColors = false;
+  private readonly shouldUpdateColors = true;
   static getters = ["getCustomColors"] as const;
 
-  handle(cmd: CoreViewCommand) {
+  constructor(config: UIPluginConfig) {
+    super(config);
+    this.tryToAddColors(config.customColors ?? []);
+  }
+
+  handle(cmd: Command) {
     switch (cmd.type) {
-      case "UPDATE_CELL":
+      case "START":
+        for (const sheetId of this.getters.getSheetIds()) {
+          for (const chartId of this.getters.getChartIds(sheetId)) {
+            this.tryToAddColors(this.getChartColors(chartId));
+          }
+        }
+        break;
       case "UPDATE_CHART":
       case "CREATE_CHART":
+        this.tryToAddColors(this.getChartColors(cmd.id));
+        break;
+      case "UPDATE_CELL":
       case "ADD_CONDITIONAL_FORMAT":
       case "SET_BORDER":
       case "SET_ZONE_BORDERS":
       case "SET_FORMATTING":
+      case "CREATE_TABLE":
+      case "UPDATE_TABLE":
         this.history.update("shouldUpdateColors", true);
+        break;
     }
   }
 
   finalize() {
     if (this.shouldUpdateColors) {
       this.history.update("shouldUpdateColors", false);
-      for (const color of this.getCustomColors()) {
-        this.tryToAddColor(color);
-      }
+      this.tryToAddColors(this.computeCustomColors());
     }
   }
 
-  getCustomColors(): Color[] {
+  getCustomColors() {
+    return sortWithClusters(Object.keys(this.customColors));
+  }
+
+  private computeCustomColors(): Color[] {
     let usedColors: Color[] = [];
     for (const sheetId of this.getters.getSheetIds()) {
       usedColors = usedColors.concat(
         this.getColorsFromCells(sheetId),
         this.getFormattingColors(sheetId),
-        this.getChartColors(sheetId)
+        this.getTableColors(sheetId)
       );
     }
-    return sortWithClusters([
-      ...new Set(
-        // remove duplicates first to check validity on a reduced
-        // set of colors, then normalize to HEX and remove duplicates
-        // again
-        [...new Set([...usedColors, ...Object.keys(this.customColors)])]
-          .filter(isColorValid)
-          .map(toHex)
-      ),
-    ]).filter((color) => !COLOR_PICKER_DEFAULTS.includes(color));
+    return [...new Set([...usedColors])];
   }
 
   private getColorsFromCells(sheetId: UID): Color[] {
@@ -151,38 +162,60 @@ export class CustomColorsPlugin extends UIPlugin<CustomColorState> {
     return formatColors.filter(isDefined);
   }
 
-  private getChartColors(sheetId: UID): Color[] {
-    const charts = this.getters.getChartIds(sheetId).map((cid) => this.getters.getChart(cid));
-    let chartsColors = new Set<Color>();
-    for (let chart of charts) {
-      if (chart === undefined) {
-        continue;
-      }
-      const background = chart.getDefinition().background;
-      if (background !== undefined) {
-        chartsColors.add(background);
-      }
-      switch (chart.type) {
-        case "gauge":
-          const colors = (chart as GaugeChart).sectionRule.colors;
-          chartsColors.add(colors.lowerColor);
-          chartsColors.add(colors.middleColor);
-          chartsColors.add(colors.upperColor);
-          break;
-        case "scorecard":
-          const scoreChart = chart as ScorecardChart;
-          chartsColors.add(scoreChart.baselineColorDown);
-          chartsColors.add(scoreChart.baselineColorUp);
-          break;
-      }
+  private getChartColors(chartId: UID): Color[] {
+    const chart = this.getters.getChart(chartId);
+    if (chart === undefined) {
+      return [];
     }
-    return [...chartsColors];
+    const stringifiedChart = JSON.stringify(chart.getDefinition());
+    const colors = stringifiedChart.matchAll(chartColorRegex);
+    return [...colors].map((color) => color[1]); // color[1] is the first capturing group of the regex
   }
 
-  private tryToAddColor(color: Color) {
-    const formattedColor = toHex(color);
-    if (color && !COLOR_PICKER_DEFAULTS.includes(formattedColor)) {
-      this.history.update("customColors", formattedColor, true);
+  private getTableColors(sheetId: UID): Color[] {
+    const tables = this.getters.getTables(sheetId);
+    return tables.flatMap((table) => {
+      const config = table.config;
+      const style = this.getters.getTableStyle(config.styleId);
+      return [
+        this.getTableStyleElementColors(style.wholeTable),
+        config.numberOfHeaders > 0 ? this.getTableStyleElementColors(style.headerRow) : [],
+        config.totalRow ? this.getTableStyleElementColors(style.totalRow) : [],
+        config.bandedColumns ? this.getTableStyleElementColors(style.firstColumnStripe) : [],
+        config.bandedColumns ? this.getTableStyleElementColors(style.secondColumnStripe) : [],
+        config.bandedRows ? this.getTableStyleElementColors(style.firstRowStripe) : [],
+        config.bandedRows ? this.getTableStyleElementColors(style.secondRowStripe) : [],
+        config.firstColumn ? this.getTableStyleElementColors(style.firstColumn) : [],
+        config.lastColumn ? this.getTableStyleElementColors(style.lastColumn) : [],
+      ].flat();
+    });
+  }
+
+  private getTableStyleElementColors(element: TableElementStyle | undefined): Color[] {
+    if (!element) {
+      return [];
+    }
+    return [
+      element.style?.fillColor,
+      element.style?.textColor,
+      element.border?.bottom?.color,
+      element.border?.top?.color,
+      element.border?.left?.color,
+      element.border?.right?.color,
+      element.border?.horizontal?.color,
+      element.border?.vertical?.color,
+    ].filter(isDefined);
+  }
+
+  private tryToAddColors(colors: Color[]) {
+    for (const color of colors) {
+      if (!isColorValid(color)) {
+        continue;
+      }
+      const formattedColor = toHex(color);
+      if (color && !COLOR_PICKER_DEFAULTS.includes(formattedColor)) {
+        this.history.update("customColors", formattedColor, true);
+      }
     }
   }
 }

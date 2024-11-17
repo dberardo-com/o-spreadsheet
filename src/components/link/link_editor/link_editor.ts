@@ -13,7 +13,6 @@ const MENU_OFFSET_X = 320;
 const MENU_OFFSET_Y = 100;
 const PADDING = 12;
 const LINK_EDITOR_WIDTH = 340;
-const LINK_EDITOR_HEIGHT = 165;
 
 css/* scss */ `
   .o-link-editor {
@@ -24,30 +23,23 @@ css/* scss */ `
     display: flex;
     flex-direction: column;
     border-radius: 4px;
-    height: ${LINK_EDITOR_HEIGHT}px;
     width: ${LINK_EDITOR_WIDTH}px;
 
     .o-section {
       .o-section-title {
         font-weight: bold;
-        color: dimgrey;
         margin-bottom: 5px;
       }
     }
     .o-buttons {
       padding-left: 16px;
       padding-top: 16px;
-      padding-bottom: 16px;
       text-align: right;
     }
-    input {
+    input.o-input {
       box-sizing: border-box;
       width: 100%;
-      border-radius: 4px;
-      padding: 4px 23px 4px 10px;
-      border: none;
-      height: 24px;
-      border: 1px solid lightgrey;
+      padding: 0 23px 4px 0;
     }
     .o-link-url {
       position: relative;
@@ -83,6 +75,10 @@ interface State {
 
 export class LinkEditor extends Component<LinkEditorProps, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-LinkEditor";
+  static props = {
+    cellPosition: Object,
+    onClosed: { type: Function, optional: true },
+  };
   static components = { Menu };
   menuItems = linkMenuRegistry.getMenuItems();
   private link: State = useState(this.defaultState);
@@ -172,6 +168,7 @@ export class LinkEditor extends Component<LinkEditorProps, SpreadsheetChildEnv> 
           this.save();
         }
         ev.stopPropagation();
+        ev.preventDefault();
         break;
       case "Escape":
         this.cancel();
@@ -190,9 +187,4 @@ export const LinkEditorPopoverBuilder: PopoverBuilders = {
       cellCorner: "BottomLeft",
     };
   },
-};
-
-LinkEditor.props = {
-  cellPosition: Object,
-  onClosed: { type: Function, optional: true },
 };

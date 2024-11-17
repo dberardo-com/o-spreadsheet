@@ -85,7 +85,7 @@ describe("CONCAT formula", () => {
 describe("DIVIDE formula", () => {
   test("functional tests on simple arguments", () => {
     expect(evaluateCell("A1", { A1: "=DIVIDE()" })).toBe("#BAD_EXPR"); // @compatibility: on google sheets, return #N/A
-    expect(evaluateCell("A1", { A1: "=DIVIDE( ,  )" })).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!
+    expect(evaluateCell("A1", { A1: "=DIVIDE( ,  )" })).toBe("#DIV/0!");
     expect(evaluateCell("A1", { A1: "=DIVIDE( , 1)" })).toBe(0);
     expect(evaluateCell("A1", { A1: "=DIVIDE(84, 42)" })).toBe(2);
     expect(evaluateCell("A1", { A1: "=DIVIDE(48, -24)" })).toBe(-2);
@@ -104,7 +104,7 @@ describe("DIVIDE formula", () => {
   });
 
   test("functional tests on cell arguments", () => {
-    expect(evaluateCell("A1", { A1: "=DIVIDE(A2, A3)" })).toBe("#ERROR"); // @compatibility: on google sheets, return #DIV/0!
+    expect(evaluateCell("A1", { A1: "=DIVIDE(A2, A3)" })).toBe("#DIV/0!");
     expect(evaluateCell("A1", { A1: "=DIVIDE(A2, A3)", A3: "42" })).toBe(0);
     expect(evaluateCell("A1", { A1: "=DIVIDE(A2, A3)", A2: "42", A3: "2" })).toBe(21);
     expect(evaluateCell("A1", { A1: "=DIVIDE(A2, A3)", A2: "4.2", A3: "-1" })).toBe(-4.2);
@@ -162,6 +162,11 @@ describe("EQ formula", () => {
     expect(evaluateCell("A1", { A1: "=EQ(A2, A3)", A2: '=""', A3: "0" })).toBe(false);
     expect(evaluateCell("A1", { A1: "=EQ(A2, A3)", A2: "=TRUE", A3: "1" })).toBe(false);
     expect(evaluateCell("A1", { A1: "=EQ(A2, A3)", A2: '="42"', A3: "42" })).toBe(false);
+  });
+
+  test("EQ doesn't accept error values", () => {
+    expect(evaluateCell("A1", { A1: "=EQ(A2, 42)", A2: "=KABOUM" })).toBe("#BAD_EXPR");
+    expect(evaluateCell("A1", { A1: "=EQ(KABOUM, KABOUM)" })).toBe("#BAD_EXPR");
   });
 });
 
@@ -332,6 +337,11 @@ describe("GTE formula", () => {
     expect(evaluateCell("A1", { A1: "=GTE(A2, A3)", A2: '="1"', A3: "99999" })).toBe(true);
     expect(evaluateCell("A1", { A1: "=GTE(A2, A3)", A2: '="1"', A3: '="99999"' })).toBe(false);
   });
+
+  test("GTE doesnt accept error values", () => {
+    expect(evaluateCell("A1", { A1: "=?GTE(A2, 42)", A2: "=KABOUM" })).toBe("#BAD_EXPR");
+    expect(evaluateCell("A1", { A1: "=GTE(KABOUM, KABOUM)" })).toBe("#BAD_EXPR");
+  });
 });
 
 describe("LT formula", () => {
@@ -415,6 +425,11 @@ describe("LT formula", () => {
 
     expect(evaluateCell("A1", { A1: "=LT(A2, A3)", A2: '="1"', A3: "99999" })).toBe(false);
     expect(evaluateCell("A1", { A1: "=LT(A2, A3)", A2: '="1"', A3: '="99999"' })).toBe(true);
+  });
+
+  test("LT doesn't accept error values", () => {
+    expect(evaluateCell("A1", { A1: "=LT(A2, 42)", A2: "=KABOUM" })).toBe("#BAD_EXPR");
+    expect(evaluateCell("A1", { A1: "=LT(KABOUM, KABOUM)" })).toBe("#BAD_EXPR");
   });
 });
 
@@ -500,6 +515,11 @@ describe("LTE formula", () => {
 
     expect(evaluateCell("A1", { A1: "=LTE(A2, A3)", A2: '="1"', A3: "99999" })).toBe(false);
     expect(evaluateCell("A1", { A1: "=LTE(A2, A3)", A2: '="1"', A3: '="99999"' })).toBe(true);
+  });
+
+  test("LTE doesn't accept error values", () => {
+    expect(evaluateCell("A1", { A1: "=LTE(A2, 42)", A2: "=KABOUM" })).toBe("#BAD_EXPR");
+    expect(evaluateCell("A1", { A1: "=LTE(KABOUM, KABOUM)" })).toBe("#BAD_EXPR");
   });
 });
 
@@ -630,6 +650,11 @@ describe("NE formula", () => {
     expect(evaluateCell("A1", { A1: "=NE(A2, A3)", A2: '=""', A3: "0" })).toBe(true);
     expect(evaluateCell("A1", { A1: "=NE(A2, A3)", A2: "=TRUE", A3: "1" })).toBe(true);
     expect(evaluateCell("A1", { A1: "=NE(A2, A3)", A2: '="42"', A3: "42" })).toBe(true);
+  });
+
+  test("NE doesn't accept error values", () => {
+    expect(evaluateCell("A1", { A1: "=NE(A2, 42)", A2: "=KABOUM" })).toBe("#BAD_EXPR");
+    expect(evaluateCell("A1", { A1: "=NE(KABOUM, KABOUM)" })).toBe("#BAD_EXPR");
   });
 });
 
@@ -787,7 +812,7 @@ describe("UPLUS formula", () => {
   });
 
   test("functional tests on cell arguments", () => {
-    expect(evaluateCell("A1", { A1: "=UPLUS(A2)" })).toBe("");
+    expect(evaluateCell("A1", { A1: "=UPLUS(A2)" })).toBe(0);
     expect(evaluateCell("A1", { A1: "=UPLUS(A2)", A2: "0" })).toBe(0);
     expect(evaluateCell("A1", { A1: "=UPLUS(A2)", A2: "-2" })).toBe(-2);
     expect(evaluateCell("A1", { A1: "=UPLUS(A2)", A2: "3" })).toBe(3);

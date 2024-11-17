@@ -1,9 +1,10 @@
-import { compileTokens } from "../../../formulas/compiler";
-import { Token, compile, isExportableToExcel } from "../../../formulas/index";
+import { isExportableToExcel } from "../../../formulas/index";
+import { matrixMap } from "../../../functions/helpers";
 import { getItemId, positions, toXC } from "../../../helpers/index";
 import {
   CellPosition,
   CellValue,
+  CellValueType,
   Command,
   EvaluatedCell,
   ExcelCellData,
@@ -11,16 +12,19 @@ import {
   Format,
   FormattedValue,
   FormulaCell,
+  FunctionResultObject,
+  GetSymbolValue,
   Matrix,
   Range,
+  RangeCompiledFormula,
   UID,
   Zone,
   invalidateDependenciesCommands,
   isMatrix,
 } from "../../../types/index";
+import { FormulaCellWithDependencies } from "../../core";
 import { UIPlugin, UIPluginConfig } from "../../ui_plugin";
-import { CoreViewCommand } from "./../../../types/commands";
-import { CompilationParameters, buildCompilationParameters } from "./compilation_parameters";
+import { CoreViewCommand, invalidateEvaluationCommands } from "./../../../types/commands";
 import { Evaluator } from "./evaluator";
 
 //#region
@@ -141,6 +145,8 @@ import { Evaluator } from "./evaluator";
 export class EvaluationPlugin extends UIPlugin {
   static getters = [
     "evaluateFormula",
+    "evaluateFormulaResult",
+    "evaluateCompiledFormula",
     "getCorrespondingFormulaCell",
     "getRangeFormattedValues",
     "getRangeValues",
@@ -148,18 +154,19 @@ export class EvaluationPlugin extends UIPlugin {
     "getEvaluatedCell",
     "getEvaluatedCells",
     "getEvaluatedCellsInZone",
-    "getSpreadPositionsOf",
+    "getEvaluatedCellsPositions",
+    "getSpreadZone",
+    "getArrayFormulaSpreadingOn",
+    "isEmpty",
   ] as const;
 
   private shouldRebuildDependenciesGraph = true;
 
   private evaluator: Evaluator;
-  private compilationParams: CompilationParameters;
   private positionsToUpdate: CellPosition[] = [];
 
-  constructor(private config: UIPluginConfig) {
+  constructor(config: UIPluginConfig) {
     super(config);
-    this.compilationParams = this.getCompilationParameters();
     this.evaluator = new Evaluator(config.custom, this.getters);
   }
 
@@ -168,7 +175,10 @@ export class EvaluationPlugin extends UIPlugin {
   // ---------------------------------------------------------------------------
 
   beforeHandle(cmd: Command) {
-    if (invalidateDependenciesCommands.has(cmd.type)) {
+    if (
+      invalidateEvaluationCommands.has(cmd.type) ||
+      invalidateDependenciesCommands.has(cmd.type)
+    ) {
       this.shouldRebuildDependenciesGraph = true;
     }
   }
@@ -179,18 +189,15 @@ export class EvaluationPlugin extends UIPlugin {
         if (!("content" in cmd || "format" in cmd) || this.shouldRebuildDependenciesGraph) {
           return;
         }
-        this.positionsToUpdate.push(cmd);
+        const position = { sheetId: cmd.sheetId, row: cmd.row, col: cmd.col };
+        this.positionsToUpdate.push(position);
 
         if ("content" in cmd) {
-          this.evaluator.updateDependencies(cmd);
+          this.evaluator.updateDependencies(position);
         }
         break;
       case "EVALUATE_CELLS":
         this.evaluator.evaluateAllCells();
-        break;
-      case "UPDATE_LOCALE":
-        this.compilationParams = this.getCompilationParameters();
-        this.evaluator.updateCompilationParameters();
         break;
     }
   }
@@ -211,17 +218,26 @@ export class EvaluationPlugin extends UIPlugin {
   // ---------------------------------------------------------------------------
 
   evaluateFormula(sheetId: UID, formulaString: string): CellValue | Matrix<CellValue> {
-    const compiledFormula = compile(formulaString);
+    const result = this.evaluateFormulaResult(sheetId, formulaString);
+    if (isMatrix(result)) {
+      return matrixMap(result, (cell) => cell.value);
+    }
+    return result.value;
+  }
 
-    const ranges: Range[] = [];
-    for (let xc of compiledFormula.dependencies) {
-      ranges.push(this.getters.getRangeFromSheetXC(sheetId, xc));
-    }
-    const array = compiledFormula.execute(ranges, ...this.compilationParams);
-    if (isMatrix(array)) {
-      return array.map((col) => col.map((row) => row.value));
-    }
-    return array.value;
+  evaluateFormulaResult(
+    sheetId: UID,
+    formulaString: string
+  ): Matrix<FunctionResultObject> | FunctionResultObject {
+    return this.evaluator.evaluateFormulaResult(sheetId, formulaString);
+  }
+
+  evaluateCompiledFormula(
+    sheetId: UID,
+    compiledFormula: RangeCompiledFormula,
+    getSymbolValue: GetSymbolValue
+  ): FunctionResultObject | Matrix<FunctionResultObject> {
+    return this.evaluator.evaluateCompiledFormula(sheetId, compiledFormula, getSymbolValue);
   }
 
   /**
@@ -230,9 +246,7 @@ export class EvaluationPlugin extends UIPlugin {
   getRangeFormattedValues(range: Range): FormattedValue[] {
     const sheet = this.getters.tryGetSheet(range.sheetId);
     if (sheet === undefined) return [];
-    return this.getters
-      .getEvaluatedCellsInZone(sheet.id, range.zone)
-      .map((cell) => cell.formattedValue);
+    return this.mapVisiblePositions(range, (p) => this.getters.getEvaluatedCell(p).formattedValue);
   }
 
   /**
@@ -241,7 +255,7 @@ export class EvaluationPlugin extends UIPlugin {
   getRangeValues(range: Range): CellValue[] {
     const sheet = this.getters.tryGetSheet(range.sheetId);
     if (sheet === undefined) return [];
-    return this.getters.getEvaluatedCellsInZone(sheet.id, range.zone).map((cell) => cell.value);
+    return this.mapVisiblePositions(range, (p) => this.getters.getEvaluatedCell(p).value);
   }
 
   /**
@@ -257,14 +271,14 @@ export class EvaluationPlugin extends UIPlugin {
     return this.evaluator.getEvaluatedCell(position);
   }
 
-  getEvaluatedCells(sheetId: UID): Record<UID, EvaluatedCell> {
-    const rawCells = this.getters.getCells(sheetId) || {};
-    const record: Record<UID, EvaluatedCell> = {};
-    for (let cellId of Object.keys(rawCells)) {
-      const position = this.getters.getCellPosition(cellId);
-      record[cellId] = this.getEvaluatedCell(position);
-    }
-    return record;
+  getEvaluatedCells(sheetId: UID): EvaluatedCell[] {
+    return this.evaluator
+      .getEvaluatedPositionsInSheet(sheetId)
+      .map((position) => this.getEvaluatedCell(position));
+  }
+
+  getEvaluatedCellsPositions(sheetId: UID): CellPosition[] {
+    return this.evaluator.getEvaluatedPositionsInSheet(sheetId);
   }
 
   getEvaluatedCellsInZone(sheetId: UID, zone: Zone): EvaluatedCell[] {
@@ -273,8 +287,42 @@ export class EvaluationPlugin extends UIPlugin {
     );
   }
 
-  getSpreadPositionsOf(position: CellPosition): CellPosition[] {
-    return this.evaluator.getSpreadPositionsOf(position);
+  /**
+   * Return the spread zone the position is part of, if any
+   */
+  getSpreadZone(position: CellPosition, options = { ignoreSpillError: false }): Zone | undefined {
+    return this.evaluator.getSpreadZone(position, options);
+  }
+
+  getArrayFormulaSpreadingOn(position: CellPosition): CellPosition | undefined {
+    return this.evaluator.getArrayFormulaSpreadingOn(position);
+  }
+
+  /**
+   * Check if a zone only contains empty cells
+   */
+  isEmpty(sheetId: UID, zone: Zone): boolean {
+    return positions(zone)
+      .map(({ col, row }) => this.getEvaluatedCell({ sheetId, col, row }))
+      .every((cell) => cell.type === CellValueType.empty);
+  }
+
+  /**
+   * Maps the visible positions of a range  according to a provided callback
+   * @param range - the range we filter out
+   * @param evaluationCallback - the callback applied to the filtered positions
+   * @returns the values filtered (ie we keep only the not hidden values)
+   */
+  private mapVisiblePositions<T>(range: Range, evaluationCallback: (p: CellPosition) => T): T[] {
+    const { sheetId, zone } = range;
+    const xcPositions = positions(zone);
+    return xcPositions.reduce((acc, position) => {
+      const { col, row } = position;
+      if (!this.getters.isColHidden(sheetId, col) && !this.getters.isRowHidden(sheetId, row)) {
+        acc.push(evaluationCallback({ sheetId, ...position }));
+      }
+      return acc;
+    }, [] as T[]);
   }
 
   // ---------------------------------------------------------------------------
@@ -286,12 +334,13 @@ export class EvaluationPlugin extends UIPlugin {
       const evaluatedCell = this.evaluator.getEvaluatedCell(position);
 
       const xc = toXC(position.col, position.row);
-
       const value = evaluatedCell.value;
       let isFormula = false;
       let newContent: string | undefined = undefined;
       let newFormat: string | undefined = undefined;
       let isExported: boolean = true;
+
+      const exportedSheetData = data.sheets.find((sheet) => sheet.id === position.sheetId)!;
 
       const formulaCell = this.getCorrespondingFormulaCell(position);
       if (formulaCell) {
@@ -299,18 +348,28 @@ export class EvaluationPlugin extends UIPlugin {
         isFormula = isExported;
 
         if (!isExported) {
-          newContent = value.toString();
-          newFormat = evaluatedCell.format;
+          // If the cell contains a non-exported formula and that is evaluates to
+          // nothing* ,we don't export it.
+          // * non-falsy value are relevant and so are 0 and FALSE, which only leaves
+          // the empty string.
+          if (value !== "") {
+            newContent = (value ?? "").toString();
+            newFormat = evaluatedCell.format;
+          }
         }
       }
 
-      const exportedSheetData = data.sheets.find((sheet) => sheet.id === position.sheetId)!;
       const exportedCellData: ExcelCellData = exportedSheetData.cells[xc] || ({} as ExcelCellData);
 
       const format = newFormat
         ? getItemId<Format>(newFormat, data.formats)
         : exportedCellData.format;
-      const content = !isExported ? newContent : exportedCellData.content;
+      let content: string | undefined;
+      if (isExported && isFormula && formulaCell instanceof FormulaCellWithDependencies) {
+        content = formulaCell.contentWithFixedReferences;
+      } else {
+        content = !isExported ? newContent : exportedCellData.content;
+      }
       exportedSheetData.cells[xc] = { ...exportedCellData, value, isFormula, content, format };
     }
   }
@@ -324,12 +383,12 @@ export class EvaluationPlugin extends UIPlugin {
     const cell = this.getters.getCell(position);
 
     if (cell && cell.isFormula) {
-      return isBadExpression(cell.compiledFormula.tokens) ? undefined : cell;
+      return cell.compiledFormula.isBadExpression ? undefined : cell;
     } else if (cell && cell.content) {
       return undefined;
     }
 
-    const spreadingFormulaPosition = this.evaluator.getArrayFormulaSpreadingOn(position);
+    const spreadingFormulaPosition = this.getArrayFormulaSpreadingOn(position);
 
     if (spreadingFormulaPosition === undefined) {
       return undefined;
@@ -341,20 +400,5 @@ export class EvaluationPlugin extends UIPlugin {
       return spreadingFormulaCell;
     }
     return undefined;
-  }
-
-  private getCompilationParameters() {
-    return buildCompilationParameters(this.config.custom, this.getters, (position) =>
-      this.evaluator.getEvaluatedCell(position)
-    );
-  }
-}
-
-function isBadExpression(tokens: Token[]): boolean {
-  try {
-    compileTokens(tokens);
-    return false;
-  } catch (error) {
-    return true;
   }
 }

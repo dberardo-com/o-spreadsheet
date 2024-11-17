@@ -1,7 +1,8 @@
-import { Component, onMounted, onWillUnmount, xml } from "@odoo/owl";
+import { Component } from "@odoo/owl";
 import { Model } from "../../src";
+import { ComposerFocusStore } from "../../src/components/composer/composer_focus_store";
 import { SplitIntoColumnsPanel } from "../../src/components/side_panel/split_to_columns_panel/split_to_columns_panel";
-import { SpreadsheetChildEnv } from "../../src/types";
+import { EditionMode, SpreadsheetChildEnv } from "../../src/types";
 import { setCellContent, setSelection } from "../test_helpers/commands_helpers";
 import {
   click,
@@ -10,20 +11,6 @@ import {
 } from "../test_helpers/dom_helper";
 import { mountComponent, nextTick, setGrid, spyModelDispatch } from "../test_helpers/helpers";
 
-interface ParentProps {
-  onCloseSidePanel: () => void;
-}
-class Parent extends Component<ParentProps, SpreadsheetChildEnv> {
-  static components = { SplitIntoColumnsPanel };
-  static template = xml/*xml*/ `
-    <SplitIntoColumnsPanel onCloseSidePanel="props.onCloseSidePanel"/>
-  `;
-  setup() {
-    onMounted(() => this.env.model.on("update", this, () => this.render(true)));
-    onWillUnmount(() => this.env.model.off("update", this));
-  }
-}
-
 describe("split to columns sidePanel component", () => {
   let model: Model;
   let fixture: HTMLElement;
@@ -31,10 +18,11 @@ describe("split to columns sidePanel component", () => {
   let confirmButton: HTMLButtonElement;
   let checkBox: HTMLInputElement;
   let onCloseSidePanel: jest.Mock;
+  let parent: Component<SplitIntoColumnsPanel["props"], SpreadsheetChildEnv>;
 
   beforeEach(async () => {
     onCloseSidePanel = jest.fn();
-    ({ model, fixture } = await mountComponent(Parent, {
+    ({ model, fixture, parent } = await mountComponent(SplitIntoColumnsPanel, {
       props: { onCloseSidePanel: () => onCloseSidePanel() },
     }));
     dispatch = spyModelDispatch(model);
@@ -164,7 +152,20 @@ describe("split to columns sidePanel component", () => {
   });
 
   test("Panel is closed if the user starts to edit a cell", async () => {
-    model.dispatch("START_EDITION");
+    expect(onCloseSidePanel).not.toHaveBeenCalled();
+    const composerFocusStore = parent.env.getStore(ComposerFocusStore);
+    composerFocusStore.focusComposer(
+      {
+        id: "testComposer",
+        get editionMode(): EditionMode {
+          return "editing";
+        },
+        startEdition: () => {},
+        stopEdition: () => {},
+        setCurrentContent: () => {},
+      },
+      { focusMode: "contentFocus" }
+    );
     await nextTick();
     expect(onCloseSidePanel).toHaveBeenCalled();
   });

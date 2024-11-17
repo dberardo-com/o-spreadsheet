@@ -12,7 +12,7 @@ import {
   INSERT_COLUMNS_BEFORE_ACTION,
   INSERT_LINK,
   INSERT_ROWS_BEFORE_ACTION,
-  PASTE_VALUE_ACTION,
+  PASTE_AS_VALUE_ACTION,
 } from "../../actions/menu_items_actions";
 import { canUngroupHeaders } from "../../actions/view_actions";
 import {
@@ -23,10 +23,9 @@ import {
 } from "../../constants";
 import { isInside } from "../../helpers/index";
 import { openLink } from "../../helpers/links";
+import { isStaticTable } from "../../helpers/table_helpers";
 import { interactiveCut } from "../../helpers/ui/cut_interactive";
 import { interactivePaste, interactivePasteFromOS } from "../../helpers/ui/paste_interactive";
-import { interactiveStopEdition } from "../../helpers/ui/stop_edition_interactive";
-import { ComposerSelection } from "../../plugins/ui_stateful";
 import { cellMenuRegistry } from "../../registries/menus/cell_menu_registry";
 import { colMenuRegistry } from "../../registries/menus/col_menu_registry";
 import {
@@ -34,7 +33,10 @@ import {
   unGroupHeadersMenuRegistry,
 } from "../../registries/menus/header_group_registry";
 import { rowMenuRegistry } from "../../registries/menus/row_menu_registry";
-import { _t } from "../../translation";
+import { Store, useStore } from "../../store_engine";
+import { DOMFocusableElementStore } from "../../stores/DOM_focus_store";
+import { ArrayFormulaHighlight } from "../../stores/array_formula_highlight";
+import { HighlightStore } from "../../stores/highlight_store";
 import {
   Align,
   CellValueType,
@@ -44,21 +46,24 @@ import {
   DOMDimension,
   Dimension,
   Direction,
+  GridClickModifiers,
   HeaderIndex,
   Pixel,
-  Position,
   Rect,
   Ref,
   SpreadsheetChildEnv,
+  Table,
 } from "../../types/index";
 import { Autofill } from "../autofill/autofill";
 import { ClientTag } from "../collaborative_client_tag/collaborative_client_tag";
+import { ComposerSelection } from "../composer/composer/abstract_composer_store";
+import { ComposerFocusStore } from "../composer/composer_focus_store";
 import { GridComposer } from "../composer/grid_composer/grid_composer";
-import { FilterIconsOverlay } from "../filters/filter_icons_overlay/filter_icons_overlay";
 import { GridOverlay } from "../grid_overlay/grid_overlay";
 import { GridPopover } from "../grid_popover/grid_popover";
 import { HeadersOverlay } from "../headers_overlay/headers_overlay";
 import { cssPropertiesToCss } from "../helpers";
+import { keyboardEventToShortcutString } from "../helpers/dom_helpers";
 import { dragAndDropBeyondTheViewport } from "../helpers/drag_and_drop";
 import { useGridDrawing } from "../helpers/draw_grid_hook";
 import { useAbsoluteBoundingRect } from "../helpers/position_hook";
@@ -66,9 +71,13 @@ import { updateSelectionWithArrowKeys } from "../helpers/selection_helpers";
 import { useWheelHandler } from "../helpers/wheel_hook";
 import { Highlight } from "../highlight/highlight/highlight";
 import { Menu, MenuState } from "../menu/menu";
+import { PaintFormatStore } from "../paint_format_button/paint_format_store";
+import { CellPopoverStore } from "../popover";
 import { Popover } from "../popover/popover";
-import { HorizontalScrollBar, VerticalScrollBar } from "../scrollbar/index";
-import { ComposerFocusType } from "../spreadsheet/spreadsheet";
+import { HorizontalScrollBar, VerticalScrollBar } from "../scrollbar/";
+import { SidePanelStore } from "../side_panel/side_panel/side_panel_store";
+import { TableResizer } from "../tables/table_resizer/table_resizer";
+import { HoveredCellStore } from "./hovered_cell_store";
 
 /**
  * The Grid component is the main part of the spreadsheet UI. It is responsible
@@ -98,11 +107,7 @@ const registries = {
 };
 
 interface Props {
-  sidePanelIsOpen: boolean;
   exposeFocus: (focus: () => void) => void;
-  focusComposer: ComposerFocusType;
-  onComposerContentFocused: () => void;
-  onGridComposerCellFocused: (content?: string, selection?: ComposerSelection) => void;
 }
 
 // -----------------------------------------------------------------------------
@@ -110,6 +115,9 @@ interface Props {
 // -----------------------------------------------------------------------------
 export class Grid extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-Grid";
+  static props = {
+    exposeFocus: Function,
+  };
   static components = {
     GridComposer,
     GridOverlay,
@@ -122,52 +130,70 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
     Popover,
     VerticalScrollBar,
     HorizontalScrollBar,
-    FilterIconsOverlay,
+    TableResizer,
   };
   readonly HEADER_HEIGHT = HEADER_HEIGHT;
   readonly HEADER_WIDTH = HEADER_WIDTH;
   private menuState!: MenuState;
   private gridRef!: Ref<HTMLElement>;
-  private hiddenInput!: Ref<HTMLElement>;
+  private highlightStore!: Store<HighlightStore>;
+  private cellPopovers!: Store<CellPopoverStore>;
+  private composerFocusStore!: Store<ComposerFocusStore>;
+  private DOMFocusableElementStore!: Store<DOMFocusableElementStore>;
+  private paintFormatStore!: Store<PaintFormatStore>;
 
   onMouseWheel!: (ev: WheelEvent) => void;
   canvasPosition!: DOMCoordinates;
-  hoveredCell!: Partial<Position>;
+  hoveredCell!: Store<HoveredCellStore>;
+  sidePanel!: Store<SidePanelStore>;
 
   setup() {
+    this.highlightStore = useStore(HighlightStore);
     this.menuState = useState({
       isOpen: false,
       position: null,
       menuItems: [],
     });
     this.gridRef = useRef("grid");
-    this.hiddenInput = useRef("hiddenInput");
     this.canvasPosition = useAbsoluteBoundingRect(this.gridRef);
-    this.hoveredCell = useState({ col: undefined, row: undefined });
+    this.hoveredCell = useStore(HoveredCellStore);
+    this.composerFocusStore = useStore(ComposerFocusStore);
+    this.DOMFocusableElementStore = useStore(DOMFocusableElementStore);
+    this.sidePanel = useStore(SidePanelStore);
+    this.paintFormatStore = useStore(PaintFormatStore);
+    useStore(ArrayFormulaHighlight);
 
     useChildSubEnv({ getPopoverContainerRect: () => this.getGridRect() });
     useExternalListener(document.body, "cut", this.copy.bind(this, true));
     useExternalListener(document.body, "copy", this.copy.bind(this, false));
     useExternalListener(document.body, "paste", this.paste);
-    onMounted(() => this.focus());
-    this.props.exposeFocus(() => this.focus());
+    onMounted(() => this.focusDefaultElement());
+    this.props.exposeFocus(() => this.focusDefaultElement());
     useGridDrawing("canvas", this.env.model, () =>
       this.env.model.getters.getSheetViewDimensionWithHeaders()
     );
-    useEffect(
-      () => this.focus(),
-      () => [this.env.model.getters.getActiveSheetId()]
-    );
     this.onMouseWheel = useWheelHandler((deltaX, deltaY) => {
       this.moveCanvas(deltaX, deltaY);
-      this.hoveredCell.col = undefined;
-      this.hoveredCell.row = undefined;
+      this.hoveredCell.clear();
     });
+    this.cellPopovers = useStore(CellPopoverStore);
+
+    useEffect(
+      () => {
+        if (!this.sidePanel.isOpen) {
+          this.DOMFocusableElementStore.focus();
+        }
+      },
+      () => [this.sidePanel.isOpen]
+    );
   }
 
   onCellHovered({ col, row }) {
-    this.hoveredCell.col = col;
-    this.hoveredCell.row = row;
+    this.hoveredCell.hover({ col, row });
+  }
+
+  get highlights() {
+    return this.highlightStore.highlights;
   }
 
   get gridOverlayDimensions() {
@@ -180,77 +206,77 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
   }
 
   onClosePopover() {
-    if (this.env.model.getters.hasOpenedPopover()) {
-      this.closeOpenedPopover();
+    if (this.cellPopovers.isOpen) {
+      this.cellPopovers.close();
     }
-    this.focus();
+    this.focusDefaultElement();
   }
 
   // this map will handle most of the actions that should happen on key down. The arrow keys are managed in the key
   // down itself
   private keyDownMapping: { [key: string]: Function } = {
-    ENTER: () => {
+    Enter: () => {
       const cell = this.env.model.getters.getActiveCell();
       cell.type === CellValueType.empty
-        ? this.props.onGridComposerCellFocused()
-        : this.props.onComposerContentFocused();
+        ? this.onComposerCellFocused()
+        : this.onComposerContentFocused();
     },
-    TAB: () => this.env.model.selection.moveAnchorCell("right", 1),
-    "SHIFT+TAB": () => this.env.model.selection.moveAnchorCell("left", 1),
+    Tab: () => this.env.model.selection.moveAnchorCell("right", 1),
+    "Shift+Tab": () => this.env.model.selection.moveAnchorCell("left", 1),
     F2: () => {
       const cell = this.env.model.getters.getActiveCell();
       cell.type === CellValueType.empty
-        ? this.props.onGridComposerCellFocused()
-        : this.props.onComposerContentFocused();
+        ? this.onComposerCellFocused()
+        : this.onComposerContentFocused();
     },
-    DELETE: () => {
+    Delete: () => {
       this.env.model.dispatch("DELETE_CONTENT", {
         sheetId: this.env.model.getters.getActiveSheetId(),
         target: this.env.model.getters.getSelectedZones(),
       });
     },
-    BACKSPACE: () => {
+    Backspace: () => {
       this.env.model.dispatch("DELETE_CONTENT", {
         sheetId: this.env.model.getters.getActiveSheetId(),
         target: this.env.model.getters.getSelectedZones(),
       });
     },
-    ESCAPE: () => {
+    Escape: () => {
       /** TODO: Clean once we introduce proper focus on sub components. Grid should not have to handle all this logic */
-      if (this.env.model.getters.hasOpenedPopover()) {
-        this.closeOpenedPopover();
+      if (this.cellPopovers.isOpen) {
+        this.cellPopovers.close();
       } else if (this.menuState.isOpen) {
         this.closeMenu();
-      } else if (this.env.model.getters.isPaintingFormat()) {
-        this.env.model.dispatch("CANCEL_PAINT_FORMAT");
+      } else if (this.paintFormatStore.isActive) {
+        this.paintFormatStore.cancel();
       } else {
         this.env.model.dispatch("CLEAN_CLIPBOARD_HIGHLIGHT");
       }
     },
-    "CTRL+A": () => this.env.model.selection.loopSelection(),
-    "CTRL+Z": () => this.env.model.dispatch("REQUEST_UNDO"),
-    "CTRL+Y": () => this.env.model.dispatch("REQUEST_REDO"),
+    "Ctrl+A": () => this.env.model.selection.loopSelection(),
+    "Ctrl+Z": () => this.env.model.dispatch("REQUEST_UNDO"),
+    "Ctrl+Y": () => this.env.model.dispatch("REQUEST_REDO"),
     F4: () => this.env.model.dispatch("REQUEST_REDO"),
-    "CTRL+B": () =>
+    "Ctrl+B": () =>
       this.env.model.dispatch("SET_FORMATTING", {
         sheetId: this.env.model.getters.getActiveSheetId(),
         target: this.env.model.getters.getSelectedZones(),
         style: { bold: !this.env.model.getters.getCurrentStyle().bold },
       }),
-    "CTRL+I": () =>
+    "Ctrl+I": () =>
       this.env.model.dispatch("SET_FORMATTING", {
         sheetId: this.env.model.getters.getActiveSheetId(),
         target: this.env.model.getters.getSelectedZones(),
         style: { italic: !this.env.model.getters.getCurrentStyle().italic },
       }),
-    "CTRL+U": () =>
+    "Ctrl+U": () =>
       this.env.model.dispatch("SET_FORMATTING", {
         sheetId: this.env.model.getters.getActiveSheetId(),
         target: this.env.model.getters.getSelectedZones(),
         style: { underline: !this.env.model.getters.getCurrentStyle().underline },
       }),
-    "CTRL+O": () => CREATE_IMAGE(this.env),
-    "ALT+=": () => {
+    "Ctrl+O": () => CREATE_IMAGE(this.env),
+    "Alt+=": () => {
       const sheetId = this.env.model.getters.getActiveSheetId();
 
       const mainSelectedZone = this.env.model.getters.getSelectedZone();
@@ -263,18 +289,18 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
         const zone = sums[0]?.zone;
         const zoneXc = zone ? this.env.model.getters.zoneToXC(sheetId, sums[0].zone) : "";
         const formula = `=SUM(${zoneXc})`;
-        this.props.onGridComposerCellFocused(formula, { start: 5, end: 5 + zoneXc.length });
+        this.onComposerCellFocused(formula, { start: 5, end: 5 + zoneXc.length });
       } else {
         this.env.model.dispatch("SUM_SELECTION");
       }
     },
-    "ALT+ENTER": () => {
+    "Alt+Enter": () => {
       const cell = this.env.model.getters.getActiveCell();
       if (cell.link) {
         openLink(cell.link, this.env);
       }
     },
-    "CTRL+HOME": () => {
+    "Ctrl+Home": () => {
       const sheetId = this.env.model.getters.getActiveSheetId();
       const { col, row } = this.env.model.getters.getNextVisibleCellPosition({
         sheetId,
@@ -283,7 +309,7 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
       });
       this.env.model.selection.selectCell(col, row);
     },
-    "CTRL+END": () => {
+    "Ctrl+End": () => {
       const sheetId = this.env.model.getters.getActiveSheetId();
       const col = this.env.model.getters.findVisibleHeader(
         sheetId,
@@ -299,7 +325,7 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
       )!;
       this.env.model.selection.selectCell(col, row);
     },
-    "SHIFT+ ": () => {
+    "Shift+ ": () => {
       const sheetId = this.env.model.getters.getActiveSheetId();
       const newZone = {
         ...this.env.model.getters.getSelectedZone(),
@@ -309,7 +335,7 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
       const position = this.env.model.getters.getActivePosition();
       this.env.model.selection.selectZone({ cell: position, zone: newZone });
     },
-    "CTRL+ ": () => {
+    "Ctrl+ ": () => {
       const sheetId = this.env.model.getters.getActiveSheetId();
       const newZone = {
         ...this.env.model.getters.getSelectedZone(),
@@ -319,18 +345,18 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
       const position = this.env.model.getters.getActivePosition();
       this.env.model.selection.selectZone({ cell: position, zone: newZone });
     },
-    "CTRL+D": async () => this.env.model.dispatch("COPY_PASTE_CELLS_ABOVE"),
-    "CTRL+R": async () => this.env.model.dispatch("COPY_PASTE_CELLS_ON_LEFT"),
-    "CTRL+SHIFT+E": () => this.setHorizontalAlign("center"),
-    "CTRL+SHIFT+L": () => this.setHorizontalAlign("left"),
-    "CTRL+SHIFT+R": () => this.setHorizontalAlign("right"),
-    "CTRL+SHIFT+V": () => PASTE_VALUE_ACTION(this.env),
-    "CTRL+SHIFT+<": () => this.clearFormatting(), // for qwerty
-    "CTRL+<": () => this.clearFormatting(), // for azerty
-    "CTRL+SHIFT+ ": () => {
+    "Ctrl+D": async () => this.env.model.dispatch("COPY_PASTE_CELLS_ABOVE"),
+    "Ctrl+R": async () => this.env.model.dispatch("COPY_PASTE_CELLS_ON_LEFT"),
+    "Ctrl+Shift+E": () => this.setHorizontalAlign("center"),
+    "Ctrl+Shift+L": () => this.setHorizontalAlign("left"),
+    "Ctrl+Shift+R": () => this.setHorizontalAlign("right"),
+    "Ctrl+Shift+V": () => PASTE_AS_VALUE_ACTION(this.env),
+    "Ctrl+Shift+<": () => this.clearFormatting(), // for qwerty
+    "Ctrl+<": () => this.clearFormatting(), // for azerty
+    "Ctrl+Shift+ ": () => {
       this.env.model.selection.selectAll();
     },
-    "CTRL+ALT+=": () => {
+    "Ctrl+Alt+=": () => {
       const activeCols = this.env.model.getters.getActiveCols();
       const activeRows = this.env.model.getters.getActiveRows();
       const isSingleSelection = this.env.model.getters.getSelectedZones().length === 1;
@@ -342,7 +368,7 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
         INSERT_ROWS_BEFORE_ACTION(this.env);
       }
     },
-    "CTRL+ALT+-": () => {
+    "Ctrl+Alt+-": () => {
       const columns = [...this.env.model.getters.getActiveCols()];
       const rows = [...this.env.model.getters.getActiveRows()];
       if (columns.length > 0 && rows.length === 0) {
@@ -359,27 +385,27 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
         });
       }
     },
-    "SHIFT+PAGEDOWN": () => {
+    "Shift+PageDown": () => {
       this.env.model.dispatch("ACTIVATE_NEXT_SHEET");
     },
-    "SHIFT+PAGEUP": () => {
+    "Shift+PageUp": () => {
       this.env.model.dispatch("ACTIVATE_PREVIOUS_SHEET");
     },
-    PAGEDOWN: () => this.env.model.dispatch("SHIFT_VIEWPORT_DOWN"),
-    PAGEUP: () => this.env.model.dispatch("SHIFT_VIEWPORT_UP"),
-    "CTRL+K": () => INSERT_LINK(this.env),
-    "ALT+SHIFT+ARROWRIGHT": () => this.processHeaderGroupingKey("right"),
-    "ALT+SHIFT+ARROWLEFT": () => this.processHeaderGroupingKey("left"),
-    "ALT+SHIFT+ARROWUP": () => this.processHeaderGroupingKey("up"),
-    "ALT+SHIFT+ARROWDOWN": () => this.processHeaderGroupingKey("down"),
+    PageDown: () => this.env.model.dispatch("SHIFT_VIEWPORT_DOWN"),
+    PageUp: () => this.env.model.dispatch("SHIFT_VIEWPORT_UP"),
+    "Ctrl+K": () => INSERT_LINK(this.env),
+    "Alt+Shift+ArrowRight": () => this.processHeaderGroupingKey("right"),
+    "Alt+Shift+ArrowLeft": () => this.processHeaderGroupingKey("left"),
+    "Alt+Shift+ArrowUp": () => this.processHeaderGroupingKey("up"),
+    "Alt+Shift+ArrowDown": () => this.processHeaderGroupingKey("down"),
   };
 
-  focus() {
+  focusDefaultElement() {
     if (
       !this.env.model.getters.getSelectedFigureId() &&
-      this.env.model.getters.getEditionMode() === "inactive"
+      this.composerFocusStore.activeComposer.editionMode === "inactive"
     ) {
-      this.hiddenInput.el?.focus();
+      this.DOMFocusableElementStore.focus();
     }
   }
 
@@ -443,20 +469,13 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
   // Zone selection with mouse
   // ---------------------------------------------------------------------------
 
-  onCellClicked(
-    col: HeaderIndex,
-    row: HeaderIndex,
-    { ctrlKey, shiftKey }: { ctrlKey: boolean; shiftKey: boolean }
-  ) {
-    if (this.env.model.getters.hasOpenedPopover()) {
-      this.closeOpenedPopover();
+  onCellClicked(col: HeaderIndex, row: HeaderIndex, modifiers: GridClickModifiers) {
+    if (this.composerFocusStore.activeComposer.editionMode === "editing") {
+      this.composerFocusStore.activeComposer.stopEdition();
     }
-    if (this.env.model.getters.getEditionMode() === "editing") {
-      interactiveStopEdition(this.env);
-    }
-    if (shiftKey) {
+    if (modifiers.expandZone) {
       this.env.model.selection.setAnchorCorner(col, row);
-    } else if (ctrlKey) {
+    } else if (modifiers.addZone) {
       this.env.model.selection.addCellToSelection(col, row);
     } else {
       this.env.model.selection.selectCell(col, row);
@@ -476,10 +495,8 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
       }
     };
     const onMouseUp = () => {
-      if (this.env.model.getters.isPaintingFormat()) {
-        this.env.model.dispatch("PASTE", {
-          target: this.env.model.getters.getSelectedZones(),
-        });
+      if (this.paintFormatStore.isActive) {
+        this.paintFormatStore.pasteFormat(this.env.model.getters.getSelectedZones());
       }
     };
     dragAndDropBeyondTheViewport(this.env, onMouseMove, onMouseUp);
@@ -490,15 +507,12 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
     ({ col, row } = this.env.model.getters.getMainCellPosition({ sheetId, col, row }));
     const cell = this.env.model.getters.getEvaluatedCell({ sheetId, col, row });
     if (cell.type === CellValueType.empty) {
-      this.props.onGridComposerCellFocused();
+      this.onComposerCellFocused();
     } else {
-      this.props.onComposerContentFocused();
+      this.onComposerContentFocused();
     }
   }
 
-  closeOpenedPopover() {
-    this.env.model.dispatch("CLOSE_CELL_POPOVER");
-  }
   // ---------------------------------------------------------------------------
   // Keyboard interactions
   // ---------------------------------------------------------------------------
@@ -506,29 +520,20 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
   processArrows(ev: KeyboardEvent) {
     ev.preventDefault();
     ev.stopPropagation();
-    if (this.env.model.getters.hasOpenedPopover()) {
-      this.closeOpenedPopover();
+    if (this.cellPopovers.isOpen) {
+      this.cellPopovers.close();
     }
 
     updateSelectionWithArrowKeys(ev, this.env.model.selection);
 
-    if (this.env.model.getters.isPaintingFormat()) {
-      this.env.model.dispatch("PASTE", {
-        target: this.env.model.getters.getSelectedZones(),
-      });
+    if (this.paintFormatStore.isActive) {
+      this.paintFormatStore.pasteFormat(this.env.model.getters.getSelectedZones());
     }
   }
 
   onKeydown(ev: KeyboardEvent) {
-    const eventKey = ev.key.toUpperCase();
-    let keyDownString = "";
-    if (ev.ctrlKey && eventKey !== "CTRL") keyDownString += "CTRL+";
-    if (ev.metaKey) keyDownString += "CTRL+";
-    if (ev.altKey && eventKey !== "ALT") keyDownString += "ALT+";
-    if (ev.shiftKey && eventKey !== "SHIFT") keyDownString += "SHIFT+";
-    keyDownString += ev.key.toUpperCase();
-
-    let handler = this.keyDownMapping[keyDownString];
+    const keyDownString = keyboardEventToShortcutString(ev);
+    const handler = this.keyDownMapping[keyDownString];
     if (handler) {
       ev.preventDefault();
       ev.stopPropagation();
@@ -542,20 +547,6 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
     }
   }
 
-  onInput(ev: InputEvent) {
-    // the user meant to paste in the sheet, not open the composer with the pasted content
-    if (!ev.isComposing && ev.inputType === "insertFromPaste") {
-      return;
-    }
-    if (ev.data) {
-      // if the user types a character on the grid, it means he wants to start composing the selected cell with that
-      // character
-      ev.preventDefault();
-      ev.stopPropagation();
-      this.props.onGridComposerCellFocused(ev.data);
-    }
-  }
-
   // ---------------------------------------------------------------------------
   // Context Menu
   // ---------------------------------------------------------------------------
@@ -565,7 +556,7 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
     const lastZone = this.env.model.getters.getSelectedZone();
     const { left: col, top: row } = lastZone;
     let type: ContextMenuType = "CELL";
-    interactiveStopEdition(this.env);
+    this.composerFocusStore.activeComposer.stopEdition();
     if (this.env.model.getters.getActiveCols().has(col)) {
       type = "COL";
     } else if (this.env.model.getters.getActiveRows().has(row)) {
@@ -594,27 +585,21 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
   }
 
   toggleContextMenu(type: ContextMenuType, x: Pixel, y: Pixel) {
-    if (this.env.model.getters.hasOpenedPopover()) {
-      this.closeOpenedPopover();
+    if (this.cellPopovers.isOpen) {
+      this.cellPopovers.close();
     }
     this.menuState.isOpen = true;
     this.menuState.position = { x, y };
     this.menuState.menuItems = registries[type].getMenuItems();
   }
 
-  copy(cut: boolean, ev: ClipboardEvent) {
+  async copy(cut: boolean, ev: ClipboardEvent) {
     if (!this.gridEl.contains(document.activeElement)) {
       return;
     }
 
-    const clipboardData = ev.clipboardData;
-    if (!clipboardData) {
-      this.displayWarningCopyPasteNotSupported();
-      return;
-    }
-
     /* If we are currently editing a cell, let the default behavior */
-    if (this.env.model.getters.getEditionMode() !== "inactive") {
+    if (this.composerFocusStore.activeComposer.editionMode !== "inactive") {
       return;
     }
     if (cut) {
@@ -623,8 +608,9 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
       this.env.model.dispatch("COPY");
     }
     const content = this.env.model.getters.getClipboardContent();
+    const clipboardData = ev.clipboardData;
     for (const type in content) {
-      clipboardData.setData(type, content[type]);
+      clipboardData?.setData(type, content[type]);
     }
     ev.preventDefault();
   }
@@ -634,30 +620,43 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
       return;
     }
 
+    ev.preventDefault();
+
     const clipboardData = ev.clipboardData;
     if (!clipboardData) {
-      this.displayWarningCopyPasteNotSupported();
       return;
     }
+    const clipboardDataTextContent = clipboardData?.getData(ClipboardMIMEType.PlainText);
+    const clipboardDataHtmlContent = clipboardData?.getData(ClipboardMIMEType.Html);
+    const htmlDocument = new DOMParser().parseFromString(
+      clipboardDataHtmlContent ?? "<div></div>",
+      "text/html"
+    );
+    const osClipboardSpreadsheetContent =
+      clipboardData.getData(ClipboardMIMEType.OSpreadsheet) || "{}";
 
-    if (clipboardData.types.indexOf(ClipboardMIMEType.PlainText) > -1) {
-      const content = clipboardData.getData(ClipboardMIMEType.PlainText);
-      const target = this.env.model.getters.getSelectedZones();
-      const clipboardString = this.env.model.getters.getClipboardTextContent();
-      if (clipboardString === content) {
-        // the paste actually comes from o-spreadsheet itself
-        interactivePaste(this.env, target);
-      } else {
-        interactivePasteFromOS(this.env, target, content);
+    const target = this.env.model.getters.getSelectedZones();
+    const isCutOperation = this.env.model.getters.isCutOperation();
+
+    const clipboardId =
+      JSON.parse(osClipboardSpreadsheetContent).clipboardId ??
+      htmlDocument.querySelector("div")?.getAttribute("data-clipboard-id");
+
+    if (this.env.model.getters.getClipboardId() === clipboardId) {
+      interactivePaste(this.env, target);
+    } else {
+      const clipboardContent = {
+        [ClipboardMIMEType.PlainText]: clipboardDataTextContent,
+        [ClipboardMIMEType.Html]: clipboardDataHtmlContent,
+      };
+      if (osClipboardSpreadsheetContent !== "{}") {
+        clipboardContent[ClipboardMIMEType.OSpreadsheet] = osClipboardSpreadsheetContent;
       }
-      if (this.env.model.getters.isCutOperation()) {
-        await this.env.clipboard.write({ [ClipboardMIMEType.PlainText]: "" });
-      }
+      interactivePasteFromOS(this.env, target, clipboardContent);
     }
-  }
-
-  private displayWarningCopyPasteNotSupported() {
-    this.env.raiseError(_t("Copy/Paste is not supported in this browser."));
+    if (isCutOperation) {
+      await this.env.clipboard.write({ [ClipboardMIMEType.PlainText]: "" });
+    }
   }
 
   private clearFormatting() {
@@ -677,7 +676,7 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
 
   closeMenu() {
     this.menuState.isOpen = false;
-    this.focus();
+    this.focusDefaultElement();
   }
 
   private processHeaderGroupingKey(direction: Direction) {
@@ -778,12 +777,17 @@ export class Grid extends Component<Props, SpreadsheetChildEnv> {
       }
     }
   }
-}
 
-Grid.props = {
-  sidePanelIsOpen: Boolean,
-  exposeFocus: Function,
-  focusComposer: String,
-  onComposerContentFocused: Function,
-  onGridComposerCellFocused: Function,
-};
+  onComposerCellFocused(content?: string, selection?: ComposerSelection) {
+    this.composerFocusStore.focusActiveComposer({ content, selection, focusMode: "cellFocus" });
+  }
+
+  onComposerContentFocused() {
+    this.composerFocusStore.focusActiveComposer({ focusMode: "contentFocus" });
+  }
+
+  get staticTables(): Table[] {
+    const sheetId = this.env.model.getters.getActiveSheetId();
+    return this.env.model.getters.getCoreTables(sheetId).filter(isStaticTable);
+  }
+}

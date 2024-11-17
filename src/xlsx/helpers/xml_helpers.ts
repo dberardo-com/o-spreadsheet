@@ -1,6 +1,14 @@
 import { DEFAULT_FONT_SIZE } from "../../constants";
 import { concat } from "../../helpers";
-import { XLSXStructure, XMLAttributes, XMLAttributeValue, XMLString } from "../../types/xlsx";
+import { BorderDescr, ExcelWorkbookData } from "../../types";
+import {
+  XLSXBorder,
+  XLSXBorderDescr,
+  XLSXStructure,
+  XMLAttributeValue,
+  XMLAttributes,
+  XMLString,
+} from "../../types/xlsx";
 import { XLSXExportXMLFile } from "./../../types/xlsx";
 
 // -------------------------------------
@@ -55,7 +63,26 @@ export function parseXML(
   return document;
 }
 
-export function getDefaultXLSXStructure(): XLSXStructure {
+function convertBorderDescr(descr: BorderDescr | undefined): XLSXBorderDescr | undefined {
+  if (!descr) {
+    return undefined;
+  }
+  return {
+    style: descr.style,
+    color: { rgb: descr.color },
+  };
+}
+
+export function getDefaultXLSXStructure(data: ExcelWorkbookData): XLSXStructure {
+  const xlsxBorders: XLSXBorder[] = Object.values(data.borders).map((border) => {
+    return {
+      left: convertBorderDescr(border.left),
+      right: convertBorderDescr(border.right),
+      bottom: convertBorderDescr(border.bottom),
+      top: convertBorderDescr(border.top),
+    };
+  });
+  const borders = [{}, ...xlsxBorders];
   return {
     relsFiles: [],
     sharedStrings: [],
@@ -66,7 +93,7 @@ export function getDefaultXLSXStructure(): XLSXStructure {
         fillId: 0,
         numFmtId: 0,
         borderId: 0,
-        alignment: { vertical: "bottom" },
+        alignment: {},
       },
     ],
     fonts: [
@@ -74,11 +101,11 @@ export function getDefaultXLSXStructure(): XLSXStructure {
         size: DEFAULT_FONT_SIZE,
         family: 2,
         color: { rgb: "000000" },
-        name: "Calibri",
+        name: "Arial",
       },
     ],
     fills: [{ reservedAttribute: "none" }, { reservedAttribute: "gray125" }],
-    borders: [{}],
+    borders,
     numFmts: [],
     dxfs: [],
   };

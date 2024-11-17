@@ -3,18 +3,18 @@
     <div class="o-overlay">
       <ColResizer onOpenContextMenu="props.onOpenContextMenu"/>
       <RowResizer onOpenContextMenu="props.onOpenContextMenu"/>
-      <div class="all" t-on-mousedown.self="selectAll"/>
+      <div class="all" t-on-pointerdown.self="selectAll"/>
     </div>
   </t>
 
   <t t-name="o-spreadsheet-RowResizer">
     <div
       class="o-row-resizer"
-      t-on-mousemove.self="onMouseMove"
+      t-on-pointermove.self="onMouseMove"
       t-on-mouseleave="onMouseLeave"
-      t-on-mousedown.self.prevent="select"
+      t-on-pointerdown.self.prevent="select"
       t-ref="rowResizer"
-      t-on-mouseup.self="onMouseUp"
+      t-on-pointerup.self="onMouseUp"
       t-on-contextmenu.self="onContextMenu"
       t-att-class="{'o-grab': state.waitingForMove, 'o-dragging': state.isMoving}">
       <div
@@ -30,7 +30,7 @@
       <t t-if="state.resizerIsActive">
         <div
           class="o-handle"
-          t-on-mousedown="onMouseDown"
+          t-on-pointerdown="onMouseDown"
           t-on-dblclick="onDblClick"
           t-on-contextmenu.prevent=""
           t-attf-style="top:{{state.draggerLinePosition - 2}}px;">
@@ -41,25 +41,24 @@
         t-foreach="env.model.getters.getHiddenRowsGroups(env.model.getters.getActiveSheetId())"
         t-as="hiddenItem"
         t-key="hiddenItem_index">
-        <t t-if="!hiddenItem.includes(0)">
+        <div
+          class="position-absolute end-0 translate-middle-y"
+          t-att-style="getUnhideButtonStyle(hiddenItem[0])">
           <div
-            class="o-unhide"
+            class="o-unhide rounded mb-1"
+            t-att-class="{'invisible': hiddenItem.includes(0)}"
             t-att-data-index="hiddenItem_index"
-            t-attf-style="top:{{unhideStyleValue(hiddenItem[0]) - 17}}px;"
             t-on-click="() => this.unhide(hiddenItem)">
-            <t t-call="o-spreadsheet-Icon.TRIANGLE_UP"/>
+            <t t-call="o-spreadsheet-Icon.CARET_UP"/>
           </div>
-        </t>
-        <t
-          t-if="!hiddenItem.includes(env.model.getters.getNumberRows(env.model.getters.getActiveSheetId())-1)">
           <div
-            class="o-unhide"
+            class="o-unhide rounded"
+            t-att-class="{'invisible': hiddenItem.includes(env.model.getters.getNumberRows(env.model.getters.getActiveSheetId())-1)}"
             t-att-data-index="hiddenItem_index"
-            t-attf-style="top:{{unhideStyleValue(hiddenItem[0]) + 3}}px;"
             t-on-click="() => this.unhide(hiddenItem)">
-            <t t-call="o-spreadsheet-Icon.TRIANGLE_DOWN"/>
+            <t t-call="o-spreadsheet-Icon.CARET_DOWN"/>
           </div>
-        </t>
+        </div>
       </t>
     </div>
   </t>
@@ -67,11 +66,11 @@
   <t t-name="o-spreadsheet-ColResizer">
     <div
       class="o-col-resizer"
-      t-on-mousemove.self="onMouseMove"
+      t-on-pointermove.self="onMouseMove"
       t-on-mouseleave="onMouseLeave"
-      t-on-mousedown.self.prevent="select"
+      t-on-pointerdown.self.prevent="select"
       t-ref="colResizer"
-      t-on-mouseup.self="onMouseUp"
+      t-on-pointerup.self="onMouseUp"
       t-on-contextmenu.self="onContextMenu"
       t-att-class="{'o-grab': state.waitingForMove, 'o-dragging': state.isMoving, }">
       <div
@@ -87,7 +86,7 @@
       <t t-if="state.resizerIsActive">
         <div
           class="o-handle"
-          t-on-mousedown="onMouseDown"
+          t-on-pointerdown="onMouseDown"
           t-on-dblclick="onDblClick"
           t-on-contextmenu.prevent=""
           t-attf-style="left:{{state.draggerLinePosition - 2}}px;">
@@ -98,25 +97,24 @@
         t-foreach="env.model.getters.getHiddenColsGroups(env.model.getters.getActiveSheetId())"
         t-as="hiddenItem"
         t-key="hiddenItem_index">
-        <t t-if="!hiddenItem.includes(0)">
+        <div
+          class="position-absolute h-100 d-flex align-items-center translate-middle-x gap-2"
+          t-att-style="getUnhideButtonStyle(hiddenItem[0])">
           <div
-            class="o-unhide"
+            class="o-unhide rounded"
+            t-att-class="{'invisible': hiddenItem.includes(0)}"
             t-att-data-index="hiddenItem_index"
-            t-attf-style="left:{{unhideStyleValue(hiddenItem[0]) - 17}}px; margin-right:6px;"
             t-on-click="() => this.unhide(hiddenItem)">
-            <t t-call="o-spreadsheet-Icon.TRIANGLE_LEFT"/>
+            <t t-call="o-spreadsheet-Icon.CARET_LEFT"/>
           </div>
-        </t>
-        <t
-          t-if="!hiddenItem.includes(env.model.getters.getNumberCols(env.model.getters.getActiveSheetId())-1)">
           <div
-            class="o-unhide"
+            class="o-unhide rounded"
+            t-att-class="{'invisible': hiddenItem.includes(env.model.getters.getNumberCols(env.model.getters.getActiveSheetId())-1)}"
             t-att-data-index="hiddenItem_index"
-            t-attf-style="left:{{unhideStyleValue(hiddenItem[0]) + 3}}px;"
             t-on-click="() => this.unhide(hiddenItem)">
-            <t t-call="o-spreadsheet-Icon.TRIANGLE_RIGHT"/>
+            <t t-call="o-spreadsheet-Icon.CARET_RIGHT"/>
           </div>
-        </t>
+        </div>
       </t>
     </div>
   </t>

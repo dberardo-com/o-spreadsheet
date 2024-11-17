@@ -1,6 +1,6 @@
 import { markdownLink } from "../helpers";
 import { _t } from "../translation";
-import { AddFunctionDescription, CellValue, Maybe } from "../types";
+import { AddFunctionDescription, FunctionResultObject, Maybe } from "../types";
 import { arg } from "./arguments";
 import { toString } from "./helpers";
 
@@ -16,8 +16,10 @@ export const HYPERLINK = {
       _t("The text to display in the cell, enclosed in quotation marks.")
     ),
   ],
-  returns: ["STRING"],
-  compute: function (url: Maybe<CellValue>, linkLabel: Maybe<CellValue>): string {
+  compute: function (
+    url: Maybe<FunctionResultObject>,
+    linkLabel: Maybe<FunctionResultObject>
+  ): string {
     const processedUrl = toString(url).trim();
     const processedLabel = toString(linkLabel) || processedUrl;
     if (processedUrl === "") return processedLabel;

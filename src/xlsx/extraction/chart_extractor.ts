@@ -1,3 +1,4 @@
+import { toHex } from "../../helpers";
 import { ExcelChartDataset, ExcelChartDefinition } from "../../types";
 import { XLSXChartType, XLSX_CHART_TYPES } from "../../types/xlsx";
 import { CHART_TYPE_CONVERSION_MAP, DRAWING_LEGEND_POSITION_CONVERSION_MAP } from "../conversion";
@@ -13,10 +14,13 @@ export class XlsxChartExtractor extends XlsxBaseExtractor {
         if (!CHART_TYPE_CONVERSION_MAP[chartType]) {
           throw new Error(`Unsupported chart type ${chartType}`);
         }
+        if (CHART_TYPE_CONVERSION_MAP[chartType] === "combo") {
+          return this.extractComboChart(rootChartElement);
+        }
 
         // Title can be separated into multiple xml elements (for styling and such), we only import the text
         const chartTitle = this.mapOnElements(
-          { parent: rootChartElement, query: "c:title a:t" },
+          { parent: rootChartElement, query: "c:chart > c:title a:t" },
           (textElement): string => {
             return textElement.textContent || "";
           }
@@ -26,12 +30,16 @@ export class XlsxChartExtractor extends XlsxBaseExtractor {
         }).asString();
 
         return {
-          title: chartTitle,
+          title: { text: chartTitle },
           type: CHART_TYPE_CONVERSION_MAP[chartType]!,
           dataSets: this.extractChartDatasets(
-            this.querySelector(rootChartElement, `c:${chartType}`)!
+            this.querySelectorAll(rootChartElement, `c:${chartType}`)!,
+            chartType
           ),
-          labelRange: this.extractChildTextContent(rootChartElement, "c:ser c:cat c:f"),
+          labelRange: this.extractChildTextContent(
+            rootChartElement,
+            `c:ser ${chartType === "scatterChart" ? "c:numRef" : "c:cat"} c:f`
+          ),
           backgroundColor: this.extractChildAttr(
             rootChartElement,
             "c:chartSpace > c:spPr a:srgbClr",
@@ -40,12 +48,6 @@ export class XlsxChartExtractor extends XlsxBaseExtractor {
               default: "ffffff",
             }
           ).asString()!,
-          verticalAxisPosition:
-            this.extractChildAttr(rootChartElement, "c:valAx > c:axPos", "val", {
-              default: "l",
-            }).asString() === "r"
-              ? "right"
-              : "left",
           legendPosition:
             DRAWING_LEGEND_POSITION_CONVERSION_MAP[
               this.extractChildAttr(rootChartElement, "c:legendPos", "val", {
@@ -59,13 +61,108 @@ export class XlsxChartExtractor extends XlsxBaseExtractor {
     )[0];
   }
 
-  private extractChartDatasets(chartElement: Element): ExcelChartDataset[] {
+  private extractComboChart(chartElement: Element): ExcelChartDefinition {
+    // Title can be separated into multiple xml elements (for styling and such), we only import the text
+    const chartTitle = this.mapOnElements(
+      { parent: chartElement, query: "c:title a:t" },
+      (textElement): string => {
+        return textElement.textContent || "";
+      }
+    ).join("");
+    const barChartGrouping = this.extractChildAttr(chartElement, "c:grouping", "val", {
+      default: "clustered",
+    }).asString();
+
+    return {
+      title: { text: chartTitle },
+      type: "combo",
+      dataSets: [
+        ...this.extractChartDatasets(
+          this.querySelectorAll(chartElement, `c:barChart`),
+          "comboChart"
+        ),
+        ...this.extractChartDatasets(
+          this.querySelectorAll(chartElement, `c:lineChart`)!,
+          "comboChart"
+        ),
+      ],
+      labelRange: this.extractChildTextContent(chartElement, "c:ser c:cat c:f"),
+      backgroundColor: this.extractChildAttr(
+        chartElement,
+        "c:chartSpace > c:spPr a:srgbClr",
+        "val",
+        {
+          default: "ffffff",
+        }
+      ).asString()!,
+      legendPosition:
+        DRAWING_LEGEND_POSITION_CONVERSION_MAP[
+          this.extractChildAttr(chartElement, "c:legendPos", "val", {
+            default: "b",
+          }).asString()
+        ],
+      stacked: barChartGrouping === "stacked",
+      fontColor: "000000",
+    };
+  }
+
+  private extractChartDatasets(
+    chartElements: NodeListOf<Element>,
+    chartType: XLSXChartType
+  ): ExcelChartDataset[] {
+    return Array.from(chartElements)
+      .map((element) => {
+        if (chartType === "scatterChart") {
+          return this.extractScatterChartDatasets(element);
+        }
+        return this.mapOnElements(
+          { parent: element, query: "c:ser" },
+          (chartDataElement): ExcelChartDataset => {
+            let label = {};
+            const reference = this.extractChildTextContent(chartDataElement, "c:tx c:f");
+            if (reference) {
+              label = { reference };
+            } else {
+              const text = this.extractChildTextContent(chartDataElement, "c:tx c:v");
+              if (text) {
+                label = { text };
+              }
+            }
+            const color = this.extractChildAttr(
+              chartDataElement,
+              "c:spPr a:solidFill a:srgbClr",
+              "val"
+            );
+            return {
+              label,
+              range: this.extractChildTextContent(chartDataElement, "c:val c:f", {
+                required: true,
+              })!,
+              backgroundColor: color ? `${toHex(color.asString())}` : undefined,
+            };
+          }
+        );
+      })
+      .flat();
+  }
+
+  private extractScatterChartDatasets(chartElement: Element): ExcelChartDataset[] {
     return this.mapOnElements(
       { parent: chartElement, query: "c:ser" },
       (chartDataElement): ExcelChartDataset => {
+        let label = {};
+        const reference = this.extractChildTextContent(chartDataElement, "c:tx c:f");
+        if (reference) {
+          label = { reference };
+        } else {
+          const text = this.extractChildTextContent(chartDataElement, "c:tx c:v");
+          if (text) {
+            label = { text };
+          }
+        }
         return {
-          label: this.extractChildTextContent(chartDataElement, "c:tx c:f"),
-          range: this.extractChildTextContent(chartDataElement, "c:val c:f", { required: true })!,
+          label,
+          range: this.extractChildTextContent(chartDataElement, "c:yVal c:f", { required: true })!,
         };
       }
     );
@@ -80,11 +177,19 @@ export class XlsxChartExtractor extends XlsxBaseExtractor {
     if (!plotAreaElement) {
       throw new Error("Missing plot area in the chart definition.");
     }
+    let globalTag: XLSXChartType | undefined = undefined;
     for (let child of plotAreaElement.children) {
       const tag = removeTagEscapedNamespaces(child.tagName);
       if (XLSX_CHART_TYPES.some((chartType) => chartType === tag)) {
-        return tag as XLSXChartType;
+        if (!globalTag) {
+          globalTag = tag as XLSXChartType;
+        } else if (globalTag !== tag) {
+          globalTag = "comboChart";
+        }
       }
+    }
+    if (globalTag) {
+      return globalTag;
     }
     throw new Error("Unknown chart type");
   }

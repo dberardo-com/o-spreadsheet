@@ -3,17 +3,13 @@
     <div
       class="o-spreadsheet"
       t-on-keydown="(ev) => !env.isDashboard() and this.onKeydown(ev)"
+      t-ref="spreadsheet"
       t-att-style="getStyle()">
       <t t-if="env.isDashboard()">
         <SpreadsheetDashboard/>
       </t>
       <t t-else="">
-        <TopBar
-          onClick="() => this.focusGrid()"
-          onComposerContentFocused="(selection) => this.onTopBarComposerFocused(selection)"
-          focusComposer="focusTopBarComposer"
-          dropdownMaxHeight="gridHeight"
-        />
+        <TopBar onClick="() => this.focusGrid()" dropdownMaxHeight="gridHeight"/>
         <div
           class="o-grid-container"
           t-att-class="{'o-two-columns': !sidePanel.isOpen}"
@@ -27,21 +23,10 @@
             <HeaderGroupContainer layers="rowLayers" dimension="'ROW'"/>
           </div>
           <div class="o-group-grid overflow-hidden">
-            <Grid
-              sidePanelIsOpen="sidePanel.isOpen"
-              focusComposer="focusGridComposer"
-              exposeFocus="(focus) => this._focusGrid = focus"
-              onComposerContentFocused="() => this.onGridComposerContentFocused()"
-              onGridComposerCellFocused="(content, selection) => this.onGridComposerCellFocused(content, selection)"
-            />
+            <Grid exposeFocus="(focus) => this._focusGrid = focus"/>
           </div>
         </div>
-        <SidePanel
-          t-if="sidePanel.isOpen"
-          onCloseSidePanel="() => this.closeSidePanel()"
-          component="sidePanel.component"
-          panelProps="sidePanel.panelProps"
-        />
+        <SidePanel/>
         <BottomBar onClick="() => this.focusGrid()"/>
       </t>
     </div>

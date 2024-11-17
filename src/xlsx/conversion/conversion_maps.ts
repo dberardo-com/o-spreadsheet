@@ -20,7 +20,7 @@ import {
 } from "../../types/xlsx";
 import { XLSXVerticalAlignment } from "./../../types/xlsx";
 
-export const SUPPORTED_BORDER_STYLES = ["thin"];
+export const SUPPORTED_BORDER_STYLES = ["thin", "medium", "thick", "dashed", "dotted"];
 export const SUPPORTED_HORIZONTAL_ALIGNMENTS: XLSXHorizontalAlignment[] = [
   "general",
   "left",
@@ -193,7 +193,7 @@ export const CHART_TYPE_CONVERSION_MAP: Record<XLSXChartType, ExcelChartType | u
   line3DChart: undefined,
   stockChart: undefined,
   radarChart: undefined,
-  scatterChart: undefined,
+  scatterChart: "scatter",
   pieChart: "pie",
   pie3DChart: undefined,
   doughnutChart: "pie",
@@ -203,6 +203,7 @@ export const CHART_TYPE_CONVERSION_MAP: Record<XLSXChartType, ExcelChartType | u
   surfaceChart: undefined,
   surface3DChart: undefined,
   bubbleChart: undefined,
+  comboChart: "combo",
 };
 
 /** Conversion map for the SUBTOTAL(index, formula) function in xlsx, index <=> actual function*/
@@ -260,7 +261,7 @@ export const XLSX_FORMATS_CONVERSION_MAP: Record<number, string | undefined> = {
   46: "hhhh:mm:ss",
   47: "hhhh:mm:ss",
   48: undefined,
-  49: undefined,
+  49: "@",
 };
 
 /**

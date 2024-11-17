@@ -1,6 +1,14 @@
-import { Component, onMounted, onWillUnmount, useEffect, useRef, useState } from "@odoo/owl";
-import { SpreadsheetChildEnv } from "../../../types/index";
+import { Component, onMounted, onWillUnmount, useRef, useState } from "@odoo/owl";
+import { debounce, zoneToXc } from "../../../helpers";
+import { Store, useLocalStore } from "../../../store_engine";
+import { _t } from "../../../translation";
+import { DebouncedFunction, SpreadsheetChildEnv } from "../../../types/index";
 import { css } from "../../helpers/css";
+import { SelectionInput } from "../../selection_input/selection_input";
+import { ValidationMessages } from "../../validation_messages/validation_messages";
+import { Checkbox } from "../components/checkbox/checkbox";
+import { Section } from "../components/section/section";
+import { FindAndReplaceStore } from "./find_and_replace_store";
 
 css/* scss */ `
   .o-find-and-replace {
@@ -18,6 +26,18 @@ css/* scss */ `
       .o-input-count {
         width: fit-content;
         padding: 4px 0 4px 4px;
+        white-space: nowrap;
+      }
+    }
+
+    .o-result-buttons {
+      .o-button {
+        height: 19px;
+        width: 19px;
+        .o-icon {
+          height: 14px;
+          width: 14px;
+        }
       }
     }
   }
@@ -27,62 +47,82 @@ interface Props {
   onCloseSidePanel: () => void;
 }
 
-interface FindAndReplaceState {
-  toSearch: string;
-  replaceWith: string;
-  searchOptions: {
-    matchCase: boolean;
-    exactMatch: boolean;
-    searchFormulas: boolean;
-  };
-}
-
 export class FindAndReplacePanel extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-FindAndReplacePanel";
-  private state: FindAndReplaceState = useState(this.initialState());
-  private debounceTimeoutId;
-  private showFormulaState: boolean = false;
+  static components = { SelectionInput, Section, Checkbox, ValidationMessages };
+  static props = {
+    onCloseSidePanel: Function,
+  };
 
   private searchInput = useRef("searchInput");
+  private store!: Store<FindAndReplaceStore>;
+  private state!: { dataRange: string };
+  private updateSearchContent!: DebouncedFunction<(value: string) => void>;
 
   get hasSearchResult() {
-    return this.env.model.getters.getCurrentSelectedMatchIndex() !== null;
+    return this.store.selectedMatchIndex !== null;
   }
 
-  get pendingSearch() {
-    return this.debounceTimeoutId !== undefined;
+  get searchOptions() {
+    return this.store.searchOptions;
+  }
+
+  get allSheetsMatchesCount() {
+    return _t("%s matches in all sheets", this.store.allSheetMatchesCount);
+  }
+
+  get currentSheetMatchesCount() {
+    return _t("%(matches)s matches in %(sheetName)s", {
+      matches: this.store.activeSheetMatchesCount,
+      sheetName: this.env.model.getters.getSheetName(this.env.model.getters.getActiveSheetId()),
+    });
+  }
+
+  get specificRangeMatchesCount() {
+    const range = this.searchOptions.specificRange;
+    if (!range) {
+      return "";
+    }
+    const { sheetId, zone } = range;
+    return _t("%(matches)s matches in range %(range)s of %(sheetName)s", {
+      matches: this.store.specificRangeMatchesCount,
+      range: zoneToXc(zone),
+      sheetName: this.env.model.getters.getSheetName(sheetId),
+    });
+  }
+
+  get searchInfo(): string[] {
+    if (!this.store.toSearch) {
+      return [];
+    }
+    return [
+      this.specificRangeMatchesCount,
+      this.currentSheetMatchesCount,
+      this.allSheetsMatchesCount,
+    ];
   }
 
   setup() {
-    this.showFormulaState = this.env.model.getters.shouldShowFormulas();
-
+    this.store = useLocalStore(FindAndReplaceStore);
+    this.state = useState({ dataRange: "" });
     onMounted(() => this.searchInput.el?.focus());
-
-    onWillUnmount(() => {
-      clearTimeout(this.debounceTimeoutId);
-      this.env.model.dispatch("CLEAR_SEARCH");
-      this.env.model.dispatch("SET_FORMULA_VISIBILITY", { show: this.showFormulaState });
-    });
-
-    useEffect(
-      () => {
-        this.state.searchOptions.searchFormulas = this.env.model.getters.shouldShowFormulas();
-        this.searchFormulas();
-      },
-      () => [this.env.model.getters.shouldShowFormulas()]
-    );
+    onWillUnmount(() => this.updateSearchContent.stopDebounce());
+    this.updateSearchContent = debounce(this.store.updateSearchContent, 200);
   }
 
-  onInput(ev) {
-    this.state.toSearch = ev.target.value;
-    this.debouncedUpdateSearch();
+  onFocusSearch() {
+    this.updateDataRange();
+  }
+
+  onSearchInput(ev: InputEvent) {
+    this.updateSearchContent((ev.target as HTMLInputElement).value);
   }
 
   onKeydownSearch(ev: KeyboardEvent) {
     if (ev.key === "Enter") {
       ev.preventDefault();
       ev.stopPropagation();
-      this.onSelectNextCell();
+      ev.shiftKey ? this.store.selectPreviousMatch() : this.store.selectNextMatch();
     }
   }
 
@@ -90,67 +130,43 @@ export class FindAndReplacePanel extends Component<Props, SpreadsheetChildEnv> {
     if (ev.key === "Enter") {
       ev.preventDefault();
       ev.stopPropagation();
-      this.replace();
+      this.store.replace();
     }
   }
 
-  searchFormulas() {
-    this.env.model.dispatch("SET_FORMULA_VISIBILITY", {
-      show: this.state.searchOptions.searchFormulas,
-    });
-    this.updateSearch();
+  searchFormulas(searchFormulas: boolean) {
+    this.store.searchFormulas(searchFormulas);
   }
 
-  onSelectPreviousCell() {
-    this.env.model.dispatch("SELECT_SEARCH_PREVIOUS_MATCH");
-  }
-  onSelectNextCell() {
-    this.env.model.dispatch("SELECT_SEARCH_NEXT_MATCH");
-  }
-  updateSearch() {
-    this.env.model.dispatch("UPDATE_SEARCH", {
-      toSearch: this.state.toSearch,
-      searchOptions: this.state.searchOptions,
-    });
+  searchExactMatch(exactMatch: boolean) {
+    this.store.updateSearchOptions({ exactMatch });
   }
 
-  debouncedUpdateSearch() {
-    clearTimeout(this.debounceTimeoutId);
-    this.debounceTimeoutId = setTimeout(() => {
-      this.updateSearch();
-      this.debounceTimeoutId = undefined;
-    }, 200);
+  searchMatchCase(matchCase: boolean) {
+    this.store.updateSearchOptions({ matchCase });
   }
 
-  replace() {
-    this.env.model.dispatch("REPLACE_SEARCH", {
-      replaceWith: this.state.replaceWith,
-    });
+  changeSearchScope(ev) {
+    const searchScope = ev.target.value;
+    this.store.updateSearchOptions({ searchScope });
   }
 
-  replaceAll() {
-    this.env.model.dispatch("REPLACE_ALL_SEARCH", {
-      replaceWith: this.state.replaceWith,
-    });
+  onSearchRangeChanged(ranges: string[]) {
+    this.state.dataRange = ranges[0];
   }
 
-  // ---------------------------------------------------------------------------
-  // Private
-  // ---------------------------------------------------------------------------
+  updateDataRange() {
+    if (!this.state.dataRange || this.searchOptions.searchScope !== "specificRange") {
+      return;
+    }
+    const specificRange = this.env.model.getters.getRangeFromSheetXC(
+      this.env.model.getters.getActiveSheetId(),
+      this.state.dataRange
+    );
+    this.store.updateSearchOptions({ specificRange });
+  }
 
-  private initialState(): FindAndReplaceState {
-    return {
-      toSearch: "",
-      replaceWith: "",
-      searchOptions: {
-        matchCase: false,
-        exactMatch: false,
-        searchFormulas: false,
-      },
-    };
+  get pendingSearch() {
+    return this.updateSearchContent.isDebouncePending();
   }
 }
-
-FindAndReplacePanel.props = {
-  onCloseSidePanel: Function,
-};

@@ -2,18 +2,22 @@ import { groupConsecutive } from "../helpers/index";
 import {
   AddColumnsRowsCommand,
   AddMergeCommand,
+  AddPivotCommand,
   CoreCommand,
-  coreTypes,
   CreateChartCommand,
   CreateFigureCommand,
   CreateSheetCommand,
+  CreateTableStyleCommand,
   DeleteFigureCommand,
   DeleteSheetCommand,
   DuplicateSheetCommand,
   HideColumnsRowsCommand,
   RemoveColumnsRowsCommand,
   RemoveMergeCommand,
+  RemovePivotCommand,
+  RemoveTableStyleCommand,
   UnhideColumnsRowsCommand,
+  coreTypes,
 } from "../types/commands";
 import { Registry } from "./registry";
 
@@ -31,7 +35,9 @@ export const inverseCommandRegistry = new Registry<InverseFunction>()
   .add("CREATE_FIGURE", inverseCreateFigure)
   .add("CREATE_CHART", inverseCreateChart)
   .add("HIDE_COLUMNS_ROWS", inverseHideColumnsRows)
-  .add("UNHIDE_COLUMNS_ROWS", inverseUnhideColumnsRows);
+  .add("UNHIDE_COLUMNS_ROWS", inverseUnhideColumnsRows)
+  .add("CREATE_TABLE_STYLE", inverseCreateTableStyle)
+  .add("ADD_PIVOT", inverseAddPivot);
 
 for (const cmd of coreTypes.values()) {
   if (!inverseCommandRegistry.contains(cmd)) {
@@ -41,6 +47,15 @@ for (const cmd of coreTypes.values()) {
 
 function identity(cmd: CoreCommand): CoreCommand[] {
   return [cmd];
+}
+
+function inverseAddPivot(cmd: AddPivotCommand): RemovePivotCommand[] {
+  return [
+    {
+      type: "REMOVE_PIVOT",
+      pivotId: cmd.pivotId,
+    },
+  ];
 }
 
 function inverseAddColumnsRows(cmd: AddColumnsRowsCommand): RemoveColumnsRowsCommand[] {
@@ -128,4 +143,8 @@ function inverseUnhideColumnsRows(cmd: UnhideColumnsRowsCommand): HideColumnsRow
       elements: cmd.elements,
     },
   ];
+}
+
+function inverseCreateTableStyle(cmd: CreateTableStyleCommand): RemoveTableStyleCommand[] {
+  return [{ type: "REMOVE_TABLE_STYLE", tableStyleId: cmd.tableStyleId }];
 }

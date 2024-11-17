@@ -1,5 +1,13 @@
-import { deepEquals, positions, range, trimContent, zoneToDimension } from "../../helpers";
-import { ClipboardCellsState } from "../../helpers/clipboard/clipboard_cells_state";
+import { CellClipboardHandler } from "../../clipboard_handlers/cell_clipboard";
+import {
+  deepEquals,
+  positions,
+  range,
+  recomputeZones,
+  trimContent,
+  zoneToDimension,
+} from "../../helpers";
+import { getClipboardDataPositions } from "../../helpers/clipboard/clipboard_helpers";
 import { _t } from "../../translation";
 import {
   Command,
@@ -75,17 +83,13 @@ export class DataCleanupPlugin extends UIPlugin {
       bottom: rowIndex,
     }));
 
-    const state = new ClipboardCellsState(
-      rowsToKeep,
-      "COPY",
-      this.getters,
-      this.dispatch,
-      this.selection
-    );
-
-    for (const { col, row } of positions(zone)) {
-      this.dispatch("CLEAR_CELL", { col, row, sheetId });
+    const handler = new CellClipboardHandler(this.getters, this.dispatch);
+    const data = handler.copy(getClipboardDataPositions(sheetId, rowsToKeep));
+    if (!data) {
+      return;
     }
+
+    this.dispatch("CLEAR_CELLS", { target: [zone], sheetId });
 
     const zonePasted: Zone = {
       left: zone.left,
@@ -94,7 +98,7 @@ export class DataCleanupPlugin extends UIPlugin {
       bottom: zone.top,
     };
 
-    state.paste([zonePasted]);
+    handler.paste({ zones: [zonePasted], sheetId }, data, { isCutOperation: false });
 
     const remainingZone = {
       left: zone.left,
@@ -207,7 +211,7 @@ export class DataCleanupPlugin extends UIPlugin {
   }
 
   private trimWhitespace() {
-    const zones = this.getters.getSelectedZones();
+    const zones = recomputeZones(this.getters.getSelectedZones());
     const sheetId = this.getters.getActiveSheetId();
     let count = 0;
 

@@ -1,10 +1,11 @@
 import {
+  DEFAULT_CURRENCY,
   DEFAULT_FONT_SIZE,
   DEFAULT_VERTICAL_ALIGN,
   DEFAULT_WRAPPING_MODE,
   FONT_SIZES,
 } from "../constants";
-import { formatValue, roundFormat } from "../helpers";
+import { createAccountingFormat, createCurrencyFormat, formatValue, roundFormat } from "../helpers";
 import { parseLiteral } from "../helpers/cells";
 import { getDateTimeFormat } from "../helpers/locale";
 import { _t } from "../translation";
@@ -21,11 +22,15 @@ import { ActionSpec } from "./action";
 import * as ACTIONS from "./menu_items_actions";
 import { setFormatter, setStyle } from "./menu_items_actions";
 
+export interface NumberFormatActionSpec extends ActionSpec {
+  format?: Format | ((env: SpreadsheetChildEnv) => Format);
+}
+
 /**
  * Create a format action specification for a given format.
  * The format can be dynamically computed from the environment.
  */
-function createFormatActionSpec({
+export function createFormatActionSpec({
   name,
   format,
   descriptionValue,
@@ -33,7 +38,7 @@ function createFormatActionSpec({
   name: string;
   descriptionValue: CellValue;
   format: Format | ((env: SpreadsheetChildEnv) => Format);
-}): ActionSpec {
+}): NumberFormatActionSpec {
   const formatCallback = typeof format === "function" ? format : () => format;
   return {
     name,
@@ -44,13 +49,20 @@ function createFormatActionSpec({
       }),
     execute: (env) => setFormatter(env, formatCallback(env)),
     isActive: (env) => isFormatSelected(env, formatCallback(env)),
+    format,
   };
 }
 
-export const formatNumberAutomatic: ActionSpec = {
+export const formatNumberAutomatic: NumberFormatActionSpec = {
   name: _t("Automatic"),
   execute: (env) => setFormatter(env, ""),
   isActive: (env) => isAutomaticFormatSelected(env),
+};
+
+export const formatNumberPlainText: NumberFormatActionSpec = {
+  name: _t("Plain text"),
+  execute: (env) => setFormatter(env, "@"),
+  isActive: (env) => isFormatSelected(env, "@"),
 };
 
 export const formatNumberNumber = createFormatActionSpec({
@@ -74,22 +86,32 @@ export const formatNumberPercent = createFormatActionSpec({
 export const formatNumberCurrency = createFormatActionSpec({
   name: _t("Currency"),
   descriptionValue: 1000.12,
-  format: (env) => env.model.config.defaultCurrencyFormat,
+  format: (env) => createCurrencyFormat(env.model.config.defaultCurrency || DEFAULT_CURRENCY),
 });
 
-export const formatNumberCurrencyRounded: ActionSpec = {
+export const formatNumberCurrencyRounded: NumberFormatActionSpec = {
   ...createFormatActionSpec({
     name: _t("Currency rounded"),
     descriptionValue: 1000,
-    format: (env) => roundFormat(env.model.config.defaultCurrencyFormat),
+    format: (env) =>
+      roundFormat(createCurrencyFormat(env.model.config.defaultCurrency || DEFAULT_CURRENCY)),
   }),
   isVisible: (env) => {
-    const currencyFormat = env.model.config.defaultCurrencyFormat;
-    return currencyFormat !== roundFormat(currencyFormat);
+    const currencyFormat = createCurrencyFormat(
+      env.model.config.defaultCurrency || DEFAULT_CURRENCY
+    );
+    const roundedFormat = roundFormat(currencyFormat);
+    return currencyFormat !== roundedFormat;
   },
 };
 
-const EXAMPLE_DATE = parseLiteral("2023/09/26 10:43:00 PM", DEFAULT_LOCALE);
+export const formatNumberAccounting = createFormatActionSpec({
+  name: _t("Accounting"),
+  descriptionValue: -1000.12,
+  format: (env) => createAccountingFormat(env.model.config.defaultCurrency || DEFAULT_CURRENCY),
+});
+
+export const EXAMPLE_DATE = parseLiteral("2023/09/26 10:43:00 PM", DEFAULT_LOCALE);
 
 export const formatCustomCurrency: ActionSpec = {
   name: _t("Custom currency"),
@@ -122,6 +144,18 @@ export const formatNumberDuration = createFormatActionSpec({
   name: _t("Duration"),
   descriptionValue: "27:51:38",
   format: "hhhh:mm:ss",
+});
+
+export const formatNumberQuarter = createFormatActionSpec({
+  name: _t("Quarter"),
+  descriptionValue: EXAMPLE_DATE,
+  format: "qq yyyy",
+});
+
+export const formatNumberFullQuarter = createFormatActionSpec({
+  name: _t("Full quarter"),
+  descriptionValue: EXAMPLE_DATE,
+  format: "qqqq yyyy",
 });
 
 export const moreFormats: ActionSpec = {

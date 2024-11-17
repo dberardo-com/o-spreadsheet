@@ -3,14 +3,8 @@
 //------------------------------------------------------------------------------
 import { NEWLINE } from "../constants";
 import { ConsecutiveIndexes, Lazy, UID } from "../types";
-import { Cloneable } from "./../types/misc";
-/**
- * Stringify an object, like JSON.stringify, except that the first level of keys
- * is ordered.
- */
-export function stringify(obj: any): string {
-  return JSON.stringify(obj, Object.keys(obj).sort());
-}
+import { SearchOptions } from "../types/find_and_replace";
+import { Cloneable, DebouncedFunction } from "./../types/misc";
 
 /**
  * Remove quotes from a quoted string
@@ -77,7 +71,12 @@ export function deepCopy<T>(obj: T): T {
  * Check if the object is a plain old javascript object.
  */
 function isPlainObject(obj: unknown): boolean {
-  return typeof obj === "object" && obj?.constructor === Object;
+  return (
+    typeof obj === "object" &&
+    obj !== null &&
+    // obj.constructor can be undefined when there's no prototype (`Object.create(null, {})`)
+    (obj?.constructor === Object || obj?.constructor === undefined)
+  );
 }
 
 /**
@@ -85,22 +84,29 @@ function isPlainObject(obj: unknown): boolean {
  * @param sheetName name of the sheet, potentially quoted with single quotes
  */
 export function getUnquotedSheetName(sheetName: string): string {
-  if (sheetName.startsWith("'")) {
-    sheetName = sheetName.slice(1, -1).replace(/''/g, "'");
+  return unquote(sheetName, "'");
+}
+
+export function unquote(string: string, quoteChar: "'" | '"' = '"'): string {
+  if (string.startsWith(quoteChar)) {
+    string = string.slice(1);
   }
-  return sheetName;
+  if (string.endsWith(quoteChar)) {
+    string = string.slice(0, -1);
+  }
+  return string;
 }
 
 /**
- * Add quotes around the sheet name if it contains at least one non alphanumeric character
+ * Add quotes around the sheet name or any symbol name if it contains at least one non alphanumeric character
  * '\w' captures [0-9][a-z][A-Z] and _.
- * @param sheetName Name of the sheet
+ * @param symbolName Name of the sheet or symbol
  */
-export function getCanonicalSheetName(sheetName: string): string {
-  if (sheetName.match(/\w/g)?.length !== sheetName.length) {
-    sheetName = `'${sheetName}'`;
+export function getCanonicalSymbolName(symbolName: string): string {
+  if (symbolName.match(/\w/g)?.length !== symbolName.length) {
+    symbolName = `'${symbolName}'`;
   }
-  return sheetName;
+  return symbolName;
 }
 
 export function clip(val: number, min: number, max: number): number {
@@ -174,7 +180,7 @@ export function isBoolean(str: string): boolean {
   return upperCased === "TRUE" || upperCased === "FALSE";
 }
 
-const MARKDOWN_LINK_REGEX = /^\[([^\[]+)\]\((.+)\)$/;
+const MARKDOWN_LINK_REGEX = /^\[(.+)\]\((.+)\)$/;
 //link must start with http or https
 //https://stackoverflow.com/a/3809435/4760614
 const WEB_LINK_REGEX =
@@ -255,41 +261,26 @@ export function isObjectEmptyRecursive<T extends object>(argument: T | undefined
 }
 
 /**
- * Get the id of the given item (its key in the given dictionnary).
- * If the given item does not exist in the dictionary, it creates one with a new id.
- */
-export function getItemId<T>(item: T, itemsDic: { [id: number]: T }) {
-  for (let [key, value] of Object.entries(itemsDic)) {
-    if (stringify(value) === stringify(item)) {
-      return parseInt(key, 10);
-    }
-  }
-
-  // Generate new Id if the item didn't exist in the dictionary
-  const ids = Object.keys(itemsDic);
-  const maxId = ids.length === 0 ? 0 : Math.max(...ids.map((id) => parseInt(id, 10)));
-
-  itemsDic[maxId + 1] = item;
-  return maxId + 1;
-}
-
-/**
- * This method comes from owl 1 as it was removed in owl 2
- *
  * Returns a function, that, as long as it continues to be invoked, will not
  * be triggered. The function will be called after it stops being called for
  * N milliseconds. If `immediate` is passed, trigger the function on the
  * leading edge, instead of the trailing.
  *
+ * Also decorate the argument function with two methods: stopDebounce and isDebouncePending.
+ *
  * Inspired by https://davidwalsh.name/javascript-debounce-function
  */
-export function debounce(func: Function, wait: number, immediate?: boolean): Function {
-  let timeout;
-  return function (this: any): void {
+export function debounce<T extends (...args: any) => void>(
+  func: T,
+  wait: number,
+  immediate?: boolean
+): DebouncedFunction<T> {
+  let timeout: any | undefined = undefined;
+  const debounced = function (this: any): void {
     const context = this;
-    const args = arguments;
+    const args = Array.from(arguments);
     function later() {
-      timeout = null;
+      timeout = undefined;
       if (!immediate) {
         func.apply(context, args);
       }
@@ -299,6 +290,32 @@ export function debounce(func: Function, wait: number, immediate?: boolean): Fun
     timeout = setTimeout(later, wait);
     if (callNow) {
       func.apply(context, args);
+    }
+  };
+  debounced.isDebouncePending = () => timeout !== undefined;
+  debounced.stopDebounce = () => {
+    clearTimeout(timeout);
+  };
+  return debounced as DebouncedFunction<T>;
+}
+
+/**
+ * Creates a batched version of a callback so that all calls to it in the same
+ * microtick will only call the original callback once.
+ *
+ * @param callback the callback to batch
+ * @returns a batched version of the original callback
+ *
+ * Copied from odoo/owl repo.
+ */
+export function batched(callback: () => void): () => void {
+  let scheduled = false;
+  return async (...args) => {
+    if (!scheduled) {
+      scheduled = true;
+      await Promise.resolve();
+      scheduled = false;
+      callback(...args);
     }
   };
 }
@@ -361,15 +378,17 @@ export function deepEquals(o1: any, o2: any): boolean {
   if (o1 === o2) return true;
   if ((o1 && !o2) || (o2 && !o1)) return false;
   if (typeof o1 !== typeof o2) return false;
-  if (typeof o1 !== "object") return o1 === o2;
+  if (typeof o1 !== "object") return false;
 
   // Objects can have different keys if the values are undefined
-  const keys = new Set<string>();
-  Object.keys(o1).forEach((key) => keys.add(key));
-  Object.keys(o2).forEach((key) => keys.add(key));
+  for (const key in o2) {
+    if (!(key in o1) && o2[key] !== undefined) {
+      return false;
+    }
+  }
 
-  for (let key of keys) {
-    if (typeof o1[key] !== typeof o1[key]) return false;
+  for (const key in o1) {
+    if (typeof o1[key] !== typeof o2[key]) return false;
     if (typeof o1[key] === "object") {
       if (!deepEquals(o1[key], o2[key])) return false;
     } else {
@@ -377,6 +396,23 @@ export function deepEquals(o1: any, o2: any): boolean {
     }
   }
 
+  return true;
+}
+
+/**
+ * Compares two arrays.
+ * For performance reasons, this function is to be preferred
+ * to 'deepEquals' in the case we know that the inputs are arrays.
+ */
+export function deepEqualsArray(arr1: unknown[], arr2: unknown[]): boolean {
+  if (arr1.length !== arr2.length) {
+    return false;
+  }
+  for (let i = 0; i < arr1.length; i++) {
+    if (!deepEquals(arr1[i], arr2[i])) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -388,7 +424,8 @@ export function includesAll<T>(arr: T[], values: T[]): boolean {
 /**
  * Return an object with all the keys in the object that have a falsy value removed.
  */
-export function removeFalsyAttributes(obj: Object): Object {
+export function removeFalsyAttributes<T extends Object | undefined | null>(obj: T): T {
+  if (!obj) return obj;
   const cleanObject = { ...obj };
   Object.keys(cleanObject).forEach((key) => !cleanObject[key] && delete cleanObject[key]);
   return cleanObject;
@@ -399,8 +436,7 @@ export function removeFalsyAttributes(obj: Object): Object {
  *
  * https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions/Character_Classes
  */
-const whiteSpaceCharacters = [
-  " ",
+const whiteSpaceSpecialCharacters = [
   "\t",
   "\f",
   "\v",
@@ -415,8 +451,7 @@ const whiteSpaceCharacters = [
   String.fromCharCode(parseInt("3000", 16)),
   String.fromCharCode(parseInt("feff", 16)),
 ];
-const whiteSpaceRegexp = new RegExp(whiteSpaceCharacters.join("|"), "g");
-const newLineRegex = /\r\n|\r|\n/g;
+const whiteSpaceRegexp = new RegExp(whiteSpaceSpecialCharacters.join("|") + "|(\r\n|\r|\n)", "g");
 
 /**
  * Replace all the special spaces in a string (non-breaking, tabs, ...) by normal spaces, and all the
@@ -424,18 +459,8 @@ const newLineRegex = /\r\n|\r|\n/g;
  */
 export function replaceSpecialSpaces(text: string | undefined): string {
   if (!text) return "";
-  text = text.replace(whiteSpaceRegexp, " ");
-  text = text.replace(newLineRegex, NEWLINE);
-  return text;
-}
-
-/** Move the item at the starting index to the target index in an array */
-export function moveItemToIndex<T>(array: T[], startIndex: number, targetIndex: number): T[] {
-  array = [...array];
-  const item = array[startIndex];
-  array.splice(startIndex, 1);
-  array.splice(targetIndex, 0, item);
-  return array;
+  if (!whiteSpaceRegexp.test(text)) return text;
+  return text.replace(whiteSpaceRegexp, (match, newLine) => (newLine ? NEWLINE : " "));
 }
 
 /**
@@ -449,22 +474,6 @@ export function isConsecutive(iterable: Iterable<number>): boolean {
     }
   }
   return true;
-}
-
-export class JetSet<T> extends Set<T> {
-  add(...iterable: T[]): this {
-    for (const element of iterable) {
-      super.add(element);
-    }
-    return this;
-  }
-  delete(...iterable: T[]): boolean {
-    let deleted = false;
-    for (const element of iterable) {
-      deleted ||= super.delete(element);
-    }
-    return deleted;
-  }
 }
 
 /**
@@ -494,6 +503,12 @@ export function insertItemsAtIndex<T>(array: readonly T[], items: T[], index: nu
   return newArray;
 }
 
+export function replaceItemAtIndex<T>(array: readonly T[], newItem: T, index: number): T[] {
+  const newArray = [...array];
+  newArray.splice(index, 1, newItem);
+  return newArray;
+}
+
 export function trimContent(content: string): string {
   const contentLines = content.split("\n");
   return contentLines.map((line) => line.replace(/\s+/g, " ").trim()).join("\n");
@@ -504,4 +519,130 @@ export function isNumberBetween(value: number, min: number, max: number): boolea
     return isNumberBetween(value, max, min);
   }
   return value >= min && value <= max;
+}
+
+/**
+ * Get a Regex for the find & replace that matches the given search string and options.
+ */
+export function getSearchRegex(searchStr: string, searchOptions: SearchOptions): RegExp {
+  let searchValue = escapeRegExp(searchStr);
+  const flags = !searchOptions.matchCase ? "i" : "";
+  if (searchOptions.exactMatch) {
+    searchValue = `^${searchValue}$`;
+  }
+  return RegExp(searchValue, flags);
+}
+
+/**
+ * Alternative to Math.max that works with large arrays.
+ * Typically useful for arrays bigger than 100k elements.
+ */
+export function largeMax(array: number[]) {
+  let len = array.length;
+
+  if (len < 100_000) return Math.max(...array);
+
+  let max: number = -Infinity;
+  while (len--) {
+    max = array[len] > max ? array[len] : max;
+  }
+  return max;
+}
+
+/**
+ * Alternative to Math.min that works with large arrays.
+ * Typically useful for arrays bigger than 100k elements.
+ */
+export function largeMin(array: number[]) {
+  let len = array.length;
+
+  if (len < 100_000) return Math.min(...array);
+
+  let min: number = +Infinity;
+  while (len--) {
+    min = array[len] < min ? array[len] : min;
+  }
+  return min;
+}
+
+export class TokenizingChars {
+  private text: string;
+  private currentIndex: number = 0;
+  current: string;
+
+  constructor(text: string) {
+    this.text = text;
+    this.current = text[0];
+  }
+
+  shift() {
+    const current = this.current;
+    const next = this.text[++this.currentIndex];
+    this.current = next;
+    return current;
+  }
+
+  advanceBy(length: number) {
+    this.currentIndex += length;
+    this.current = this.text[this.currentIndex];
+  }
+
+  isOver() {
+    return this.currentIndex >= this.text.length;
+  }
+
+  remaining() {
+    return this.text.substring(this.currentIndex);
+  }
+
+  currentStartsWith(str: string) {
+    if (this.current !== str[0]) {
+      return false;
+    }
+    for (let j = 1; j < str.length; j++) {
+      if (this.text[this.currentIndex + j] !== str[j]) {
+        return false;
+      }
+    }
+    return true;
+  }
+}
+
+/**
+ * Remove duplicates from an array.
+ *
+ * @param array The array to remove duplicates from.
+ * @param cb A callback to get an element value.
+ */
+export function removeDuplicates<T>(array: T[], cb: (a: T) => any = (a) => a): T[] {
+  const set = new Set();
+  return array.filter((item) => {
+    const key = cb(item);
+    if (set.has(key)) {
+      return false;
+    }
+    set.add(key);
+    return true;
+  });
+}
+
+/**
+ * Similar to transposing and array, but with POJOs instead of arrays. Useful, for example, when manipulating
+ * a POJO grid[col][row] and you want to transpose it to grid[row][col].
+ *
+ * The resulting object is created such as result[key1][key2] = pojo[key2][key1]
+ */
+export function transpose2dPOJO<T>(
+  pojo: Record<string, Record<string, T>>
+): Record<string, Record<string, T>> {
+  const result: Record<string, Record<string, T>> = {};
+  for (const key in pojo) {
+    for (const subKey in pojo[key]) {
+      if (!result[subKey]) {
+        result[subKey] = {};
+      }
+      result[subKey][key] = pojo[key][subKey];
+    }
+  }
+  return result;
 }

@@ -1,16 +1,17 @@
 import {
   createAdaptedZone,
+  excludeTopLeft,
   isZoneValid,
-  mergeAlignedColumns,
-  mergePositionsIntoColumns,
+  mergeContiguousZones,
   overlap,
   positions,
-  recomputeZones,
   toCartesian,
   toUnboundedZone,
   toZone,
+  zoneToXc,
 } from "../../src/helpers/index";
-import { Position, Zone } from "../../src/types";
+
+import { Zone } from "../../src/types";
 import { target } from "../test_helpers/helpers";
 
 describe("overlap", () => {
@@ -41,277 +42,6 @@ describe("isZoneValid", () => {
     expect(isZoneValid({ bottom: 1, top: -1, right: 1, left: 1 })).toBe(false);
     expect(isZoneValid({ bottom: 1, top: 1, right: -1, left: 1 })).toBe(false);
     expect(isZoneValid({ bottom: 1, top: 1, right: 1, left: -1 })).toBe(false);
-  });
-});
-
-describe("mergePositionsIntoColumns", () => {
-  function p(xc: string): Position {
-    const zone = toZone(xc);
-    return { col: zone.left, row: zone.top };
-  }
-  const A1 = p("A1");
-  const A2 = p("A2");
-  const A3 = p("A3");
-  const B1 = p("B1");
-  const B2 = p("B2");
-  const C1 = p("C1");
-  const C2 = p("C2");
-  test("no zone", () => {
-    expect(mergePositionsIntoColumns([])).toEqual([]);
-  });
-
-  test("a single zone", () => {
-    expect(mergePositionsIntoColumns([A1])).toEqual(target("A1"));
-  });
-
-  test("a duplicated zone", () => {
-    expect(mergePositionsIntoColumns([A1, A1])).toEqual(target("A1"));
-  });
-
-  test("two non-adjacent positions on the same column", () => {
-    expect(mergePositionsIntoColumns([A1, A3])).toEqual(target("A1, A3"));
-  });
-
-  test("two non-adjacent positions on the same row", () => {
-    expect(mergePositionsIntoColumns([A1, C1])).toEqual(target("A1, C1"));
-  });
-
-  test("two adjacent positions on the same column", () => {
-    expect(mergePositionsIntoColumns([A1, A2])).toEqual(target("A1:A2"));
-  });
-
-  test("two adjacent positions on the same row", () => {
-    expect(mergePositionsIntoColumns([A1, B1])).toEqual(target("A1, B1"));
-  });
-
-  test("four adjacent positions on different columns", () => {
-    expect(mergePositionsIntoColumns([C2, C1, A1, A2])).toEqual(target("A1:A2, C1:C2"));
-  });
-
-  test("four adjacent positions on adjacent columns", () => {
-    expect(mergePositionsIntoColumns([C2, C1, B2, B1])).toEqual(target("B1:B2, C1:C2"));
-  });
-});
-
-describe("mergeAlignedColumns", () => {
-  test("no column", () => {
-    expect(mergeAlignedColumns([])).toEqual([]);
-  });
-  test("a row", () => {
-    expect(() => mergeAlignedColumns(target("A1:B1"))).toThrow();
-    expect(() => mergeAlignedColumns(target("A1:A2, A1:B1"))).toThrow();
-  });
-  test("a single column", () => {
-    expect(mergeAlignedColumns(target("A1:A2"))).toEqual(target("A1:A2"));
-  });
-
-  test("two zones on the same column", () => {
-    expect(mergeAlignedColumns(target("A1:A2, A3:A4"))).toEqual(target("A1:A2, A3:A4"));
-  });
-
-  test("duplicated columns", () => {
-    expect(mergeAlignedColumns(target("A1:A2, A1:A2"))).toEqual(target("A1:A2"));
-  });
-
-  test("two adjacent zones on the same column", () => {
-    expect(mergeAlignedColumns(target("A1:A2, A2:A4"))).toEqual(target("A1:A2, A2:A4"));
-  });
-  test("two aligned zones on non-adjacent columns", () => {
-    expect(mergeAlignedColumns(target("A1:A2, C1:C2"))).toEqual(target("A1:A2, C1:C2"));
-  });
-
-  test("two non-aligned zones on adjacent columns", () => {
-    expect(mergeAlignedColumns(target("A1:A2, B1:B3"))).toEqual(target("A1:A2, B1:B3"));
-  });
-
-  test("two aligned zones on adjacent columns", () => {
-    expect(mergeAlignedColumns(target("A1:A2, B1:B2"))).toEqual(target("A1:B2"));
-  });
-
-  test("three aligned zones on adjacent columns", () => {
-    expect(mergeAlignedColumns(target("A1:A2, B1:B2, C1:C2"))).toEqual(target("A1:C2"));
-  });
-
-  test("three aligned zones on adjacent columns", () => {
-    expect(mergeAlignedColumns(target("A1:A2, B1:B2, C1:C2"))).toEqual(target("A1:C2"));
-  });
-
-  test("two aligned zones on adjacent and one on non-adjacent columns", () => {
-    expect(mergeAlignedColumns(target("A1:A2, B1:B2, D1:D2"))).toEqual(target("A1:B2, D1:D2"));
-    expect(mergeAlignedColumns(target("A1:A2, D1:D2, B1:B2"))).toEqual(target("A1:B2, D1:D2"));
-    expect(mergeAlignedColumns(target("A1:A2, A3:A4, B3:B4"))).toEqual(target("A1:A2, A3:B4"));
-    expect(mergeAlignedColumns(target("A3:A4, A1:A2, B3:B4"))).toEqual(target("A1:A2, A3:B4"));
-  });
-  test("two overlapping columns with one aligned column", () => {
-    expect(mergeAlignedColumns(target("A1:A2, A2:A3, B2:B3"))).toEqual(target("A1:A2, A2:B3"));
-    expect(mergeAlignedColumns(target("A2:A3, A1:A2, B2:B3"))).toEqual(target("A1:A2, A2:B3"));
-
-    expect(mergeAlignedColumns(target("A1:A2, A2:A3, B1:B2"))).toEqual(target("A1:B2, A2:A3"));
-    expect(mergeAlignedColumns(target("A2:A3, A1:A2, B1:B2"))).toEqual(target("A1:B2, A2:A3"));
-  });
-  test("two overlapping columns with two aligned column", () => {
-    expect(mergeAlignedColumns(target("A1:A2, A2:A3, B2:B3, C2:C3"))).toEqual(
-      target("A1:A2, A2:C3")
-    );
-    expect(mergeAlignedColumns(target("B2:B3, C2:C3, A1:A2, A2:A3"))).toEqual(
-      target("A1:A2, A2:C3")
-    );
-
-    expect(mergeAlignedColumns(target("A1:A2, A2:A3, B1:B2, C1:C2"))).toEqual(
-      target("A1:C2, A2:A3")
-    );
-    expect(mergeAlignedColumns(target("C1:C2, A1:A2, A2:A3, B1:B2"))).toEqual(
-      target("A1:C2, A2:A3")
-    );
-  });
-  test("one column inside another with zones on the right", () => {
-    expect(mergeAlignedColumns(target("A1:A4, A2:A3"))).toEqual(target("A1:A4"));
-    expect(mergeAlignedColumns(target("A1:A4, A2:A3, B1:B4"))).toEqual(target("A1:B4"));
-    expect(mergeAlignedColumns(target("A2:A3, A1:A4, B1:B4"))).toEqual(target("A1:B4"));
-
-    expect(mergeAlignedColumns(target("A1:A4, A2:A3, B2:B3"))).toEqual(target("A1:A4, B2:B3"));
-    expect(mergeAlignedColumns(target("A2:A3, A1:A4, B2:B3"))).toEqual(target("A1:A4, B2:B3"));
-
-    expect(mergeAlignedColumns(target("A1:A4, A1:A3, B1:B3"))).toEqual(target("A1:A4, B1:B3"));
-    expect(mergeAlignedColumns(target("A1:A3, A1:A4, B1:B3"))).toEqual(target("A1:A4, B1:B3"));
-  });
-  test("one column inside another with zones on the left", () => {
-    expect(mergeAlignedColumns(target("B1:B3, B1:B4, A1:A3"))).toEqual(target("A1:A3, B1:B4"));
-    expect(mergeAlignedColumns(target("B1:B3, B1:B4, A1:A4"))).toEqual(target("A1:B4"));
-  });
-  test("two aligned respectively with one other", () => {
-    expect(mergeAlignedColumns(target("A1:A2, A3:A4, B1:B2, B3:B4"))).toEqual(
-      target("A1:B2, A3:B4")
-    );
-  });
-});
-
-describe("recomputeZones", () => {
-  test("add a cell to zone(1)", () => {
-    const toKeep = ["A1:C3", "A4"];
-    const expectedZone = ["A1:A4", "B1:C3"];
-    expect(recomputeZones(toKeep, [])).toEqual(expectedZone);
-  });
-
-  test("add a cell to zone(2)", () => {
-    const toKeep = ["A1:C3", "D1"];
-    const expectedZone = ["A1:C3", "D1"];
-    expect(recomputeZones(toKeep, [])).toEqual(expectedZone);
-  });
-
-  test("add a cell to a full column zone", () => {
-    const toKeep = ["A:B", "A4"];
-    const expectedZone = ["A:B"];
-    expect(recomputeZones(toKeep, [])).toEqual(expectedZone);
-  });
-
-  test("add a cell to a full column zone (2)", () => {
-    const toKeep = ["A2:A", "A1"];
-    const expectedZone = ["A:A"];
-    expect(recomputeZones(toKeep, [])).toEqual(expectedZone);
-  });
-
-  test("add a cell to a full row zone", () => {
-    const toKeep = ["1:2", "A1"];
-    const expectedZone = ["1:2"];
-    expect(recomputeZones(toKeep, [])).toEqual(expectedZone);
-  });
-
-  test("add a cell to a full row zone (2)", () => {
-    const toKeep = ["C1:1", "B1"];
-    const expectedZone = ["B1:1"];
-    expect(recomputeZones(toKeep, [])).toEqual(expectedZone);
-  });
-
-  test("add a row to a zone", () => {
-    const toKeep = ["A1:C3", "A4:C4"];
-    const expectedZone = ["A1:C4"];
-    expect(recomputeZones(toKeep, [])).toEqual(expectedZone);
-  });
-
-  test("add a row to a full row range", () => {
-    const toKeep = ["1:1", "2:2"];
-    const expectedZone = ["1:2"];
-    expect(recomputeZones(toKeep, [])).toEqual(expectedZone);
-  });
-
-  test("add a col to a zone", () => {
-    const toKeep = ["A1:C3", "D1:D3"];
-    const expectedZone = ["A1:D3"];
-    expect(recomputeZones(toKeep, [])).toEqual(expectedZone);
-  });
-
-  test("add a col to a full column range", () => {
-    const toKeep = ["A2:A", "B2:B"];
-    const expectedZone = ["A2:B"];
-    expect(recomputeZones(toKeep, [])).toEqual(expectedZone);
-  });
-
-  test("merge zones", () => {
-    const toKeep = ["A1:B3", "B2:C5", "C1:C5"];
-    const expectedZone = ["A1:A3", "B1:C5"];
-    expect(recomputeZones(toKeep, [])).toEqual(expectedZone);
-  });
-  test("zones included", () => {
-    const toKeep = ["A1:D6", "A2:C3"];
-    const expectedZone = ["A1:D6"];
-    expect(recomputeZones(toKeep, [])).toEqual(expectedZone);
-  });
-  test("remove a cell (1)", () => {
-    const toKeep = ["A1:D6"];
-    const toRemove = ["A1"];
-    const expectedZone = ["A2:A6", "B1:D6"];
-    expect(recomputeZones(toKeep, toRemove)).toEqual(expectedZone);
-  });
-  test("remove a cell (2)", () => {
-    const toKeep = ["A1:D6"];
-    const toRemove = ["D6"];
-    const expectedZone = ["A1:C6", "D1:D5"];
-    expect(recomputeZones(toKeep, toRemove)).toEqual(expectedZone);
-  });
-  test("remove a cell (3)", () => {
-    const toKeep = ["A1:D6"];
-    const toRemove = ["B3"];
-    const expectedZone = ["A1:A6", "B1:B2", "B4:B6", "C1:D6"];
-    expect(recomputeZones(toKeep, toRemove)).toEqual(expectedZone);
-  });
-  test("remove a cell inside a full column range", () => {
-    const toKeep = ["A:A"];
-    const toRemove = ["A4"];
-    const expectedZone = ["A1:A3", "A5:A"];
-    expect(recomputeZones(toKeep, toRemove)).toEqual(expectedZone);
-  });
-  test("remove a cell at the top of a full column range", () => {
-    const toKeep = ["A:A"];
-    const toRemove = ["A1"];
-    const expectedZone = ["A2:A"];
-    expect(recomputeZones(toKeep, toRemove)).toEqual(expectedZone);
-  });
-  test("remove a cell inside a full row range", () => {
-    const toKeep = ["1:1"];
-    const toRemove = ["C1"];
-    const expectedZone = ["A1:B1", "D1:1"];
-    expect(recomputeZones(toKeep, toRemove)).toEqual(expectedZone);
-  });
-  test("remove a cell at the left of a full row range", () => {
-    const toKeep = ["1:1"];
-    const toRemove = ["A1"];
-    const expectedZone = ["B1:1"];
-    expect(recomputeZones(toKeep, toRemove)).toEqual(expectedZone);
-  });
-
-  test("remove a zone", () => {
-    const toKeep = ["A1:D6"];
-    const toRemove = ["B1:C6"];
-    const expectedZone = ["A1:A6", "D1:D6"];
-    expect(recomputeZones(toKeep, toRemove)).toEqual(expectedZone);
-  });
-
-  test("remove an unbounded zone", () => {
-    const toKeep = ["A1:D6"];
-    const toRemove = ["2:3"];
-    const expectedZone = ["A1:D1", "A4:D6"];
-    expect(recomputeZones(toKeep, toRemove)).toEqual(expectedZone);
   });
 });
 
@@ -426,5 +156,61 @@ describe("createAdaptedZone", () => {
 
   test("negative resize on columns and rows", () => {
     expect(createAdaptedZone(zone, "both", "RESIZE", [-1, -1])).toEqual(toZone("B2"));
+  });
+});
+
+describe("mergeContiguousZones", () => {
+  test("mergeContiguousZones: can merge two contiguous zones", () => {
+    let zones = mergeContiguousZones(target("A1:A6, B1:B6"));
+    expect(zones.map(zoneToXc)).toEqual(["A1:B6"]);
+
+    zones = mergeContiguousZones(target("A1:D1, A2:D2"));
+    expect(zones.map(zoneToXc)).toEqual(["A1:D2"]);
+
+    zones = mergeContiguousZones(target("A1:A6, B2"));
+    expect(zones.map(zoneToXc)).toEqual(["A1:B6"]);
+
+    zones = mergeContiguousZones(target("C1, A2:F2"));
+    expect(zones.map(zoneToXc)).toEqual(["A1:F2"]);
+
+    // Not contiguous
+    zones = mergeContiguousZones(target("C1, C3"));
+    expect(zones.map(zoneToXc)).toEqual(["C1", "C3"]);
+  });
+
+  test("mergeContiguousZones: can merge two overlapping zones", () => {
+    let zones = mergeContiguousZones(target("A1:A6, A1:C4"));
+    expect(zones.map(zoneToXc)).toEqual(["A1:C6"]);
+
+    zones = mergeContiguousZones(target("A1:C6, A1:B5"));
+    expect(zones.map(zoneToXc)).toEqual(["A1:C6"]);
+  });
+
+  test("mergeContiguousZones: can merge overlapping and contiguous zones", () => {
+    const zones = mergeContiguousZones(target("A1:A6, A1:C4, A7"));
+    expect(zones.map(zoneToXc)).toEqual(["A1:C7"]);
+  });
+
+  test("Zones diagonally next to each other are not contiguous", () => {
+    const zones = mergeContiguousZones(target("A1, B2, C3, A3"));
+    expect(zones.map(zoneToXc)).toEqual(["A1", "B2", "C3", "A3"]);
+  });
+});
+
+describe("excludeTopLeft", () => {
+  test("single cell zone", () => {
+    expect(excludeTopLeft(toZone("A1"))).toEqual([]);
+  });
+
+  test("single column zone", () => {
+    expect(excludeTopLeft(toZone("A1:A4"))).toEqual([toZone("A2:A4")]);
+  });
+
+  test("single row zone", () => {
+    expect(excludeTopLeft(toZone("A1:D1"))).toEqual([toZone("B1:D1")]);
+  });
+
+  test("2d zone", () => {
+    expect(excludeTopLeft(toZone("A1:D4"))).toEqual([toZone("A2:A4"), toZone("B1:D4")]);
   });
 });

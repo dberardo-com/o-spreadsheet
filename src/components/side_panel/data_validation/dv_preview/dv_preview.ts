@@ -1,8 +1,9 @@
-import { Component } from "@odoo/owl";
-import { FIGURE_BORDER_COLOR } from "../../../../constants";
+import { Component, useRef } from "@odoo/owl";
+import { FIGURE_BORDER_COLOR, HIGHLIGHT_COLOR } from "../../../../constants";
 import { dataValidationEvaluatorRegistry } from "../../../../registries/data_validation_registry";
-import { DataValidationRule, SpreadsheetChildEnv } from "../../../../types";
+import { DataValidationRule, Highlight, SpreadsheetChildEnv } from "../../../../types";
 import { css } from "../../../helpers";
+import { useHighlightsOnHover } from "../../../helpers/highlight_hook";
 
 css/* scss */ `
   .o-sidePanel {
@@ -37,10 +38,29 @@ interface Props {
 
 export class DataValidationPreview extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-DataValidationPreview";
+  static props = {
+    onClick: Function,
+    rule: Object,
+  };
+
+  private ref = useRef("dvPreview");
+
+  setup() {
+    useHighlightsOnHover(this.ref, this);
+  }
 
   deleteDataValidation() {
     const sheetId = this.env.model.getters.getActiveSheetId();
     this.env.model.dispatch("REMOVE_DATA_VALIDATION_RULE", { sheetId, id: this.props.rule.id });
+  }
+
+  get highlights(): Highlight[] {
+    return this.props.rule.ranges.map((range) => ({
+      sheetId: this.env.model.getters.getActiveSheetId(),
+      zone: range.zone,
+      color: HIGHLIGHT_COLOR,
+      fillAlpha: 0.06,
+    }));
   }
 
   get rangesString(): string {
@@ -56,8 +76,3 @@ export class DataValidationPreview extends Component<Props, SpreadsheetChildEnv>
       .getPreview(this.props.rule.criterion, this.env.model.getters);
   }
 }
-
-DataValidationPreview.props = {
-  onClick: Function,
-  rule: Object,
-};

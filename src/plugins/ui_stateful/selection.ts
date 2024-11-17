@@ -1,25 +1,20 @@
+import { CellClipboardHandler } from "../../clipboard_handlers/cell_clipboard";
 import { SELECTION_BORDER_COLOR } from "../../constants";
-import { SUM } from "../../functions/module_math";
-import { AVERAGE, COUNT, COUNTA, MAX, MIN } from "../../functions/module_statistical";
-import { ClipboardCellsState } from "../../helpers/clipboard/clipboard_cells_state";
+import { getClipboardDataPositions } from "../../helpers/clipboard/clipboard_helpers";
 import {
   clip,
   deepCopy,
-  formatValue,
   isEqual,
   positionToZone,
-  positions,
   uniqueZones,
   updateSelectionOnDeletion,
   updateSelectionOnInsertion,
 } from "../../helpers/index";
-import { _t } from "../../translation";
 import { SelectionEvent } from "../../types/event_stream";
 import {
   AddColumnsRowsCommand,
   AnchorZone,
   CellPosition,
-  CellValueType,
   ClientPosition,
   Command,
   CommandResult,
@@ -27,9 +22,7 @@ import {
   EvaluatedCell,
   GridRenderingContext,
   HeaderIndex,
-  LAYERS,
   LocalCommand,
-  Locale,
   MoveColumnsRowsCommand,
   RemoveColumnsRowsCommand,
   Selection,
@@ -44,50 +37,11 @@ interface SheetInfo {
   gridSelection: Selection;
 }
 
-interface SelectionStatisticFunction {
-  name: string;
-  compute: (values: (number | string | boolean)[], locale: Locale) => number;
-  types: CellValueType[];
-}
-
-const selectionStatisticFunctions: SelectionStatisticFunction[] = [
-  {
-    name: _t("Sum"),
-    types: [CellValueType.number],
-    compute: (values, locale) => SUM.compute.bind({ locale })([values]),
-  },
-  {
-    name: _t("Avg"),
-    types: [CellValueType.number],
-    compute: (values, locale) => AVERAGE.compute.bind({ locale })([values]),
-  },
-  {
-    name: _t("Min"),
-    types: [CellValueType.number],
-    compute: (values, locale) => MIN.compute.bind({ locale })([values]),
-  },
-  {
-    name: _t("Max"),
-    types: [CellValueType.number],
-    compute: (values, locale) => MAX.compute.bind({ locale })([values]),
-  },
-  {
-    name: _t("Count"),
-    types: [CellValueType.number, CellValueType.text, CellValueType.boolean, CellValueType.error],
-    compute: (values, locale) => COUNTA.compute.bind({ locale })([values]),
-  },
-  {
-    name: _t("Count Numbers"),
-    types: [CellValueType.number, CellValueType.text, CellValueType.boolean, CellValueType.error],
-    compute: (values, locale) => COUNT.compute.bind({ locale })([values]),
-  },
-];
-
 /**
  * SelectionPlugin
  */
 export class GridSelectionPlugin extends UIPlugin {
-  static layers = [LAYERS.Selection];
+  static layers = ["Selection"] as const;
   static getters = [
     "getActiveSheet",
     "getActiveSheetId",
@@ -98,13 +52,10 @@ export class GridSelectionPlugin extends UIPlugin {
     "getSelectedZones",
     "getSelectedZone",
     "getSelectedCells",
-    "getStatisticFnResults",
-    "getAggregate",
     "getSelectedFigureId",
     "getSelection",
     "getActivePosition",
     "getSheetPosition",
-    "isSelected",
     "isSingleColSelected",
     "getElementsFromSelection",
     "tryGetActiveSheetId",
@@ -143,7 +94,10 @@ export class GridSelectionPlugin extends UIPlugin {
     switch (cmd.type) {
       case "ACTIVATE_SHEET":
         try {
-          this.getters.getSheet(cmd.sheetIdTo);
+          const sheet = this.getters.getSheet(cmd.sheetIdTo);
+          if (!sheet.isVisible) {
+            return CommandResult.SheetIsHidden;
+          }
           break;
         } catch (error) {
           return CommandResult.InvalidSheetId;
@@ -186,7 +140,6 @@ export class GridSelectionPlugin extends UIPlugin {
 
   handle(cmd: Command) {
     switch (cmd.type) {
-      case "START_EDITION":
       case "ACTIVATE_SHEET":
         this.selectedFigureId = null;
         break;
@@ -307,8 +260,12 @@ export class GridSelectionPlugin extends UIPlugin {
           this.gridSelection.anchor.zone
         );
         this.setSelectionMixin(this.gridSelection.anchor, this.gridSelection.zones);
+        this.selectedFigureId = null;
         break;
     }
+  }
+
+  finalize(): void {
     /** Any change to the selection has to be  reflected in the selection processor. */
     this.selection.resetDefaultAnchor(this, deepCopy(this.gridSelection.anchor));
   }
@@ -419,68 +376,6 @@ export class GridSelectionPlugin extends UIPlugin {
     }
   }
 
-  getStatisticFnResults(): { [name: string]: number | undefined } {
-    const sheetId = this.getters.getActiveSheetId();
-    const cells = new Set<EvaluatedCell>();
-
-    for (const zone of this.gridSelection.zones) {
-      for (const { col, row } of positions(zone)) {
-        if (this.getters.isRowHidden(sheetId, row) || this.getters.isColHidden(sheetId, col)) {
-          continue; // Skip hidden cells
-        }
-
-        const evaluatedCell = this.getters.getEvaluatedCell({ sheetId, col, row });
-        if (evaluatedCell.type !== CellValueType.empty) {
-          cells.add(evaluatedCell);
-        }
-      }
-    }
-
-    let cellsTypes = new Set<CellValueType>();
-    let cellsValues: (string | number | boolean)[] = [];
-    for (let cell of cells) {
-      cellsTypes.add(cell.type);
-      cellsValues.push(cell.value);
-    }
-
-    const locale = this.getters.getLocale();
-
-    let statisticFnResults: { [name: string]: number | undefined } = {};
-    for (let fn of selectionStatisticFunctions) {
-      // We don't want to display statistical information when there is no interest:
-      // We set the statistical result to undefined if the data handled by the selection
-      // does not match the data handled by the function.
-      // Ex: if there are only texts in the selection, we prefer that the SUM result
-      // be displayed as undefined rather than 0.
-      let fnResult: number | undefined = undefined;
-      if (fn.types.some((t) => cellsTypes.has(t))) {
-        fnResult = fn.compute(cellsValues, locale);
-      }
-      statisticFnResults[fn.name] = fnResult;
-    }
-    return statisticFnResults;
-  }
-
-  getAggregate(): string | null {
-    let aggregate = 0;
-    let n = 0;
-    const sheetId = this.getters.getActiveSheetId();
-    const cellPositions = this.gridSelection.zones.map(positions).flat();
-    for (const { col, row } of cellPositions) {
-      const cell = this.getters.getEvaluatedCell({ sheetId, col, row });
-      if (cell.type === CellValueType.number) {
-        n++;
-        aggregate += cell.value;
-      }
-    }
-    const locale = this.getters.getLocale();
-    return n < 2 ? null : formatValue(aggregate, { locale });
-  }
-
-  isSelected(zone: Zone): boolean {
-    return !!this.getters.getSelectedZones().find((z) => isEqual(z, zone));
-  }
-
   isSingleColSelected() {
     const selection = this.getters.getSelectedZones();
     if (selection.length !== 1 || selection[0].left !== selection[0].right) {
@@ -525,9 +420,6 @@ export class GridSelectionPlugin extends UIPlugin {
   // ---------------------------------------------------------------------------
 
   private activateSheet(sheetIdFrom: UID, sheetIdTo: UID) {
-    if (!this.getters.isSheetVisible(sheetIdTo)) {
-      this.dispatch("SHOW_SHEET", { sheetId: sheetIdTo });
-    }
     this.setActiveSheet(sheetIdTo);
     this.sheetsData[sheetIdFrom] = {
       gridSelection: deepCopy(this.gridSelection),
@@ -651,7 +543,7 @@ export class GridSelectionPlugin extends UIPlugin {
       sheetId: cmd.sheetId,
       base: cmd.base,
       quantity: thickness,
-      position: "before",
+      position: cmd.position,
     });
 
     const isCol = cmd.dimension === "COL";
@@ -669,22 +561,23 @@ export class GridSelectionPlugin extends UIPlugin {
         bottom: !isCol ? end + deltaRow : this.getters.getNumberRows(cmd.sheetId) - 1,
       },
     ];
-    const state = new ClipboardCellsState(
-      target,
-      "CUT",
-      this.getters,
-      this.dispatch,
-      this.selection
-    );
+
+    const sheetId = this.getActiveSheetId();
+    const handler = new CellClipboardHandler(this.getters, this.dispatch);
+    const data = handler.copy(getClipboardDataPositions(sheetId, target));
+    if (!data) {
+      return;
+    }
+    const base = isBasedBefore ? cmd.base : cmd.base + 1;
     const pasteTarget = [
       {
-        left: isCol ? cmd.base : 0,
-        right: isCol ? cmd.base + thickness - 1 : this.getters.getNumberCols(cmd.sheetId) - 1,
-        top: !isCol ? cmd.base : 0,
-        bottom: !isCol ? cmd.base + thickness - 1 : this.getters.getNumberRows(cmd.sheetId) - 1,
+        left: isCol ? base : 0,
+        right: isCol ? base + thickness - 1 : this.getters.getNumberCols(cmd.sheetId) - 1,
+        top: !isCol ? base : 0,
+        bottom: !isCol ? base + thickness - 1 : this.getters.getNumberRows(cmd.sheetId) - 1,
       },
     ];
-    state.paste(pasteTarget, { selectTarget: true });
+    handler.paste({ zones: pasteTarget, sheetId }, data, { isCutOperation: true });
 
     const toRemove = isBasedBefore ? cmd.elements.map((el) => el + thickness) : cmd.elements;
     let currentIndex = cmd.base;
@@ -720,6 +613,11 @@ export class GridSelectionPlugin extends UIPlugin {
       doesElementsHaveCommonMerges(id, cmd.base - 1, cmd.base)
     ) {
       return CommandResult.WillRemoveExistingMerge;
+    }
+    const headers = [cmd.base, ...cmd.elements];
+    const maxHeaderValue = isCol ? this.getters.getNumberCols(id) : this.getters.getNumberRows(id);
+    if (headers.some((h) => h < 0 || h >= maxHeaderValue)) {
+      return CommandResult.InvalidHeaderIndex;
     }
     return CommandResult.Success;
   }
@@ -762,7 +660,7 @@ export class GridSelectionPlugin extends UIPlugin {
   // Grid rendering
   // ---------------------------------------------------------------------------
 
-  drawGrid(renderingContext: GridRenderingContext) {
+  drawLayer(renderingContext: GridRenderingContext) {
     if (this.getters.isDashboard()) {
       return;
     }

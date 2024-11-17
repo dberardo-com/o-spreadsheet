@@ -7,4 +7,4 @@ export * from "./gauge_chart";
 export * from "./line_chart";
 export * from "./pie_chart";
 export * from "./scorecard_chart";
-import "./chart_js_gauge_controller";
+export * from "./waterfall_chart";

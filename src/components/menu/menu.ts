@@ -1,7 +1,15 @@
-import { Component, onWillUpdateProps, useExternalListener, useRef, useState } from "@odoo/owl";
+import {
+  Component,
+  onWillUnmount,
+  onWillUpdateProps,
+  useExternalListener,
+  useRef,
+  useState,
+} from "@odoo/owl";
 import { Action } from "../../actions/action";
 import {
-  BG_HOVER_COLOR,
+  BUTTON_ACTIVE_BG,
+  BUTTON_ACTIVE_TEXT_COLOR,
   DISABLED_TEXT_COLOR,
   ICONS_COLOR,
   MENU_ITEM_HEIGHT,
@@ -11,9 +19,10 @@ import {
   MENU_WIDTH,
 } from "../../constants";
 import { DOMCoordinates, MenuMouseEvent, Pixel, SpreadsheetChildEnv, UID } from "../../types";
-import { css } from "../helpers/css";
+import { css, cssPropertiesToCss } from "../helpers/css";
 import { getOpenedMenus, isChildEvent } from "../helpers/dom_helpers";
 import { useAbsoluteBoundingRect } from "../helpers/position_hook";
+import { useTimeOut } from "../helpers/time_hooks";
 import { Popover, PopoverProps } from "../popover/popover";
 
 //------------------------------------------------------------------------------
@@ -26,11 +35,9 @@ css/* scss */ `
     padding: ${MENU_VERTICAL_PADDING}px 0px;
     width: ${MENU_WIDTH}px;
     box-sizing: border-box !important;
+    user-select: none;
 
     .o-menu-item {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
       box-sizing: border-box;
       height: ${MENU_ITEM_HEIGHT}px;
       padding: ${MENU_ITEM_PADDING_VERTICAL}px ${MENU_ITEM_PADDING_HORIZONTAL}px;
@@ -41,25 +48,18 @@ css/* scss */ `
         min-width: 40%;
       }
 
-      &.o-menu-root {
-        display: flex;
-        justify-content: space-between;
-      }
-
       .o-menu-item-icon {
         display: inline-block;
         margin: 0px 8px 0px 0px;
         width: ${MENU_ITEM_HEIGHT - 2 * MENU_ITEM_PADDING_VERTICAL}px;
         line-height: ${MENU_ITEM_HEIGHT - 2 * MENU_ITEM_PADDING_VERTICAL}px;
       }
-      .o-menu-item-root {
-        width: 10px;
-      }
 
       &:not(.disabled) {
         &:hover,
         &.o-menu-item-active {
-          background-color: ${BG_HOVER_COLOR};
+          background-color: ${BUTTON_ACTIVE_BG};
+          color: ${BUTTON_ACTIVE_TEXT_COLOR};
         }
         .o-menu-item-description {
           color: grey;
@@ -80,6 +80,8 @@ css/* scss */ `
 
 type MenuItemOrSeparator = Action | "separator";
 
+const TIMEOUT_DELAY = 250;
+
 interface Props {
   position: DOMCoordinates;
   menuItems: Action[];
@@ -88,6 +90,8 @@ interface Props {
   onClose: () => void;
   onMenuClicked?: (ev: CustomEvent) => void;
   menuId?: UID;
+  onMouseOver?: () => void;
+  width?: number;
 }
 
 export interface MenuState {
@@ -96,9 +100,22 @@ export interface MenuState {
   position: null | DOMCoordinates;
   scrollOffset?: Pixel;
   menuItems: Action[];
+  isHoveringChild?: boolean;
 }
+
 export class Menu extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-Menu";
+  static props = {
+    position: Object,
+    menuItems: Array,
+    depth: { type: Number, optional: true },
+    maxHeight: { type: Number, optional: true },
+    onClose: Function,
+    onMenuClicked: { type: Function, optional: true },
+    menuId: { type: String, optional: true },
+    onMouseOver: { type: Function, optional: true },
+    width: { type: Number, optional: true },
+  };
 
   static components = { Menu, Popover };
   static defaultProps = {
@@ -109,9 +126,14 @@ export class Menu extends Component<Props, SpreadsheetChildEnv> {
     position: null,
     scrollOffset: 0,
     menuItems: [],
+    isHoveringChild: false,
   });
   private menuRef = useRef("menu");
+  private hoveredMenu: Action | undefined = undefined;
+
   private position: DOMCoordinates = useAbsoluteBoundingRect(this.menuRef);
+
+  private openingTimeOut = useTimeOut();
 
   setup() {
     useExternalListener(window, "click", this.onExternalClick, { capture: true });
@@ -120,6 +142,9 @@ export class Menu extends Component<Props, SpreadsheetChildEnv> {
       if (nextProps.menuItems !== this.props.menuItems) {
         this.closeSubMenu();
       }
+    });
+    onWillUnmount(() => {
+      this.hoveredMenu?.onStopHover?.(this.env);
     });
   }
 
@@ -157,9 +182,9 @@ export class Menu extends Component<Props, SpreadsheetChildEnv> {
     const isRoot = this.props.depth === 1;
     return {
       anchorRect: {
-        x: this.props.position.x - MENU_WIDTH * (this.props.depth - 1),
+        x: this.props.position.x,
         y: this.props.position.y,
-        width: isRoot ? 0 : MENU_WIDTH,
+        width: isRoot ? 0 : this.props.width || MENU_WIDTH,
         height: isRoot ? 0 : MENU_ITEM_HEIGHT,
       },
       positioning: "TopRight",
@@ -185,7 +210,11 @@ export class Menu extends Component<Props, SpreadsheetChildEnv> {
   }
 
   getColor(menu: Action) {
-    return menu.textColor ? `color: ${menu.textColor}` : undefined;
+    return cssPropertiesToCss({ color: menu.textColor });
+  }
+
+  getIconColor(menu: Action) {
+    return cssPropertiesToCss({ color: menu.iconColor });
   }
 
   async activateMenu(menu: Action) {
@@ -224,6 +253,10 @@ export class Menu extends Component<Props, SpreadsheetChildEnv> {
     return false;
   }
 
+  isActive(menuItem: Action): boolean {
+    return (this.subMenu?.isHoveringChild || false) && this.isParentMenu(this.subMenu, menuItem);
+  }
+
   onScroll(ev) {
     this.subMenu.scrollOffset = ev.target.scrollTop;
   }
@@ -232,13 +265,14 @@ export class Menu extends Component<Props, SpreadsheetChildEnv> {
    * If the given menu is not disabled, open it's submenu at the
    * correct position according to available surrounding space.
    */
-  openSubMenu(menu: Action, menuIndex: number, ev: MouseEvent) {
-    const parentMenuEl = ev.currentTarget as HTMLElement;
-    if (!parentMenuEl) return;
+  private openSubMenu(menu: Action, parentMenuEl: HTMLElement) {
+    if (!parentMenuEl) {
+      return;
+    }
     const y = parentMenuEl.getBoundingClientRect().top;
 
     this.subMenu.position = {
-      x: this.position.x + this.props.depth * MENU_WIDTH,
+      x: this.position.x,
       y: y - (this.subMenu.scrollOffset || 0),
     };
     this.subMenu.menuItems = menu.children(this.env);
@@ -250,38 +284,61 @@ export class Menu extends Component<Props, SpreadsheetChildEnv> {
     return subMenu.parentMenu?.id === menuItem.id;
   }
 
-  closeSubMenu() {
+  private closeSubMenu() {
+    if (this.subMenu.isHoveringChild) {
+      return;
+    }
     this.subMenu.isOpen = false;
     this.subMenu.parentMenu = undefined;
   }
 
-  onClickMenu(menu: Action, menuIndex: number, ev: MouseEvent) {
+  onClickMenu(menu: Action, ev: MouseEvent) {
     if (this.isEnabled(menu)) {
       if (this.isRoot(menu)) {
-        this.openSubMenu(menu, menuIndex, ev);
+        this.openSubMenu(menu, ev.currentTarget as HTMLElement);
       } else {
         this.activateMenu(menu);
       }
     }
   }
 
-  onMouseOver(menu: Action, position: Pixel, ev: MouseEvent) {
+  onMouseOver(menu: Action, ev: MouseEvent) {
     if (this.isEnabled(menu)) {
+      if (this.isParentMenu(this.subMenu, menu)) {
+        this.openingTimeOut.clear();
+        return;
+      }
+      const currentTarget = ev.currentTarget as HTMLElement;
       if (this.isRoot(menu)) {
-        this.openSubMenu(menu, position, ev);
-      } else {
-        this.closeSubMenu();
+        this.openingTimeOut.schedule(() => {
+          this.openSubMenu(menu, currentTarget);
+        }, TIMEOUT_DELAY);
       }
     }
   }
-}
 
-Menu.props = {
-  position: Object,
-  menuItems: Array,
-  depth: { type: Number, optional: true },
-  maxHeight: { type: Number, optional: true },
-  onClose: Function,
-  onMenuClicked: { type: Function, optional: true },
-  menuId: { type: String, optional: true },
-};
+  onMouseOverMainMenu() {
+    this.props.onMouseOver?.();
+    this.subMenu.isHoveringChild = false;
+  }
+
+  onMouseOverChildMenu() {
+    this.subMenu.isHoveringChild = true;
+    this.openingTimeOut.clear();
+  }
+
+  onMouseEnter(menu: Action, ev: MouseEvent) {
+    this.hoveredMenu = menu;
+    menu.onStartHover?.(this.env);
+  }
+
+  onMouseLeave(menu: Action) {
+    this.openingTimeOut.schedule(this.closeSubMenu.bind(this), TIMEOUT_DELAY);
+    this.hoveredMenu = undefined;
+    menu.onStopHover?.(this.env);
+  }
+
+  get menuStyle() {
+    return this.props.width ? cssPropertiesToCss({ width: this.props.width + "px" }) : "";
+  }
+}

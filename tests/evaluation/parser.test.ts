@@ -1,9 +1,13 @@
 import { astToFormula, parse } from "../../src";
-import { InvalidReferenceError } from "../../src/types/errors";
+import { CellErrorType } from "../../src/types/errors";
 
 describe("parser", () => {
   test("can parse a function call with no argument", () => {
     expect(parse("RAND()")).toEqual({ type: "FUNCALL", value: "RAND", args: [] });
+  });
+
+  test("cannot parse a quoted function call", () => {
+    expect(() => parse("'RAND'()")).toThrow("Invalid expression");
   });
 
   test("can parse a function call with one argument", () => {
@@ -32,7 +36,7 @@ describe("parser", () => {
   });
 
   test("function without a opening parenthesis", () => {
-    expect(() => parse(`SUM 5`)).toThrow("Invalid formula");
+    expect(() => parse(`SUM 5`)).toThrow("Invalid expression");
   });
 
   test("function without closing parenthesis", () => {
@@ -168,7 +172,14 @@ describe("parser", () => {
   });
 
   test("Can parse invalid references", () => {
-    expect(() => parse("#REF")).toThrowError(new InvalidReferenceError().message);
+    expect(parse("#REF")).toEqual({
+      type: "REFERENCE",
+      value: CellErrorType.InvalidReference,
+    });
+  });
+
+  test("Cannot parse empty string", () => {
+    expect(() => parse("")).toThrowError("Invalid expression");
   });
 
   test("AND", () => {
@@ -189,13 +200,26 @@ describe("parser", () => {
       ],
     });
   });
-});
 
-describe("parsing other stuff", () => {
-  test("arbitrary text", () => {
-    expect(() => parse("=undefined")).toThrow();
+  test("can parse simple symbol", () => {
+    expect(parse("Hello")).toEqual({
+      type: "SYMBOL",
+      value: "Hello",
+    });
+  });
+
+  test("can parse quoted symbol", () => {
+    expect(parse("'Hello world'")).toEqual({
+      type: "SYMBOL",
+      value: "Hello world",
+    });
+  });
+
+  test("cannot parse unquoted symbol with space", () => {
+    expect(() => parse("Hello world")).toThrow("Invalid expression");
   });
 });
+
 describe("Converting AST to string", () => {
   test("Convert number", () => {
     expect(astToFormula(parse("1"))).toBe("1");
@@ -251,6 +275,7 @@ describe("Converting AST to string", () => {
     expect(astToFormula(parse("'Sheet 1'!A10"))).toBe("'Sheet 1'!A10");
     expect(astToFormula(parse("'Sheet 1'!A10:A11"))).toBe("'Sheet 1'!A10:A11");
     expect(astToFormula(parse("SUM(A1,A2)"))).toBe("SUM(A1,A2)");
+    expect(astToFormula(parse("'Sheet 1'!A:B"))).toBe("'Sheet 1'!A:B");
   });
   test("Convert strings", () => {
     expect(astToFormula(parse('"R"'))).toBe('"R"');

@@ -6,10 +6,13 @@ import {
   markdownLink,
   toZone,
 } from "../../src/helpers";
-import { Border, CellIsRule, DEFAULT_LOCALE, IconSetRule, Style } from "../../src/types";
+import { DEFAULT_TABLE_CONFIG } from "../../src/helpers/table_presets";
+import { CellIsRule, DEFAULT_LOCALE, IconSetRule } from "../../src/types";
 import { BarChartDefinition } from "../../src/types/chart/bar_chart";
+import { ComboChartDefinition } from "../../src/types/chart/combo_chart";
 import { LineChartDefinition } from "../../src/types/chart/line_chart";
 import { PieChartDefinition } from "../../src/types/chart/pie_chart";
+import { ScatterChartDefinition } from "../../src/types/chart/scatter_chart";
 import { Image } from "../../src/types/image";
 import { SheetData, WorkbookData } from "../../src/types/workbook_data";
 import { XLSXCfOperatorType, XLSXSharedFormula } from "../../src/types/xlsx";
@@ -25,11 +28,6 @@ import {
 } from "../../src/xlsx/conversion/conversion_maps";
 import { convertXlsxFormat } from "../../src/xlsx/conversion/format_conversion";
 import { adaptFormula } from "../../src/xlsx/conversion/formula_conversion";
-import {
-  TABLE_BORDER_STYLE,
-  TABLE_HEADER_STYLE,
-  TABLE_HIGHLIGHTED_CELL_STYLE,
-} from "../../src/xlsx/conversion/table_conversion";
 import { getRelativePath } from "../../src/xlsx/helpers/misc";
 import { XLSXImportWarningManager } from "../../src/xlsx/helpers/xlsx_parser_error_manager";
 import { XlsxReader } from "../../src/xlsx/xlsx_reader";
@@ -48,8 +46,8 @@ import {
 
 describe("Import xlsx data", () => {
   let convertedData: WorkbookData;
-  beforeAll(() => {
-    const demo_xlsx = getTextXlsxFiles();
+  beforeAll(async () => {
+    const demo_xlsx = await getTextXlsxFiles();
     const reader = new XlsxReader(demo_xlsx);
     convertedData = reader.convertXlsx();
   });
@@ -130,8 +128,7 @@ describe("Import xlsx data", () => {
     ["lightTrellis", "A17"],
   ])("Can import fills", (fillType, cellXc) => {
     const testSheet = getWorkbookSheet("jestStyles", convertedData)!;
-    const styledCell = testSheet.cells[cellXc]!;
-    const cellStyle = getWorkbookCellStyle(styledCell, convertedData);
+    const cellStyle = getWorkbookCellStyle(testSheet.styles[cellXc], convertedData);
     expect(standardizeColor(cellStyle!.fillColor!)).toEqual("#FFC000FF");
   });
 
@@ -152,8 +149,7 @@ describe("Import xlsx data", () => {
     ["thick #ff0000", "C28"],
   ])("Can import borders", (borderType, cellXc) => {
     const testSheet = getWorkbookSheet("jestStyles", convertedData)!;
-    const cell = testSheet.cells[cellXc]!;
-    const cellBorders = getWorkbookCellBorder(cell, convertedData)!;
+    const cellBorders = getWorkbookCellBorder(testSheet.borders[cellXc], convertedData)!;
     const cellContentSplit = borderType.split(" ");
     const expectedBorderStyle = BORDER_STYLE_CONVERSION_MAP[cellContentSplit[0]];
     const expectedBorderColor =
@@ -175,8 +171,7 @@ describe("Import xlsx data", () => {
     ["distributed", "F9"],
   ])("Can import Horizontal Alignment %s", (alignType, cellXc) => {
     const testSheet = getWorkbookSheet("jestStyles", convertedData)!;
-    const styledCell = testSheet.cells[cellXc]!;
-    const cellStyle = getWorkbookCellStyle(styledCell, convertedData);
+    const cellStyle = getWorkbookCellStyle(testSheet.styles[cellXc], convertedData);
     expect(cellStyle?.align).toEqual(H_ALIGNMENT_CONVERSION_MAP[alignType]);
   });
 
@@ -188,20 +183,18 @@ describe("Import xlsx data", () => {
     ["distributed", "F16"],
   ])("Can import Vertical Alignment %s", (alignType, cellXc) => {
     const testSheet = getWorkbookSheet("jestStyles", convertedData)!;
-    const styledCell = testSheet.cells[cellXc]!;
-    const cellStyle = getWorkbookCellStyle(styledCell, convertedData);
+    const cellStyle = getWorkbookCellStyle(testSheet.styles[cellXc], convertedData);
     expect(cellStyle?.verticalAlign).toEqual(
       alignType === undefined ? undefined : V_ALIGNMENT_CONVERSION_MAP[alignType]
     );
   });
 
   test.each([
-    ["overflow", "F19"],
+    [undefined, "F19"], // overflow is the default, no style is needed
     ["wrap", "F20"],
   ])("Can import wrapping mode %s", (wrapType, cellXc) => {
     const testSheet = getWorkbookSheet("jestStyles", convertedData)!;
-    const styledCell = testSheet.cells[cellXc]!;
-    const cellStyle = getWorkbookCellStyle(styledCell, convertedData);
+    const cellStyle = getWorkbookCellStyle(testSheet.styles[cellXc], convertedData);
     expect(cellStyle?.wrapping).toEqual(wrapType);
   });
 
@@ -209,19 +202,15 @@ describe("Import xlsx data", () => {
     ["0.00", "M2"],
     ["0.00%", "M3"],
     ["m/d/yyyy", "M4"],
-    ["#,##0.00 [$€]", "M5"],
+    ['#,##0.00\\ "€"', "M5"],
     ["[$$]#,##0.000", "M6"],
-    ["[$₪] #,##0", "M7"],
-    ["#,##0[$ EUR €]", "M8"],
-    ["not supported: multiple escaped sequences", "M9"],
+    ["[$₪]\\ #,##0", "M7"],
+    ['#,##0" EUR €"', "M8"],
+    ['"€"#,##0.00\\ "€"', "M9"],
   ])("Can import format %s", (format, cellXc) => {
     const testSheet = getWorkbookSheet("jestStyles", convertedData)!;
-    const formattedCell = testSheet.cells[cellXc]!;
-    const cellFormat = getWorkbookCellFormat(formattedCell, convertedData);
+    const cellFormat = getWorkbookCellFormat(testSheet.formats[cellXc], convertedData);
     let expectedFormat: string | undefined = format;
-    if (format.startsWith("not supported")) {
-      expectedFormat = undefined;
-    }
     expect(cellFormat).toEqual(expectedFormat);
   });
 
@@ -235,8 +224,7 @@ describe("Import xlsx data", () => {
     ["size16", "H8"],
   ])("Can import font styles", (style, cellXc) => {
     const testSheet = getWorkbookSheet("jestStyles", convertedData)!;
-    const cell = testSheet.cells[cellXc]!;
-    const cellStyle = getWorkbookCellStyle(cell, convertedData);
+    const cellStyle = getWorkbookCellStyle(testSheet.styles[cellXc], convertedData);
     switch (style) {
       case "Red":
         expect(standardizeColor(cellStyle!.textColor!)).toEqual("#FF0000FF");
@@ -495,17 +483,13 @@ describe("Import xlsx data", () => {
     }
   });
 
-  test("tables with headers are imported as FilterTables", () => {
+  test("tables are imported", () => {
     const sheet = getWorkbookSheet("jestTable", convertedData)!;
-    expect(sheet.filterTables).toHaveLength(3);
-    expect(sheet.filterTables[0]).toEqual({ range: "C3:J6" });
-    expect(sheet.filterTables[1]).toEqual({ range: "C11:D12" });
-    expect(sheet.filterTables[2]).toEqual({ range: "C30:D32" });
+    expect(sheet.tables).toHaveLength(10);
   });
 
   test("rows filtered by a table filter are hidden", () => {
     const sheet = getWorkbookSheet("jestTable", convertedData)!;
-    expect(sheet.filterTables[2]).toEqual({ range: "C30:D32" });
     expect(sheet.cells["C31"]?.content).toEqual("Hidden");
     expect(sheet.rows[30].isHidden).toBeTruthy();
   });
@@ -517,139 +501,63 @@ describe("Import xlsx data", () => {
       tableTestSheet = getWorkbookSheet("jestTable", convertedData)!;
     });
 
-    test("Can display basic table style (borders on table outline)", () => {
-      const tableZone = toZone("C8:D9");
-      expect(
-        getWorkbookCellBorder(
-          getWorkbookCell(tableZone.left, tableZone.top, tableTestSheet)!,
-          convertedData
-        )
-      ).toMatchObject({
-        top: TABLE_BORDER_STYLE,
-        bottom: undefined,
-        left: TABLE_BORDER_STYLE,
-        right: undefined,
-      });
-      expect(
-        getWorkbookCellBorder(
-          getWorkbookCell(tableZone.right, tableZone.top, tableTestSheet)!,
-          convertedData
-        )
-      ).toMatchObject({
-        top: TABLE_BORDER_STYLE,
-        bottom: undefined,
-        right: TABLE_BORDER_STYLE,
-        left: undefined,
-      });
-      expect(
-        getWorkbookCellBorder(
-          getWorkbookCell(tableZone.left, tableZone.bottom, tableTestSheet)!,
-          convertedData
-        )
-      ).toMatchObject({
-        bottom: TABLE_BORDER_STYLE,
-        top: undefined,
-        left: TABLE_BORDER_STYLE,
-        right: undefined,
-      });
-      expect(
-        getWorkbookCellBorder(
-          getWorkbookCell(tableZone.right, tableZone.bottom, tableTestSheet)!,
-          convertedData
-        )
-      ).toMatchObject({
-        bottom: TABLE_BORDER_STYLE,
-        top: undefined,
-        right: TABLE_BORDER_STYLE,
-        left: undefined,
+    test("Can import basic table style", () => {
+      const table = tableTestSheet.tables.find((table) => table.range === "C8:D9")!;
+      expect(table?.config).toMatchObject({
+        numberOfHeaders: 0,
+        totalRow: false,
+        bandedRows: false,
+        bandedColumns: false,
+        firstColumn: false,
+        lastColumn: false,
+        hasFilters: false,
+        styleId: "TableStyleLight8",
       });
     });
 
-    test("Can display header style", () => {
-      const tableZone = toZone("C11:D12");
-      expect(
-        getWorkbookCellStyle(
-          getWorkbookCell(tableZone.left, tableZone.top, tableTestSheet)!,
-          convertedData
-        )
-      ).toMatchObject(TABLE_HEADER_STYLE);
-      expect(
-        getWorkbookCellStyle(
-          getWorkbookCell(tableZone.right, tableZone.top, tableTestSheet)!,
-          convertedData
-        )
-      ).toMatchObject(TABLE_HEADER_STYLE);
+    test("Can import table style id", () => {
+      const table = tableTestSheet.tables.find((table) => table.range === "C3:J6");
+      expect(table?.config).toMatchObject({ styleId: "TableStyleLight10" });
     });
 
-    test("Can highlight first table column", () => {
-      const tableZone = toZone("C14:D15");
-      expect(
-        getWorkbookCellStyle(
-          getWorkbookCell(tableZone.left, tableZone.top, tableTestSheet)!,
-          convertedData
-        )
-      ).toMatchObject(TABLE_HIGHLIGHTED_CELL_STYLE);
-      expect(
-        getWorkbookCellStyle(
-          getWorkbookCell(tableZone.left, tableZone.bottom, tableTestSheet)!,
-          convertedData
-        )
-      ).toMatchObject(TABLE_HIGHLIGHTED_CELL_STYLE);
+    test("Can import table with headers", () => {
+      const table = tableTestSheet.tables.find((table) => table.range === "C11:D12");
+      expect(table?.config).toMatchObject({ numberOfHeaders: 1 });
+    });
+
+    test("Can import table with first column style", () => {
+      const table = tableTestSheet.tables.find((table) => table.range === "C14:D15");
+      expect(table?.config).toMatchObject({ firstColumn: true });
     });
 
     test("Can highlight last table column", () => {
-      const tableZone = toZone("C17:D18");
-      expect(
-        getWorkbookCellStyle(
-          getWorkbookCell(tableZone.right, tableZone.top, tableTestSheet)!,
-          convertedData
-        )
-      ).toMatchObject(TABLE_HIGHLIGHTED_CELL_STYLE);
-      expect(
-        getWorkbookCellStyle(
-          getWorkbookCell(tableZone.right, tableZone.bottom, tableTestSheet)!,
-          convertedData
-        )
-      ).toMatchObject(TABLE_HIGHLIGHTED_CELL_STYLE);
+      const table = tableTestSheet.tables.find((table) => table.range === "C17:D18");
+      expect(table?.config).toMatchObject({ lastColumn: true });
     });
 
-    test("Can display banded rows (borders between rows)", () => {
-      const tableZone = toZone("C20:D21");
-      expect(
-        getWorkbookCellBorder(
-          getWorkbookCell(tableZone.left, tableZone.bottom, tableTestSheet)!,
-          convertedData
-        )
-      ).toMatchObject({ top: TABLE_BORDER_STYLE });
-      expect(
-        getWorkbookCellBorder(
-          getWorkbookCell(tableZone.right, tableZone.bottom, tableTestSheet)!,
-          convertedData
-        )
-      ).toMatchObject({ top: TABLE_BORDER_STYLE });
+    test("Can import table with banded rows", () => {
+      const table = tableTestSheet.tables.find((table) => table.range === "C20:D21");
+      expect(table?.config).toMatchObject({ bandedRows: true });
     });
 
-    test("Can display banded columns (borders between columns)", () => {
-      const tableZone = toZone("C23:D24");
-      expect(
-        getWorkbookCellBorder(
-          getWorkbookCell(tableZone.right, tableZone.top, tableTestSheet)!,
-          convertedData
-        )
-      ).toMatchObject({ left: TABLE_BORDER_STYLE });
-      expect(
-        getWorkbookCellBorder(
-          getWorkbookCell(tableZone.right, tableZone.bottom, tableTestSheet)!,
-          convertedData
-        )
-      ).toMatchObject({ left: TABLE_BORDER_STYLE });
+    test("Can import table with banded columns", () => {
+      const table = tableTestSheet.tables.find((table) => table.range === "C23:D24");
+      expect(table?.config).toMatchObject({ bandedColumns: true });
     });
 
-    test("Can display total row", () => {
-      const tableZone = toZone("C26:D28");
-      expect(getWorkbookCell(tableZone.left, tableZone.bottom, tableTestSheet)!.content).toEqual(
-        "Total"
-      );
+    test("Can import table with total rows", () => {
+      const table = tableTestSheet.tables.find((table) => table.range === "C26:D28");
+      expect(table?.config).toMatchObject({ totalRow: true });
+    });
+
+    test("Can import table with filters", () => {
+      const table = tableTestSheet.tables.find((table) => table.range === "C30:D32");
+      expect(table?.config).toMatchObject({ hasFilters: true });
+    });
+
+    test("Table with custom style will be converted to default table style", () => {
+      const table = tableTestSheet.tables.find((table) => table.range === "C34:D35");
+      expect(table?.config).toMatchObject({ styleId: DEFAULT_TABLE_CONFIG.styleId });
     });
   });
 
@@ -678,57 +586,34 @@ describe("Import xlsx data", () => {
     expect(testSheet.cells["J5"]?.content).toEqual("=E3");
   });
 
-  // We just import pivots as a Table (cells with some styling/borders).
+  // We just import pivots as a Table
   test("can import pivots", () => {
-    // Test pivot coordinates are in A1
     const testSheet = getWorkbookSheet("jestPivot", convertedData)!;
-    const pivotZone = toZone("C3:L21");
-
-    for (let col = pivotZone.left; col <= pivotZone.right; col++) {
-      for (let row = pivotZone.top; row <= pivotZone.bottom; row++) {
-        // Special style for headers and first column
-        let expectedStyle: Style | undefined = undefined;
-        if (row === pivotZone.top || row === pivotZone.top + 1) {
-          expectedStyle = TABLE_HEADER_STYLE;
-        } else if (col === pivotZone.left) {
-          expectedStyle = TABLE_HIGHLIGHTED_CELL_STYLE;
-        }
-
-        // Borders = outline of the table + top border between each row
-        const expectedBorder: Border = {};
-        if (col === pivotZone.right) {
-          expectedBorder.right = TABLE_BORDER_STYLE;
-        }
-        if (col === pivotZone.left) {
-          expectedBorder.left = TABLE_BORDER_STYLE;
-        }
-        if (row === pivotZone.bottom) {
-          expectedBorder.bottom = TABLE_BORDER_STYLE;
-        }
-        expectedBorder.top = TABLE_BORDER_STYLE;
-
-        if (expectedStyle) {
-          expect(
-            getWorkbookCellStyle(getWorkbookCell(col, row, testSheet)!, convertedData)
-          ).toMatchObject(expectedStyle);
-        }
-        expect(getWorkbookCellBorder(getWorkbookCell(col, row, testSheet)!, convertedData)).toEqual(
-          expectedBorder
-        );
-      }
-    }
+    const table = testSheet.tables[0];
+    expect(table.range).toEqual("C3:L21");
+    expect(table.config).toMatchObject({
+      numberOfHeaders: 2,
+      totalRow: true,
+      firstColumn: true,
+      lastColumn: true,
+      bandedRows: false,
+      bandedColumns: false,
+      hasFilters: false,
+    });
   });
 
   test.each([
     ["line chart", "C5:G18"],
     ["bar chart", "H5:L18"],
+    ["scatter chart", "M5:Q18"],
     ["pie chart", "C38:L56"],
+    ["combo chart", "H58:L71"],
     ["doughnut chart", "C19:L37"],
   ])("Can import figures ", (chartTitle, figureZone) => {
     const testSheet = getWorkbookSheet("jestCharts", convertedData)!;
     // Cells in the 1st column of the sheet contains jsons with expected figure data
     const figZone = toZone(figureZone);
-    const figure = testSheet.figures.find((figure) => figure.data.title === chartTitle)!;
+    const figure = testSheet.figures.find((figure) => figure.data.title.text === chartTitle)!;
 
     // Don't test exact positions, because excel does some esoteric magic for units and sizes (+our conversion is wonky, hello hardcoded DPI)
     // We'll only test that the figure corners are located in the correct cells
@@ -751,16 +636,54 @@ describe("Import xlsx data", () => {
     expect(figure.tag).toEqual("chart");
   });
 
-  test.each([["bar chart", "bar", "#fff", ["Sheet1!B27:B35", "Sheet1!C27:C35"]]])(
+  test.each([
+    [
+      "line",
+      [
+        { dataRange: "Sheet1!B26:B35", backgroundColor: "#7030A0" },
+        { dataRange: "Sheet1!C26:C35", backgroundColor: "#C65911" },
+      ],
+    ],
+    [
+      "bar",
+      [
+        { dataRange: "Sheet1!B27:B35", backgroundColor: "#7030A0" },
+        { dataRange: "Sheet1!C27:C35", backgroundColor: "#C65911" },
+      ],
+    ],
+  ])("Can import charts %s with dataset colors", (chartType, chartDatasets) => {
+    const testSheet = getWorkbookSheet("jestCharts", convertedData)!;
+    const figure = testSheet.figures.find((figure) => figure.data.type === chartType);
+    const chartData = figure!.data as LineChartDefinition | BarChartDefinition;
+    expect(chartData.dataSets).toEqual(chartDatasets);
+  });
+
+  test.each([
+    [
+      "bar chart",
+      "bar",
+      "#fff",
+      [
+        { dataRange: "Sheet1!B27:B35", backgroundColor: "#7030A0" },
+        { dataRange: "Sheet1!C27:C35", backgroundColor: "#C65911" },
+      ],
+    ],
+    [
+      "combo chart",
+      "combo",
+      "#fff",
+      [
+        { dataRange: "Sheet1!B27:B35", backgroundColor: "#1F77B4" },
+        { dataRange: "Sheet1!C27:C35", backgroundColor: "#FF7F0E" },
+      ],
+    ],
+  ])(
     "Can import charts %s without dataset titles",
     (chartTitle, chartType, chartColor, chartDatasets) => {
       const testSheet = getWorkbookSheet("jestCharts", convertedData)!;
-      const figure = testSheet.figures.find((figure) => figure.data.title === chartTitle)!;
-      const chartData = figure.data as
-        | LineChartDefinition
-        | PieChartDefinition
-        | BarChartDefinition;
-      expect(chartData.title).toEqual(chartTitle);
+      const figure = testSheet.figures.find((figure) => figure.data.title.text === chartTitle)!;
+      const chartData = figure.data as BarChartDefinition | ComboChartDefinition;
+      expect(chartData.title.text).toEqual(chartTitle);
       expect(chartData.type).toEqual(chartType);
       expect(standardizeColor(chartData.background!)).toEqual(standardizeColor(chartColor));
 
@@ -771,19 +694,32 @@ describe("Import xlsx data", () => {
   );
 
   test.each([
-    ["line chart", "line", "#CECECE", ["Sheet1!B26:B35", "Sheet1!C26:C35"]],
-    ["pie chart", "pie", "#fff", ["Sheet1!B26:B35"]],
-    ["doughnut chart", "pie", "#fff", ["Sheet1!B26:B35", "Sheet1!C26:C35"]],
+    [
+      "line chart",
+      "line",
+      "#CECECE",
+      [
+        { dataRange: "Sheet1!B26:B35", backgroundColor: "#7030A0" },
+        { dataRange: "Sheet1!C26:C35", backgroundColor: "#C65911" },
+      ],
+    ],
+    ["pie chart", "pie", "#fff", [{ dataRange: "Sheet1!B26:B35", backgroundColor: "#1F77B4" }]],
+    [
+      "doughnut chart",
+      "pie",
+      "#fff",
+      [
+        { dataRange: "Sheet1!B26:B35", backgroundColor: "#1F77B4" },
+        { dataRange: "Sheet1!C26:C35", backgroundColor: "#1F77B4" },
+      ],
+    ],
   ])(
     "Can import charts %s with dataset titles",
     (chartTitle, chartType, chartColor, chartDatasets) => {
       const testSheet = getWorkbookSheet("jestCharts", convertedData)!;
-      const figure = testSheet.figures.find((figure) => figure.data.title === chartTitle)!;
-      const chartData = figure.data as
-        | LineChartDefinition
-        | PieChartDefinition
-        | BarChartDefinition;
-      expect(chartData.title).toEqual(chartTitle);
+      const figure = testSheet.figures.find((figure) => figure.data.title.text === chartTitle)!;
+      const chartData = figure.data as LineChartDefinition | PieChartDefinition;
+      expect(chartData.title.text).toEqual(chartTitle);
       expect(chartData.type).toEqual(chartType);
       expect(standardizeColor(chartData.background!)).toEqual(standardizeColor(chartColor));
 
@@ -792,6 +728,43 @@ describe("Import xlsx data", () => {
       expect(chartData.dataSetsHaveTitle).toBeTruthy();
     }
   );
+
+  test("Can import scatter plot", () => {
+    const testSheet = getWorkbookSheet("jestCharts", convertedData)!;
+    const figure = testSheet.figures.find((figure) => figure.data.title.text === "scatter chart")!;
+    const chartData = figure.data as ScatterChartDefinition;
+    expect(chartData.title.text).toEqual("scatter chart");
+    expect(chartData.type).toEqual("scatter");
+    expect(standardizeColor(chartData.background!)).toEqual(standardizeColor("#fff"));
+    expect(chartData.dataSets).toEqual([{ dataRange: "Sheet1!C27:C35" }]);
+    expect(chartData.labelRange).toEqual("Sheet1!B27:B35");
+    expect(chartData.dataSetsHaveTitle).toBeFalsy();
+  });
+
+  test.each([
+    ["chart", "A1:F19"],
+    ["image", "H1:K20"],
+  ])("Can import figure %s which uses oneCellAnchor", (figureType, figureZone) => {
+    const testSheet = getWorkbookSheet("jestOneCellAnchor", convertedData)!;
+    const figZone = toZone(figureZone);
+    const figure = testSheet.figures.find((figure) => figure.tag === figureType)!;
+    expect(figure.x).toBeBetween(
+      getColPosition(figZone.left, testSheet),
+      getColPosition(figZone.left + 1, testSheet)
+    );
+    expect(figure.y).toBeBetween(
+      getRowPosition(figZone.top, testSheet),
+      getRowPosition(figZone.top + 1, testSheet)
+    );
+    expect(figure.width).toBeBetween(
+      getColPosition(figZone.right, testSheet) - getColPosition(figZone.left, testSheet),
+      getColPosition(figZone.right + 1, testSheet) - getColPosition(figZone.left, testSheet)
+    );
+    expect(figure.height).toBeBetween(
+      getRowPosition(figZone.bottom, testSheet) - getRowPosition(figZone.top, testSheet),
+      getRowPosition(figZone.bottom + 1, testSheet) - getRowPosition(figZone.top, testSheet)
+    );
+  });
 
   test("Can import images", () => {
     const testSheet = getWorkbookSheet("jestImages", convertedData)!;
@@ -817,6 +790,25 @@ describe("Import xlsx data", () => {
       const testSheet = getWorkbookSheet("jestHiddenSheet", convertedData)!;
       expect(testSheet.isVisible).toEqual(false);
     });
+
+    test("Can import sheet colors", () => {
+      expect(getWorkbookSheet("Sheet1", convertedData)!.color).toEqual("#00FF00");
+      expect(getWorkbookSheet("Formulas", convertedData)!.color).toEqual("#70AD47");
+      expect(getWorkbookSheet("jestSheet", convertedData)!.color).toEqual("#FF0000");
+    });
+  });
+
+  test("Import header groups", () => {
+    const testSheet = getWorkbookSheet("jestSheet", convertedData)!;
+    expect(testSheet.headerGroups?.ROW).toMatchObject([
+      { start: 9, end: 17, isFolded: false },
+      { start: 11, end: 13, isFolded: true },
+    ]);
+
+    expect(testSheet.headerGroups?.COL).toMatchObject([
+      { start: 9, end: 17, isFolded: false },
+      { start: 11, end: 13, isFolded: true },
+    ]);
   });
 });
 
@@ -842,7 +834,7 @@ test.each([
 
 test.each([
   ["0.00", "0.00", "0.00"],
-  ["0.00;0.00%", "0.00", "0.00"],
+  ["0.00;0.00%", "0.00;0.00%", "0.00"],
   ["0.000%", "0.000%", "0.000%"],
   ["#,##0.00", "#,##0.00", "0.00"],
   ["m/d/yyyy", "m/d/yyyy", "12/30/1899"],
@@ -852,15 +844,16 @@ test.each([
   ["mmm dd yy", "mmm dd yy", "Dec 30 99"],
   ["h AM/PM", "hh a", "12 AM"],
   ["HHHH:MM a/m", "hh:mm a", "12:00 AM"],
-  ["m/d/yyyy\\ hh:mm:ss", "m/d/yyyy hh:mm:ss", "12/30/1899 00:00:00"],
+  ["m/d/yyyy\\ hh:mm:ss", "m/d/yyyy\\ hh:mm:ss", "12/30/1899 00:00:00"],
   ["hh:mm:ss a", "hh:mm:ss a", "12:00:00 AM"],
-  ['#,##0.00 "€"', "#,##0.00 [$€]", "0.00€"],
+  ['#,##0.00 "€"', '#,##0.00 "€"', "0.00 €"],
   ["[$$-409]#,##0.000", "[$$]#,##0.000", "$0.000"],
   ["[$-409]0.00", "0.00", "0.00"],
   ["[$MM/DD/YYYY]0", "[$MM/DD/YYYY]0", "MM/DD/YYYY0"],
   ["#,##0.00[$MM/DD/YYYY]", "#,##0.00[$MM/DD/YYYY]", "0.00MM/DD/YYYY"],
-  ["[$₪-40D] #,##0.00", "[$₪] #,##0.00", "₪0.00"],
-  ['"€"#,##0.00 "€"', undefined, "0"],
+  ["[$₪-40D] #,##0.00", "[$₪] #,##0.00", "₪ 0.00"],
+  ['"€"#,##0.00 "€"', '"€"#,##0.00 "€"', "€0.00 €"],
+  ["@", "@", "0"],
 ])("convert format %s", async (excelFormat, convertedFormat, expectedValue) => {
   expect(
     convertXlsxFormat(80, [{ id: 80, format: excelFormat }], new XLSXImportWarningManager())

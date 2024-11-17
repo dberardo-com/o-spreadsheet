@@ -1,8 +1,9 @@
 import { _t } from "../translation";
-import { AddFunctionDescription, ArgValue, CellValue, Maybe, ValueAndFormat } from "../types";
-import { CellErrorType } from "../types/errors";
+import { AddFunctionDescription, Arg, FunctionResultObject, Maybe } from "../types";
+import { CellErrorType, EvaluationError } from "../types/errors";
 import { arg } from "./arguments";
-import { assert, conditionalVisitBoolean, toBoolean } from "./helpers";
+import { boolAnd, boolOr } from "./helper_logical";
+import { assert, conditionalVisitBoolean, isEvaluationError, toBoolean } from "./helpers";
 
 // -----------------------------------------------------------------------------
 // AND
@@ -21,17 +22,10 @@ export const AND = {
       _t("More expressions that represent logical values.")
     ),
   ],
-  returns: ["BOOLEAN"],
-  compute: function (...logicalExpressions: ArgValue[]): boolean {
-    let foundBoolean = false;
-    let acc = true;
-    conditionalVisitBoolean(logicalExpressions, (arg) => {
-      foundBoolean = true;
-      acc = acc && arg;
-      return acc;
-    });
+  compute: function (...logicalExpressions: Arg[]): boolean {
+    const { result, foundBoolean } = boolAnd(logicalExpressions);
     assert(() => foundBoolean, _t("[[FUNCTION_NAME]] has no valid input data."));
-    return acc;
+    return result;
   },
   isExported: true,
 } satisfies AddFunctionDescription;
@@ -42,7 +36,6 @@ export const AND = {
 export const FALSE: AddFunctionDescription = {
   description: _t("Logical value `false`."),
   args: [],
-  returns: ["BOOLEAN"],
   compute: function (): boolean {
     return false;
   },
@@ -61,22 +54,18 @@ export const IF = {
         "An expression or reference to a cell containing an expression that represents some logical value, i.e. TRUE or FALSE."
       )
     ),
+    arg("value_if_true (any)", _t("The value the function returns if logical_expression is TRUE.")),
     arg(
-      "value_if_true (any, lazy)",
-      _t("The value the function returns if logical_expression is TRUE.")
-    ),
-    arg(
-      "value_if_false (any, lazy, default=FALSE)",
+      "value_if_false (any, default=FALSE)",
       _t("The value the function returns if logical_expression is FALSE.")
     ),
   ],
-  returns: ["ANY"],
-  computeValueAndFormat: function (
-    logicalExpression: Maybe<ValueAndFormat>,
-    valueIfTrue: () => Maybe<ValueAndFormat>,
-    valueIfFalse: () => Maybe<ValueAndFormat> = () => ({ value: false })
-  ): ValueAndFormat {
-    const result = toBoolean(logicalExpression?.value) ? valueIfTrue() : valueIfFalse();
+  compute: function (
+    logicalExpression: Maybe<FunctionResultObject>,
+    valueIfTrue: Maybe<FunctionResultObject>,
+    valueIfFalse: Maybe<FunctionResultObject>
+  ): FunctionResultObject {
+    const result = toBoolean(logicalExpression?.value) ? valueIfTrue : valueIfFalse;
     if (result === undefined) {
       return { value: "" };
     }
@@ -94,23 +83,17 @@ export const IF = {
 export const IFERROR = {
   description: _t("Value if it is not an error, otherwise 2nd argument."),
   args: [
-    arg("value (any, lazy)", _t("The value to return if value itself is not an error.")),
+    arg("value (any)", _t("The value to return if value itself is not an error.")),
     arg(
-      `value_if_error (any, lazy, default="empty")`,
+      `value_if_error (any, default="empty")`,
       _t("The value the function returns if value is an error.")
     ),
   ],
-  returns: ["ANY"],
-  computeValueAndFormat: function (
-    value: () => Maybe<ValueAndFormat>,
-    valueIfError: () => Maybe<ValueAndFormat> = () => ({ value: "" })
-  ): ValueAndFormat {
-    let result;
-    try {
-      result = value();
-    } catch (e) {
-      result = valueIfError();
-    }
+  compute: function (
+    value: Maybe<FunctionResultObject>,
+    valueIfError: Maybe<FunctionResultObject> = { value: "" }
+  ): FunctionResultObject {
+    const result = isEvaluationError(value?.value) ? valueIfError : value;
     if (result === undefined) {
       return { value: "" };
     }
@@ -128,27 +111,17 @@ export const IFERROR = {
 export const IFNA = {
   description: _t("Value if it is not an #N/A error, otherwise 2nd argument."),
   args: [
-    arg("value (any, lazy)", _t("The value to return if value itself is not #N/A an error.")),
+    arg("value (any)", _t("The value to return if value itself is not #N/A an error.")),
     arg(
-      `value_if_error (any, lazy, default="empty")`,
+      `value_if_error (any, default="empty")`,
       _t("The value the function returns if value is an #N/A error.")
     ),
   ],
-  returns: ["ANY"],
-  computeValueAndFormat: function (
-    value: () => Maybe<ValueAndFormat>,
-    valueIfError: () => Maybe<ValueAndFormat> = () => ({ value: "" })
-  ): ValueAndFormat {
-    let result;
-    try {
-      result = value();
-    } catch (e) {
-      if (e.errorType === CellErrorType.NotAvailable) {
-        result = valueIfError();
-      } else {
-        result = value();
-      }
-    }
+  compute: function (
+    value: Maybe<FunctionResultObject>,
+    valueIfError: Maybe<FunctionResultObject> = { value: "" }
+  ): FunctionResultObject {
+    const result = value?.value === CellErrorType.NotAvailable ? valueIfError : value;
     if (result === undefined) {
       return { value: "" };
     }
@@ -167,30 +140,29 @@ export const IFS = {
   description: _t("Returns a value depending on multiple logical expressions."),
   args: [
     arg(
-      "condition1 (boolean, lazy)",
+      "condition1 (boolean)",
       _t(
         "The first condition to be evaluated. This can be a boolean, a number, an array, or a reference to any of those."
       )
     ),
-    arg("value1 (any, lazy)", _t("The returned value if condition1 is TRUE.")),
+    arg("value1 (any)", _t("The returned value if condition1 is TRUE.")),
     arg(
-      "condition2 (boolean, lazy, repeating)",
+      "condition2 (boolean, repeating)",
       _t("Additional conditions to be evaluated if the previous ones are FALSE.")
     ),
     arg(
-      "value2 (any, lazy, repeating)",
+      "value2 (any, repeating)",
       _t("Additional values to be returned if their corresponding conditions are TRUE.")
     ),
   ],
-  returns: ["ANY"],
-  computeValueAndFormat: function (...values: (() => Maybe<ValueAndFormat>)[]): ValueAndFormat {
+  compute: function (...values: Maybe<FunctionResultObject>[]): FunctionResultObject {
     assert(
       () => values.length % 2 === 0,
       _t("Wrong number of arguments. Expected an even number of arguments.")
     );
     for (let n = 0; n < values.length - 1; n += 2) {
-      if (toBoolean(values[n]()?.value)) {
-        const result = values[n + 1]();
+      if (toBoolean(values[n]?.value)) {
+        const result = values[n + 1];
         if (result === undefined) {
           return { value: "" };
         }
@@ -200,7 +172,7 @@ export const IFS = {
         return result;
       }
     }
-    throw new Error(_t("No match."));
+    throw new EvaluationError(_t("No match."));
   },
   isExported: true,
 } satisfies AddFunctionDescription;
@@ -218,8 +190,7 @@ export const NOT = {
       )
     ),
   ],
-  returns: ["BOOLEAN"],
-  compute: function (logicalExpression: Maybe<CellValue>): boolean {
+  compute: function (logicalExpression: Maybe<FunctionResultObject>): boolean {
     return !toBoolean(logicalExpression);
   },
   isExported: true,
@@ -242,17 +213,10 @@ export const OR = {
       _t("More expressions that evaluate to logical values.")
     ),
   ],
-  returns: ["BOOLEAN"],
-  compute: function (...logicalExpressions: ArgValue[]): boolean {
-    let foundBoolean = false;
-    let acc = false;
-    conditionalVisitBoolean(logicalExpressions, (arg) => {
-      foundBoolean = true;
-      acc = acc || arg;
-      return !acc;
-    });
+  compute: function (...logicalExpressions: Arg[]): boolean {
+    const { result, foundBoolean } = boolOr(logicalExpressions);
     assert(() => foundBoolean, _t("[[FUNCTION_NAME]] has no valid input data."));
-    return acc;
+    return result;
   },
   isExported: true,
 } satisfies AddFunctionDescription;
@@ -263,7 +227,6 @@ export const OR = {
 export const TRUE: AddFunctionDescription = {
   description: _t("Logical value `true`."),
   args: [],
-  returns: ["BOOLEAN"],
   compute: function (): boolean {
     return true;
   },
@@ -287,8 +250,7 @@ export const XOR = {
       _t("More expressions that evaluate to logical values.")
     ),
   ],
-  returns: ["BOOLEAN"],
-  compute: function (...logicalExpressions: ArgValue[]): boolean {
+  compute: function (...logicalExpressions: Arg[]): boolean {
     let foundBoolean = false;
     let acc = false;
     conditionalVisitBoolean(logicalExpressions, (arg) => {

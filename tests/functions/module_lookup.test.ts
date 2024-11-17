@@ -1,6 +1,10 @@
 import { Model } from "../../src/model";
-import { setCellContent } from "../test_helpers/commands_helpers";
-import { getEvaluatedCell } from "../test_helpers/getters_helpers";
+import { activateSheet, createSheet, setCellContent } from "../test_helpers/commands_helpers";
+import {
+  getCellContent,
+  getEvaluatedCell,
+  getEvaluatedGrid,
+} from "../test_helpers/getters_helpers";
 import {
   createModelFromGrid,
   evaluateCell,
@@ -89,22 +93,30 @@ describe("COLUMN formula", () => {
     const model = new Model();
     const sheetId = model.getters.getActiveSheetId();
     setCellContent(model, "A1", "kikoulol");
-    expect(() => model.getters.evaluateFormula(sheetId, "=COLUMN()")).toThrow();
-    expect(() => model.getters.evaluateFormula(sheetId, "=COLUMN(A1)")).not.toThrow();
+    expect(model.getters.evaluateFormula(sheetId, "=COLUMN()")).toBe("#ERROR"); // @compatibility: on google sheets, return #N/A
+    expect(model.getters.evaluateFormula(sheetId, "=COLUMN(A1)")).toBe(1);
   });
 
   test("functional tests on cell arguments", () => {
     expect(evaluateCell("A1", { A1: "=COLUMN(G2)" })).toBe(7);
     expect(evaluateCell("A1", { A1: "=COLUMN(ABC2)" })).toBe(731);
     expect(evaluateCell("A1", { A1: "=COLUMN($ABC$2)" })).toBe(731);
-    expect(evaluateCell("A1", { A1: "=COLUMN(Sheet42!$ABC$2)" })).toBe(731);
+    expect(evaluateCell("A1", { A1: "=COLUMN(Sheet1!$ABC$2)" })).toBe(731);
   });
 
   test("functional tests on range arguments", () => {
     expect(evaluateCell("A1", { A1: "=COLUMN(B3:C40)" })).toBe(2);
     expect(evaluateCell("A1", { A1: "=COLUMN(D3:Z9)" })).toBe(4);
     expect(evaluateCell("A1", { A1: "=COLUMN($D$3:$Z$9)" })).toBe(4);
-    expect(evaluateCell("A1", { A1: "=COLUMN(Sheet42!$D$3:$Z$9)" })).toBe(4);
+    expect(evaluateCell("A1", { A1: "=COLUMN(Sheet1!$D$3:$Z$9)" })).toBe(4);
+  });
+
+  test("functional tests on range arguments with invalid sheet name", () => {
+    expect(evaluateCell("A1", { A1: "=COLUMN(Sheet42!ABC2)" })).toBe("#ERROR"); // @compatibility: on google sheets, return #REF!
+  });
+
+  test("COLUMN accepts errors on first argument", () => {
+    expect(evaluateCell("A1", { A1: "=COLUMN(B2)", B2: "=KABOUM" })).toBe(2);
   });
 });
 
@@ -118,14 +130,22 @@ describe("COLUMNS formula", () => {
     expect(evaluateCell("A1", { A1: "=COLUMNS(H2)" })).toBe(1);
     expect(evaluateCell("A1", { A1: "=COLUMNS(ABC2)" })).toBe(1);
     expect(evaluateCell("A1", { A1: "=COLUMNS($ABC$2)" })).toBe(1);
-    expect(evaluateCell("A1", { A1: "=COLUMNS(Sheet42!$ABC$2)" })).toBe(1);
+    expect(evaluateCell("A1", { A1: "=COLUMNS(Sheet1!$ABC$2)" })).toBe(1);
   });
 
   test("functional tests on range arguments", () => {
     expect(evaluateCell("A1", { A1: "=COLUMNS(B3:C40)" })).toBe(2);
     expect(evaluateCell("A1", { A1: "=COLUMNS(D3:Z9)" })).toBe(23);
     expect(evaluateCell("A1", { A1: "=COLUMNS($D$3:$Z$9)" })).toBe(23);
-    expect(evaluateCell("A1", { A1: "=COLUMNS(Sheet42!$D$3:$Z$9)" })).toBe(23);
+    expect(evaluateCell("A1", { A1: "=COLUMNS(Sheet1!$D$3:$Z$9)" })).toBe(23);
+  });
+
+  test("functional tests on range arguments with invalid sheet name", () => {
+    expect(evaluateCell("A1", { A1: "=COLUMNS(Sheet42!ABC2)" })).toBe("#ERROR"); // @compatibility: on google sheets, return #REF!
+  });
+
+  test("COLUMNS accepts errors on first argument", () => {
+    expect(evaluateCell("A1", { A1: "=COLUMNS(B2:D2)", B2: "=KABOUM" })).toBe(3);
   });
 });
 
@@ -222,6 +242,25 @@ describe("LOOKUP formula", () => {
     };
     expect(evaluateCellFormat("A5", { A5: "=LOOKUP(2, A1:B2)", ...grid })).toBe("m/d/yy");
     expect(evaluateCellFormat("A6", { A6: "=LOOKUP(1, A1:A2, C1:C2)", ...grid })).toBe("#,##0[$$]");
+  });
+
+  test("can LOOKUP in a range with errors cells", () => {
+    const grid = {
+      A1: "=1/0",
+      A2: "2",
+      A3: "=?LOOKUP(2, A1:A2)",
+    };
+    expect(evaluateCell("A3", grid)).toBe(2);
+  });
+
+  test("cannot lookup an error values", () => {
+    const grid = {
+      A1: "=1/0",
+      B1: "1",
+      A2: "42",
+      B2: "2",
+    };
+    expect(evaluateCell("A3", { A3: "=LOOKUP(A1, A1:B2)", ...grid })).toBe("#DIV/0!");
   });
 });
 
@@ -439,6 +478,21 @@ describe("MATCH formula", () => {
   test("Accents and uppercase are ignored", () => {
     expect(evaluateCell("A1", { A1: '=MATCH("epee", B1, 1)', B1: "Épée" })).toBe(1);
   });
+
+  test("Find the exact value perform a wildcard search", () => {
+    const grid = { A1: "YODAA", B1: "YOPLAA" };
+    expect(evaluateCell("A3", { A3: '=MATCH("YO?L*", A1:B1, 0)', ...grid })).toBe(2);
+  });
+
+  test("MATCH accepts errors in second argument", () => {
+    const grid = { A1: "=KABOUM", B1: "42" };
+    expect(evaluateCell("A3", { A3: "=MATCH(42, A1:B1)", ...grid })).toBe(2);
+  });
+
+  test("cannot match an error", () => {
+    const grid = { A1: "=KABOUM", B1: "42" };
+    expect(evaluateCell("A3", { A3: "=MATCH(A1, A1:B1)", ...grid })).toBe("#BAD_EXPR");
+  });
 });
 
 describe("ROW formula", () => {
@@ -452,22 +506,30 @@ describe("ROW formula", () => {
     const model = new Model();
     const sheetId = model.getters.getActiveSheetId();
     setCellContent(model, "A1", "kikoulol");
-    expect(() => model.getters.evaluateFormula(sheetId, "=ROW()")).toThrow();
-    expect(() => model.getters.evaluateFormula(sheetId, "=ROW(A1)")).not.toThrow();
+    expect(model.getters.evaluateFormula(sheetId, "=ROW()")).toBe("#ERROR"); // @compatibility: on google sheets, return #N/A
+    expect(model.getters.evaluateFormula(sheetId, "=ROW(A1)")).toBe(1);
   });
 
   test("functional tests on cell arguments", () => {
     expect(evaluateCell("A1", { A1: "=ROW(H2)" })).toBe(2);
     expect(evaluateCell("A1", { A1: "=ROW(A234)" })).toBe(234);
     expect(evaluateCell("A1", { A1: "=ROW($A$234)" })).toBe(234);
-    expect(evaluateCell("A1", { A1: "=ROW(Sheet42!$A$234)" })).toBe(234);
+    expect(evaluateCell("A1", { A1: "=ROW(Sheet1!$A$234)" })).toBe(234);
   });
 
   test("functional tests on range arguments", () => {
     expect(evaluateCell("A1", { A1: "=ROW(B3:C40)" })).toBe(3);
     expect(evaluateCell("A1", { A1: "=ROW(D3:Z9)" })).toBe(3);
     expect(evaluateCell("A1", { A1: "=ROW($D$3:$Z$9)" })).toBe(3);
-    expect(evaluateCell("A1", { A1: "=ROW(Sheet42!$D$3:$Z$9)" })).toBe(3);
+    expect(evaluateCell("A1", { A1: "=ROW(Sheet1!$D$3:$Z$9)" })).toBe(3);
+  });
+
+  test("functional tests on range arguments with invalid sheet name", () => {
+    expect(evaluateCell("A1", { A1: "=ROW(Sheet42!A234)" })).toBe("#ERROR"); // @compatibility: on google sheets, return #REF!
+  });
+
+  test("ROW accepts errors on first argument", () => {
+    expect(evaluateCell("A1", { A1: "=ROW(B2)", B2: "=KABOUM" })).toBe(2);
   });
 });
 
@@ -481,14 +543,22 @@ describe("ROWS formula", () => {
     expect(evaluateCell("A1", { A1: "=ROWS(H2)" })).toBe(1);
     expect(evaluateCell("A1", { A1: "=ROWS(ABC2)" })).toBe(1);
     expect(evaluateCell("A1", { A1: "=ROWS($ABC$2)" })).toBe(1);
-    expect(evaluateCell("A1", { A1: "=ROWS(Sheet42!$ABC$2)" })).toBe(1);
+    expect(evaluateCell("A1", { A1: "=ROWS(Sheet1!$ABC$2)" })).toBe(1);
   });
 
   test("functional tests on range arguments", () => {
     expect(evaluateCell("A1", { A1: "=ROWS(B3:C40)" })).toBe(38);
     expect(evaluateCell("A1", { A1: "=ROWS(D3:Z9)" })).toBe(7);
     expect(evaluateCell("A1", { A1: "=ROWS($D$3:$Z$9)" })).toBe(7);
-    expect(evaluateCell("A1", { A1: "=ROWS(Sheet42!$D$3:$Z$9)" })).toBe(7);
+    expect(evaluateCell("A1", { A1: "=ROWS(Sheet1!$D$3:$Z$9)" })).toBe(7);
+  });
+
+  test("functional tests on range arguments with invalid sheet name", () => {
+    expect(evaluateCell("A1", { A1: "=ROWS(Sheet42!ABC2)" })).toBe("#ERROR"); // @compatibility: on google sheets, return #REF!
+  });
+
+  test("ROWS accepts errors on first argument", () => {
+    expect(evaluateCell("A1", { A1: "=ROWS(B2:B4)", B2: "=KABOUM" })).toBe(3);
   });
 });
 
@@ -733,6 +803,22 @@ describe("VLOOKUP formula", () => {
     expect(evaluateCell("A1", { A1: '=VLOOKUP("epee", B1, 1)', B1: "Épée" })).toBe("Épée");
   });
 
+  test("perform a wildcard search when values are evaluated as unsorted", () => {
+    // prettier-ignore
+    const grid = evaluateGrid({
+      A1: "abbc", B1: "1111",
+      A2: "abc",  B2: "222",
+      A3: "ba",   B3: "33",
+      A4: "abcd", B4: "4444",
+      A5: "=A2",  B5: "555",
+      A6: "=A3",  B6: "666",
+      Z1: '=VLOOKUP("a?c", A1:B6, 2, FALSE )',
+      Z2: '=VLOOKUP("a*d", A1:B6, 2, FALSE )',
+    });
+    expect(grid.Z1).toBe(222);
+    expect(grid.Z2).toBe(4444);
+  });
+
   test("take format into account", () => {
     // prettier-ignore
     const grid = {
@@ -741,6 +827,26 @@ describe("VLOOKUP formula", () => {
     };
     expect(evaluateCellFormat("D1", { D1: '=VLOOKUP("A2", A2:C3, 3)', ...grid })).toBe("#,##0[$€]");
     expect(evaluateCellFormat("E1", { E1: '=VLOOKUP("B2", A2:C3, 2)', ...grid })).toBe("0%");
+  });
+
+  test("VLOOKUP accept errors in the second parameter", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "=KABOUM", B1: "1",
+      A2: "42",      B2: "2", 
+    };
+    expect(evaluateCell("A3", { A3: "=VLOOKUP(42, A1:B2, 2, true)", ...grid })).toBe(2);
+    expect(evaluateCell("A3", { A3: "=VLOOKUP(42, A1:B2, 2, false)", ...grid })).toBe(2);
+  });
+
+  test("VLOOKUP cannot find error values", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "=KABOUM", B1: "1",
+      A2: "42",      B2: "2", 
+    };
+    expect(evaluateCell("A3", { A3: "=VLOOKUP(A1, A1:B2, 2, true)", ...grid })).toBe("#BAD_EXPR");
+    expect(evaluateCell("A3", { A3: "=VLOOKUP(A1, A1:B2, 2, false)", ...grid })).toBe("#BAD_EXPR");
   });
 });
 
@@ -763,7 +869,7 @@ describe("HLOOKUP formula", () => {
     expect(grid.Z2).toBe("#ERROR"); // @compatibility: on googlesheets, return #VALUE!
   });
 
-  test("if folat index --> index rounded down", () => {
+  test("if float index --> index rounded down", () => {
     const grid = evaluateGrid({
       ...commonGrid,
       Z1: '=HLOOKUP( "B2", A2:F5, 2.9)',
@@ -916,6 +1022,38 @@ describe("HLOOKUP formula", () => {
   test("Accents and uppercase are ignored", () => {
     expect(evaluateCell("A1", { A1: '=HLOOKUP("epee", B1, 1)', B1: "Épée" })).toBe("Épée");
   });
+
+  test("perform a wildcard search when values are evaluated as unsorted", () => {
+    // prettier-ignore
+    const grid = evaluateGrid({
+      A1: "abbc", B1: "abc", C1: "ba", D1: "abcd", E1: "=B1", F1: "=C1",
+      A2: "1111", B2: "222", C2: "33", D2: "4444", E2: "555", F2: "666",
+      Z1: '=HLOOKUP("a?c", A1:F2, 2, FALSE )',
+      Z2: '=HLOOKUP("a*d", A1:F2, 2, FALSE )',
+    });
+    expect(grid.Z1).toBe(222);
+    expect(grid.Z2).toBe(4444);
+  });
+
+  test("HLOOKUP accept errors in the second parameter", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "=KABOUM", B1: "42",
+      A2: "1",       B2: "2", 
+    };
+    expect(evaluateCell("A3", { A3: "=HLOOKUP(42, A1:B2, 2, true)", ...grid })).toBe(2);
+    expect(evaluateCell("A3", { A3: "=HLOOKUP(42, A1:B2, 2, false)", ...grid })).toBe(2);
+  });
+
+  test("HLOOKUP cannot find error values", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "=KABOUM", B1: "42",
+      A2: "1",       B2: "2", 
+    };
+    expect(evaluateCell("A3", { A3: "=HLOOKUP(A1, A1:B2, 2, true)", ...grid })).toBe("#BAD_EXPR");
+    expect(evaluateCell("A3", { A3: "=HLOOKUP(A1, A1:B2, 2, false)", ...grid })).toBe("#BAD_EXPR");
+  });
 });
 
 describe("XLOOKUP formula", () => {
@@ -947,9 +1085,12 @@ describe("XLOOKUP formula", () => {
     expect(evaluateCell("A1", { A1: "=XLOOKUP(5, D1:F1, D1:E3, 0)" })).toBe("#ERROR");
   });
 
-  test("match_mode should be between -1 and 1", () => {
+  test("match_mode should be between -1, 1 and 2", () => {
     expect(evaluateCell("A1", { A1: "=XLOOKUP(5, D1:D3, D1:D3, 0, -2)" })).toBe("#ERROR");
-    expect(evaluateCell("A1", { A1: "=XLOOKUP(5, D1:D3, D1:D3, 0, 2)" })).toBe("#ERROR");
+    expect(evaluateCell("A1", { A1: "=XLOOKUP(5, D1:D3, D1:D3, 0, -1)" })).toBe(0);
+    expect(evaluateCell("A1", { A1: "=XLOOKUP(5, D1:D3, D1:D3, 0, 1)" })).toBe(0);
+    expect(evaluateCell("A1", { A1: "=XLOOKUP(5, D1:D3, D1:D3, 0, 2)" })).toBe(0);
+    expect(evaluateCell("A1", { A1: "=XLOOKUP(5, D1:D3, D1:D3, 0, 3)" })).toBe("#ERROR");
   });
 
   test("search_mode should be in [-2, -1, 1, 2]", () => {
@@ -1054,6 +1195,36 @@ describe("XLOOKUP formula", () => {
       expect(grid.Z2).toBe("B1");
       expect(grid.Z3).toBe(5);
       expect(grid.Z4).toBe("#N/A");
+    });
+
+    test("Wildcard match", () => {
+      const grid = evaluateGrid({
+        ...commonGrid,
+        Z1: '=XLOOKUP("*inar*", B1:B6, B1:B6,, 2 )',
+        Z2: '=XLOOKUP("hel?", B1:B6, B1:B6,, 2 )',
+        Z3: '=XLOOKUP("hel??", B1:B6, B1:B6,, 2 )',
+      });
+      expect(grid.Z1).toBe("épinards");
+      expect(grid.Z2).toBe("help");
+      expect(grid.Z3).toBe("#N/A");
+    });
+
+    test("XLOOKUP accept errors in the second parameter", () => {
+      // prettier-ignore
+      const grid = {
+        A1: "=KABOUM", B1: "42",
+        A2: "1",       B2: "2", 
+      };
+      expect(evaluateCell("A3", { A3: "=XLOOKUP(42, A1:B1, A2:B2)", ...grid })).toBe(2);
+    });
+
+    test("XLOOKUP cannot find error values", () => {
+      // prettier-ignore
+      const grid = {
+        A1: "=KABOUM", B1: "42",
+        A2: "1",       B2: "2", 
+      };
+      expect(evaluateCell("A3", { A3: "=XLOOKUP(A1, A1:B1, A2:B2)", ...grid })).toBe("#BAD_EXPR");
     });
   });
 
@@ -1196,7 +1367,7 @@ describe("INDEX formula", () => {
     expect(getEvaluatedCell(model, "A6").value).toBe("A3");
     expect(getEvaluatedCell(model, "B6").value).toBe("B3");
     expect(getEvaluatedCell(model, "C6").value).toBe("C3");
-    expect(getEvaluatedCell(model, "A7").value).toBe("");
+    expect(getEvaluatedCell(model, "A7").value).toBe(null);
   });
 
   test("select a full row (with 0 as col parameter)", () => {
@@ -1219,7 +1390,7 @@ describe("INDEX formula", () => {
     expect(getEvaluatedCell(model, "A6").value).toBe("A3");
     expect(getEvaluatedCell(model, "B6").value).toBe("B3");
     expect(getEvaluatedCell(model, "C6").value).toBe("C3");
-    expect(getEvaluatedCell(model, "A7").value).toBe("");
+    expect(getEvaluatedCell(model, "A7").value).toBe(null);
   });
 
   test("select a full column (with empty row parameter", () => {
@@ -1242,7 +1413,7 @@ describe("INDEX formula", () => {
     expect(getEvaluatedCell(model, "C4").value).toBe("C1");
     expect(getEvaluatedCell(model, "C5").value).toBe("C2");
     expect(getEvaluatedCell(model, "C6").value).toBe("C3");
-    expect(getEvaluatedCell(model, "D5").value).toBe("");
+    expect(getEvaluatedCell(model, "D5").value).toBe(null);
   });
 
   test("select a full column (with 0 as row parameter", () => {
@@ -1265,7 +1436,7 @@ describe("INDEX formula", () => {
     expect(getEvaluatedCell(model, "C4").value).toBe("C1");
     expect(getEvaluatedCell(model, "C5").value).toBe("C2");
     expect(getEvaluatedCell(model, "C6").value).toBe("C3");
-    expect(getEvaluatedCell(model, "D5").value).toBe("");
+    expect(getEvaluatedCell(model, "D5").value).toBe(null);
   });
 
   test("select the whole range", () => {
@@ -1285,14 +1456,14 @@ describe("INDEX formula", () => {
     expect(getEvaluatedCell(model, "A4").value).toBe("A1");
     expect(getEvaluatedCell(model, "B4").value).toBe("B1");
     expect(getEvaluatedCell(model, "C4").value).toBe("C1");
-    expect(getEvaluatedCell(model, "D4").value).toBe("");
+    expect(getEvaluatedCell(model, "D4").value).toBe(null);
     expect(getEvaluatedCell(model, "A5").value).toBe("A2");
     expect(getEvaluatedCell(model, "B5").value).toBe("B2");
     expect(getEvaluatedCell(model, "C5").value).toBe("C2");
     expect(getEvaluatedCell(model, "A6").value).toBe("A3");
     expect(getEvaluatedCell(model, "B6").value).toBe("B3");
     expect(getEvaluatedCell(model, "C6").value).toBe("C3");
-    expect(getEvaluatedCell(model, "A7").value).toBe("");
+    expect(getEvaluatedCell(model, "A7").value).toBe(null);
   });
 
   test("take format into account", () => {
@@ -1303,5 +1474,324 @@ describe("INDEX formula", () => {
     };
     expect(evaluateCellFormat("A4", { A4: "=INDEX(A1:B2, 2, 1)", ...grid })).toBe("#,##0[$€]");
     expect(evaluateCellFormat("B4", { B4: "=INDEX(A1:B2, 1, 2)", ...grid })).toBe("0%");
+  });
+
+  test("INDEX accept errors in the first parameter", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "2", B1: "42",
+      A2: "1", B2: "=KABOUM", 
+    };
+    expect(evaluateCell("A3", { A3: "=INDEX(A1:B2, 1, 2)", ...grid })).toBe(42);
+    expect(evaluateCell("A3", { A3: "=INDEX(A1:B2, 2, 2)", ...grid })).toBe("#BAD_EXPR");
+  });
+});
+
+describe("INDIRECT formula", () => {
+  test("Check argument validity", () => {
+    expect(evaluateCell("A1", { A1: "=INDIRECT()" })).toBe("#BAD_EXPR");
+    expect(evaluateCell("A1", { A1: '=INDIRECT("B1", "string")' })).toBe("#ERROR");
+    expect(evaluateCell("A1", { A1: '=INDIRECT("B1", false)' })).toBe("#ERROR");
+    expect(evaluateCell("A1", { A1: '=INDIRECT("R1C1", true)' })).toBe("#REF");
+    expect(evaluateCell("A1", { A1: '=INDIRECT("wrong_reference")' })).toBe("#REF");
+    expect(evaluateCell("A1", { A1: "=INDIRECT(,true)" })).toBe("#REF");
+  });
+
+  test("INDIRECT detect circular error", () => {
+    const grid = evaluateGrid({
+      A1: "A2",
+      A2: "=INDIRECT(A1)",
+      A3: '=INDIRECT("A3")',
+    });
+    expect(grid.A2).toBe("#CYCLE");
+    expect(grid.A3).toBe("#CYCLE");
+  });
+
+  test("functional test without grid context", () => {
+    const model = new Model();
+    const sheetId = model.getters.getActiveSheetId();
+    setCellContent(model, "A1", "kikoulol");
+    expect(model.getters.evaluateFormula(sheetId, "=INDIRECT()")).toBe("#BAD_EXPR"); // @compatibility: on google sheets, return #N/A
+    expect(model.getters.evaluateFormula(sheetId, '=INDIRECT("A1")')).toBe("kikoulol");
+  });
+
+  test("Using address string as reference (A1 notation)", () => {
+    const grid = evaluateGrid({
+      A1: "1",
+      A2: "A2",
+      A4: '=INDIRECT("A1")',
+      A5: '=INDIRECT("A2")',
+    });
+    expect(grid.A4).toBe(1);
+    expect(grid.A5).toBe("A2");
+  });
+
+  test("Using cell content as reference (A1 notation)", () => {
+    const grid = evaluateGrid({
+      A1: "1",
+      A2: "A1",
+      A3: "A2",
+      A4: "=INDIRECT(A2)",
+      A5: "=INDIRECT(A3)",
+    });
+    expect(grid.A4).toBe(1);
+    expect(grid.A5).toBe("A1");
+  });
+
+  test("Using computation result as reference (A1 notation)", () => {
+    const grid = evaluateGrid({
+      A1: "1",
+      A2: "A2",
+      A4: '=INDIRECT("A"&ROW(B1))',
+      A5: '=INDIRECT(CONCAT("A","2"))',
+    });
+    expect(grid.A4).toBe(1);
+    expect(grid.A5).toBe("A2");
+  });
+
+  test("Reference to a cell as a function argument (A1 notation)", () => {
+    const grid = evaluateGrid({
+      A1: "1",
+      A2: "2",
+      A3: "3",
+      A4: '=MAX(INDIRECT("A1"),0)',
+      A5: '=INDIRECT("A2")*INDIRECT("A3")',
+    });
+    expect(grid.A4).toBe(1);
+    expect(grid.A5).toBe(6);
+  });
+
+  test("Reference to a range as a function argument (A1 notation)", () => {
+    const grid = evaluateGrid({
+      A1: "1",
+      A2: "2",
+      A3: "3",
+      A4: '=SUM(INDIRECT("A1:A3"))',
+    });
+    expect(grid.A4).toBe(6);
+  });
+
+  test("Dependencies are correctly evaluated", () => {
+    const model = new Model({
+      sheets: [
+        {
+          cells: {
+            A1: { content: '=INDIRECT("B1")' },
+            B1: { content: "hello" },
+            A2: { content: '=INDIRECT("B2")' },
+            B2: { content: "=1+1" },
+          },
+        },
+      ],
+    });
+    expect(getCellContent(model, "A1")).toBe("hello");
+    expect(getCellContent(model, "A2")).toBe("2");
+  });
+
+  test("Reference to a cell and range of a different sheet (A1 notation)", () => {
+    const model = new Model();
+    const sheetId = model.getters.getActiveSheetId();
+    createSheet(model, { sheetId: "sheet2", activate: true });
+    setCellContent(model, "A1", "1");
+    setCellContent(model, "A2", "2");
+    activateSheet(model, sheetId);
+    setCellContent(model, "A1", '=INDIRECT("sheet2!A1")');
+    setCellContent(model, "A2", '=SUM(INDIRECT("sheet2!A1:A2"))');
+    expect(getCellContent(model, "A1")).toBe("1");
+    expect(getCellContent(model, "A2")).toBe("3");
+  });
+
+  test("Cell are correctly updated when changing referenced cells value", () => {
+    const model = new Model();
+    setCellContent(model, "A2", '=INDIRECT("A1")');
+    setCellContent(model, "A3", '=INDIRECT("A"&A1)');
+    expect(getCellContent(model, "A2")).toBe("0");
+    expect(getCellContent(model, "A3")).toBe("#REF");
+    setCellContent(model, "A1", "1");
+    expect(getCellContent(model, "A2")).toBe("1");
+    expect(getCellContent(model, "A3")).toBe("1");
+  });
+
+  test("Error are correctly propagated", () => {
+    const grid = evaluateGrid({
+      A1: "=WRONG_FUNCTION_NAME()",
+      A2: "=A2",
+      A3: "=SQRT(-1)",
+      A4: '=INDIRECT("A1")',
+      A5: '=INDIRECT("A2")',
+      A6: '=INDIRECT("A3")',
+    });
+    expect(grid.A4).toBe("#NAME?");
+    expect(grid.A5).toBe("#CYCLE");
+    expect(grid.A6).toBe("#ERROR");
+  });
+});
+
+describe("OFFSET formula", () => {
+  test("should check argument validity", () => {
+    expect(evaluateCell("A1", { A1: "=OFFSET()" })).toBe("#BAD_EXPR");
+    expect(evaluateCell("A1", { A1: "=OFFSET(,1,1,0,0)" })).toBe("#BAD_EXPR");
+    expect(evaluateCell("A1", { A1: "=OFFSET(A1:C5, 'hola')" })).toBe("#BAD_EXPR");
+    expect(evaluateCell("A1", { A1: "=OFFSET(A1:C5)" })).toBe("#BAD_EXPR");
+    expect(evaluateCell("A1", { A1: "=OFFSET(A1:C5, 0)" })).toBe("#BAD_EXPR");
+    expect(evaluateCell("A1", { A1: "=OFFSET(A1:C5, -1, -1)" })).toBe("#REF");
+    expect(evaluateCell("A1", { A1: "=OFFSET(A1:C5, 0, 0, -1, 0)" })).toBe("#ERROR");
+    expect(evaluateCell("A1", { A1: "=OFFSET(A1:C5, 0, 0, 0, -1)" })).toBe("#ERROR");
+    expect(evaluateCell("A1", { A1: "=OFFSET(A1:C5, 0, 0, 0, 0)" })).toBe("#ERROR");
+    expect(evaluateCell("A1", { A1: "=OFFSET(Sheet100!A1:C5, , 0, -1)" })).toBe("#ERROR");
+    expect(evaluateCell("A1", { A1: "=OFFSET(A1, 0, 0)" })).toBe("#CYCLE");
+  });
+
+  test("can select a single cell", () => {
+    const grid = evaluateGrid({
+      A1: "A1",
+      D4: "=OFFSET(A1, 0, 0)",
+    });
+    expect(grid.D4).toBe(grid.A1);
+  });
+
+  test("should select a zone with no offsets", () => {
+    //prettier-ignore
+    const grid = {
+      A1: "A1", B1: "B1", C1: "C1",
+      A2: "A2", B2: "B2", C2: "C2",
+      A3: "A3", B3: "B3", C3: "C3", 
+                                    D4: "=OFFSET(A1:C3,0,0)",
+    };
+    const model = createModelFromGrid(grid);
+    //prettier-ignore
+    expect(getEvaluatedGrid(model, "D4:F6")).toEqual([
+      ["A1", "B1", "C1"],
+      ["A2", "B2", "C2"],
+      ["A3", "B3", "C3"],
+    ]);
+  });
+
+  test("should select a zone with positive offsets", () => {
+    //prettier-ignore
+    const grid = {
+      A1: "A1", B1: "B1", C1: "C1",
+      A2: "A2", B2: "B2", C2: "C2",
+      A3: "A3", B3: "B3", C3: "C3",
+
+                                    D5: "=OFFSET(A1:C3,1,1)",
+    };
+    const model = createModelFromGrid(grid);
+    //prettier-ignore
+    expect(getEvaluatedGrid(model, "D5:F7")).toEqual([
+      ["B2", "C2", "0"],
+      ["B3", "C3", "0"],
+      ["0",  "0",  "0"],
+    ]);
+    setCellContent(model, "B2", "Hola");
+    expect(getEvaluatedCell(model, "D5").value).toBe("Hola");
+  });
+
+  test("should select a zone with negative offsets", () => {
+    //prettier-ignore
+    const grid = {
+      A1: "A1", B1: "B1", C1: "C1",
+      A2: "A2", B2: "B2", C2: "C2",
+      A3: "A3", B3: "B3", C3: "C3",
+
+                                    D5: "=OFFSET(B2:C3,-1,-1)",
+    };
+    const model = createModelFromGrid(grid);
+    //prettier-ignore
+    expect(getEvaluatedGrid(model, "D5:F7")).toEqual([
+      ["A1", "B1", ""],
+      ["A2", "B2", ""],
+      ["",    "",  ""],
+    ]);
+    setCellContent(model, "A1", "Hola");
+    expect(getEvaluatedCell(model, "D5").value).toBe("Hola");
+  });
+
+  test("select a full row (with empty col parameter)", () => {
+    //prettier-ignore
+    const grid = {
+      A1: "A1", B1: "B1", C1: "C1",
+      A2: "A2", B2: "B2", C2: "C2",
+      A3: "A3", B3: "B3", C3: "C3", 
+                                    D5: "=OFFSET(A1:C3,2,,1,3)",
+    };
+    const model = createModelFromGrid(grid);
+    //prettier-ignore
+    expect(getEvaluatedGrid(model, "D5:F7")).toEqual([
+      ["A3", "B3", "C3"],
+      ["",    "",    ""],
+      ["",    "",    ""],
+    ]);
+  });
+
+  test("select a full row (with 0 as col parameter)", () => {
+    //prettier-ignore
+    const grid = {
+      A1: "A1", B1: "B1", C1: "C1",
+      A2: "A2", B2: "B2", C2: "C2",
+      A3: "A3", B3: "B3", C3: "C3", 
+                                    D5: "=OFFSET(A1:C3,2,0,1,3)",
+    };
+    const model = createModelFromGrid(grid);
+    //prettier-ignore
+    expect(getEvaluatedGrid(model, "D5:F7")).toEqual([
+      ["A3", "B3", "C3"],
+      ["",    "",    ""],
+      ["",    "",    ""],
+    ]);
+  });
+
+  test("select a full column (with empty row parameter", () => {
+    //prettier-ignore
+    const grid = {
+      A1: "A1", B1: "B1", C1: "C1",
+      A2: "A2", B2: "B2", C2: "C2",
+      A3: "A3", B3: "B3", C3: "C3", 
+                                    D5: "=OFFSET(A1:C3,,2,3,1)",
+    };
+    const model = createModelFromGrid(grid);
+    //prettier-ignore
+    expect(getEvaluatedGrid(model, "D5:F7")).toEqual([
+      ["C1", "", ""],
+      ["C2", "", ""],
+      ["C3", "", ""],
+    ]);
+  });
+
+  test("select a full column (with 0 as row parameter", () => {
+    //prettier-ignore
+    const grid = {
+      A1: "A1", B1: "B1", C1: "C1",
+      A2: "A2", B2: "B2", C2: "C2",
+      A3: "A3", B3: "B3", C3: "C3", 
+                                    D5: "=OFFSET(A1:C3,0,2,3,1)",
+    };
+    const model = createModelFromGrid(grid);
+    //prettier-ignore
+    expect(getEvaluatedGrid(model, "D5:F7")).toEqual([
+      ["C1", "", ""],
+      ["C2", "", ""],
+      ["C3", "", ""],
+    ]);
+  });
+
+  test("should select a zone from another sheet", () => {
+    //prettier-ignore
+    const grid = {
+      A1: "A1", B1: "B1", C1: "C1",
+      A2: "A2", B2: "B2", C2: "C2",
+      A3: "A3", B3: "B3", C3: "C3",
+    };
+    const model = createModelFromGrid(grid);
+    createSheet(model, { sheetId: "Sheet2" });
+    setCellContent(model, "D4", "=OFFSET(Sheet1!A1:C3,0,0)", "Sheet2");
+    //prettier-ignore
+    expect(getEvaluatedGrid(model, "D4:F6", "Sheet2")).toEqual([
+      ["A1", "B1", "C1"],
+      ["A2", "B2", "C2"],
+      ["A3", "B3", "C3"],
+    ]);
+    setCellContent(model, "A1", "hola", "Sheet1");
+    expect(getEvaluatedCell(model, "D4", "Sheet2").value).toBe("hola");
   });
 });

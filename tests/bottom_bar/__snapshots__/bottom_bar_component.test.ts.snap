@@ -3,11 +3,13 @@
 exports[`BottomBar component Can open the list of statistics 1`] = `
 <div
   class="o-menu"
+  style=""
 >
   
   <div
-    class="o-menu-item"
+    class="o-menu-item d-flex justify-content-between align-items-center"
     data-name="Sum"
+    style=""
     title="Sum: 24"
   >
     <div
@@ -21,12 +23,14 @@ exports[`BottomBar component Can open the list of statistics 1`] = `
       </div>
       
       
+      
     </div>
   </div>
   
   <div
-    class="o-menu-item"
+    class="o-menu-item d-flex justify-content-between align-items-center"
     data-name="Avg"
+    style=""
     title="Avg: 24"
   >
     <div
@@ -40,12 +44,14 @@ exports[`BottomBar component Can open the list of statistics 1`] = `
       </div>
       
       
+      
     </div>
   </div>
   
   <div
-    class="o-menu-item"
+    class="o-menu-item d-flex justify-content-between align-items-center"
     data-name="Min"
+    style=""
     title="Min: 24"
   >
     <div
@@ -59,12 +65,14 @@ exports[`BottomBar component Can open the list of statistics 1`] = `
       </div>
       
       
+      
     </div>
   </div>
   
   <div
-    class="o-menu-item"
+    class="o-menu-item d-flex justify-content-between align-items-center"
     data-name="Max"
+    style=""
     title="Max: 24"
   >
     <div
@@ -78,12 +86,14 @@ exports[`BottomBar component Can open the list of statistics 1`] = `
       </div>
       
       
+      
     </div>
   </div>
   
   <div
-    class="o-menu-item"
+    class="o-menu-item d-flex justify-content-between align-items-center"
     data-name="Count"
+    style=""
     title="Count: 1"
   >
     <div
@@ -97,12 +107,14 @@ exports[`BottomBar component Can open the list of statistics 1`] = `
       </div>
       
       
+      
     </div>
   </div>
   
   <div
-    class="o-menu-item"
+    class="o-menu-item d-flex justify-content-between align-items-center"
     data-name="Count Numbers"
+    style=""
     title="Count Numbers: 1"
   >
     <div
@@ -114,6 +126,7 @@ exports[`BottomBar component Can open the list of statistics 1`] = `
       >
         Count Numbers: 1
       </div>
+      
       
       
     </div>
@@ -143,6 +156,7 @@ exports[`BottomBar component simple rendering 1`] = `
         <svg
           class="o-icon plus"
           viewBox="0 0 18 18"
+          xmlns="http://www.w3.org/2000/svg"
         >
           <path
             d="M8 0h2v8h8v2h-8v8H8v-8H0V8h8"
@@ -170,6 +184,7 @@ exports[`BottomBar component simple rendering 1`] = `
         <svg
           class="o-icon"
           viewBox="0 0 384 384"
+          xmlns="http://www.w3.org/2000/svg"
         >
           <rect
             fill="currentColor"
@@ -202,7 +217,7 @@ exports[`BottomBar component simple rendering 1`] = `
   >
     
     <div
-      class="o-sheet-list d-flex w-100 overflow-hidden px-1"
+      class="o-sheet-list d-flex w-100 px-1"
     >
       <div
         class="o-ripple-container position-relative"
@@ -217,8 +232,10 @@ exports[`BottomBar component simple rendering 1`] = `
         >
           <div
             class="o-sheet d-flex align-items-center user-select-none text-nowrap active"
+            composerfocusableelement="true"
             data-id="Sheet1"
             style=""
+            tabindex="-1"
             title="Sheet1"
           >
             <span
@@ -230,19 +247,19 @@ exports[`BottomBar component simple rendering 1`] = `
             <span
               class="o-sheet-icon ms-1"
             >
-              <svg
-                class="o-icon"
+              <div
+                class="o-icon fa-small"
               >
-                <polygon
-                  fill="currentColor"
-                  points="0 0 4 4 8 0"
-                  transform="translate(5 7)"
+                <i
+                  class="fa fa-caret-down"
                 />
-              </svg>
+              </div>
             </span>
+            
           </div>
         </div>
       </div>
+      
       
     </div>
     

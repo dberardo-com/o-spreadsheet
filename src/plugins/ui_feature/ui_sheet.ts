@@ -2,21 +2,29 @@ import { GRID_ICON_MARGIN, ICON_EDGE_LENGTH, PADDING_AUTORESIZE_HORIZONTAL } fro
 import {
   computeIconWidth,
   computeTextWidth,
+  formatValue,
+  isEqual,
+  largeMax,
   positions,
+  range,
   splitTextToWidth,
 } from "../../helpers/index";
 import { localizeFormula } from "../../helpers/locale";
-import { Command, CommandResult, LocalCommand, UID } from "../../types";
-import { CellPosition, HeaderIndex, Pixel, Style } from "../../types/misc";
+import { iconsOnCellRegistry } from "../../registries/icons_on_cell_registry";
+import { CellValueType, Command, CommandResult, LocalCommand, UID } from "../../types";
+import { ImageSrc } from "../../types/image";
+import { CellPosition, HeaderIndex, Pixel, Style, Zone } from "../../types/misc";
 import { UIPlugin } from "../ui_plugin";
 
 export class SheetUIPlugin extends UIPlugin {
   static getters = [
     "doesCellHaveGridIcon",
     "getCellWidth",
+    "getCellIconSrc",
     "getTextWidth",
     "getCellText",
     "getCellMultiLineText",
+    "getContiguousZone",
   ] as const;
 
   private ctx = document.createElement("canvas").getContext("2d")!;
@@ -74,7 +82,7 @@ export class SheetUIPlugin extends UIPlugin {
       );
     }
 
-    const icon = this.getters.getConditionalIcon(position);
+    const icon = this.getters.getCellIconSrc(position);
     if (icon) {
       contentWidth += computeIconWidth(style);
     }
@@ -96,16 +104,44 @@ export class SheetUIPlugin extends UIPlugin {
     return contentWidth;
   }
 
+  getCellIconSrc(position: CellPosition): ImageSrc | undefined {
+    const callbacks = iconsOnCellRegistry.getAll();
+    for (const callback of callbacks) {
+      const imageSrc = callback(this.getters, position);
+      if (imageSrc) {
+        return imageSrc;
+      }
+    }
+    return undefined;
+  }
+
   getTextWidth(text: string, style: Style): Pixel {
     return computeTextWidth(this.ctx, text, style);
   }
 
-  getCellText(position: CellPosition, showFormula: boolean = false): string {
+  getCellText(
+    position: CellPosition,
+    args?: { showFormula?: boolean; availableWidth?: number }
+  ): string {
     const cell = this.getters.getCell(position);
-    if (showFormula && cell?.isFormula) {
-      return localizeFormula(cell.content, this.getters.getLocale());
+    const locale = this.getters.getLocale();
+    if (args?.showFormula && cell?.isFormula) {
+      return localizeFormula(cell.content, locale);
+    } else if (args?.showFormula && !cell?.content) {
+      return "";
     } else {
-      return this.getters.getEvaluatedCell(position).formattedValue;
+      const evaluatedCell = this.getters.getEvaluatedCell(position);
+      const formatWidth = args?.availableWidth
+        ? {
+            availableWidth: args.availableWidth,
+            measureText: (text: string) => computeTextWidth(this.ctx, text, cell?.style || {}),
+          }
+        : undefined;
+      return formatValue(evaluatedCell.value, {
+        format: evaluatedCell.format,
+        locale,
+        formatWidth,
+      });
     }
   }
 
@@ -113,10 +149,16 @@ export class SheetUIPlugin extends UIPlugin {
    * Return the text of a cell, split in multiple lines if needed. The text will be split in multiple
    * line if it contains NEWLINE characters, or if it's longer than the given width.
    */
-  getCellMultiLineText(position: CellPosition, width: number | undefined): string[] {
+  getCellMultiLineText(
+    position: CellPosition,
+    args: { wrapText: boolean; maxWidth: number }
+  ): string[] {
     const style = this.getters.getCellStyle(position);
-    const text = this.getters.getCellText(position, this.getters.shouldShowFormulas());
-    return splitTextToWidth(this.ctx, text, style, width);
+    const text = this.getters.getCellText(position, {
+      showFormula: this.getters.shouldShowFormulas(),
+      availableWidth: args.maxWidth,
+    });
+    return splitTextToWidth(this.ctx, text, style, args.wrapText ? args.maxWidth : undefined);
   }
 
   doesCellHaveGridIcon(position: CellPosition): boolean {
@@ -126,14 +168,59 @@ export class SheetUIPlugin extends UIPlugin {
     return isFilterHeader || hasListIcon;
   }
 
-  // ---------------------------------------------------------------------------
-  // Grid manipulation
-  // ---------------------------------------------------------------------------
+  /**
+   * Expands the given zone until bordered by empty cells or reached the sheet boundaries.
+   */
+  getContiguousZone(sheetId: UID, zoneToExpand: Zone): Zone {
+    /** Try to expand the zone by one col/row in any direction to include a new non-empty cell */
+    const expandZone = (zone: Zone): Zone => {
+      for (const col of range(zone.left, zone.right + 1)) {
+        if (!this.isCellEmpty({ sheetId, col, row: zone.top - 1 })) {
+          return { ...zone, top: zone.top - 1 };
+        }
+        if (!this.isCellEmpty({ sheetId, col, row: zone.bottom + 1 })) {
+          return { ...zone, bottom: zone.bottom + 1 };
+        }
+      }
+      for (const row of range(zone.top, zone.bottom + 1)) {
+        if (!this.isCellEmpty({ sheetId, col: zone.left - 1, row })) {
+          return { ...zone, left: zone.left - 1 };
+        }
+        if (!this.isCellEmpty({ sheetId, col: zone.right + 1, row })) {
+          return { ...zone, right: zone.right + 1 };
+        }
+      }
+      return zone;
+    };
+
+    let hasExpanded = false;
+    let zone = zoneToExpand;
+    do {
+      hasExpanded = false;
+      const newZone = expandZone(zone);
+      if (!isEqual(zone, newZone)) {
+        hasExpanded = true;
+        zone = newZone;
+        continue;
+      }
+    } while (hasExpanded);
+
+    return zone;
+  }
+
+  /**
+   * Checks if a cell is empty (i.e. does not have a content or a formula does not spread over it).
+   * If the cell is part of a merge, the check applies to the main cell of the merge.
+   */
+  private isCellEmpty(position: CellPosition): boolean {
+    const mainPosition = this.getters.getMainCellPosition(position);
+    return this.getters.getEvaluatedCell(mainPosition).type === CellValueType.empty;
+  }
 
   private getColMaxWidth(sheetId: UID, index: HeaderIndex): number {
     const cellsPositions = positions(this.getters.getColsZone(sheetId, index, index));
     const sizes = cellsPositions.map((position) => this.getCellWidth({ sheetId, ...position }));
-    return Math.max(0, ...sizes);
+    return Math.max(0, largeMax(sizes));
   }
 
   /**

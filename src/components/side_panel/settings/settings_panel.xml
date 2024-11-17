@@ -1,11 +1,9 @@
 <templates>
   <t t-name="o-spreadsheet-SettingsPanel">
     <div class="o-settings-panel">
-      <div class="o-section">
-        <div class="o-section-title">Locale</div>
-        <select
-          class="o-input o-type-selector"
-          t-on-change="(ev) => this.onLocaleChange(ev.target.value)">
+      <Section>
+        <t t-set-slot="title">Locale</t>
+        <select class="o-input" t-on-change="(ev) => this.onLocaleChange(ev.target.value)">
           <option
             t-foreach="supportedLocales"
             t-as="locale"
@@ -15,21 +13,29 @@
             t-att-selected="currentLocale.code === locale.code"
           />
         </select>
-        <div class="o-locale-preview mt-2 ms-3">
+        <div class="o-locale-preview mt-4 p-3 rounded">
           <div>
-            <span class="fw-bold me-1">Number:</span>
+            <span class="o-fw-bold me-1">Number:</span>
             <span t-esc="numberFormatPreview"/>
           </div>
           <div>
-            <span class="fw-bold me-1">Date:</span>
+            <span class="o-fw-bold me-1">Date:</span>
             <span t-esc="dateFormatPreview"/>
           </div>
           <div>
-            <span class="fw-bold me-1">Date time:</span>
+            <span class="o-fw-bold me-1">Date time:</span>
             <span t-esc="dateTimeFormatPreview"/>
           </div>
+          <div>
+            <span class="o-fw-bold me-1">First day of week:</span>
+            <span t-esc="firstDayOfWeek"/>
+          </div>
         </div>
-      </div>
+      </Section>
+      <Section class="'pt-0'">
+        <t t-set="message">This setting affects all users.</t>
+        <ValidationMessages messages="[message]" msgType="'info'"/>
+      </Section>
     </div>
   </t>
 </templates>

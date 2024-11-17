@@ -3,13 +3,16 @@
 exports[`Grid component simple rendering snapshot 1`] = `
 <div
   class="o-grid w-100 h-100"
+  composerfocusableelement="true"
   tabindex="-1"
 >
   <div
     class="o-grid-overlay overflow-hidden"
-    style="top:26px; left:48px; height:calc(100% - 41px); width:calc(100% - 63px);"
+    style="top:26px; left:48px; height:calc(100% - 41px); width:calc(100% - 63px); "
   >
-    <div>
+    <div
+      class="position-absolute"
+    >
       
     </div>
     
@@ -19,14 +22,16 @@ exports[`Grid component simple rendering snapshot 1`] = `
     
     
     
+    
+    
     <div
       class="o-grid-add-rows mt-2 ms-2 w-100 d-flex position-relative align-items-center"
-      style="top:2300px;"
+      style="top:2300px; "
     >
       <button
-        class="o-button"
+        class="o-button flex-grow-0 me-2"
       >
-        Add
+         Add 
       </button>
       <input
         class="o-grid-add-rows-input o-input mt-0 me-2"
@@ -70,10 +75,29 @@ exports[`Grid component simple rendering snapshot 1`] = `
   </div>
   
   
-  <input
-    class="position-absolute"
-    style="z-index:-1000;"
-  />
+  <div
+    class="o-grid-composer"
+    style="z-index: -1000;"
+  >
+    <div
+      class="o-composer-container w-100 h-100"
+    >
+      <div
+        class="d-flex flex-row position-relative"
+      >
+        
+        <div
+          class="o-composer w-100 text-start"
+          contenteditable="true"
+          spellcheck="false"
+          style=""
+          tabindex="1"
+        />
+      </div>
+      
+    </div>
+  </div>
+  
   <canvas
     height="1011"
     style="width:1033px;height:1011px;"
@@ -85,11 +109,11 @@ exports[`Grid component simple rendering snapshot 1`] = `
   
   <div
     class="o-autofill"
-    style="top:45px; left:140px; visibility:visible;"
+    style="top:45px; left:140px; visibility:visible; "
   />
   <div
     class="o-autofill-handler"
-    style="top:45px; left:140px;"
+    style="top:45px; left:140px; "
   />
   
   
@@ -100,19 +124,19 @@ exports[`Grid component simple rendering snapshot 1`] = `
   
   <div
     class="o-scrollbar vertical"
-    style="top:26px; right:0px; width:15px; bottom:0px;"
+    style="top:26px; right:0px; width:15px; bottom:0px; "
   >
     <div
-      style="width:1px; height:2374px;"
+      style="width:1px; height:2374px; "
     />
   </div>
   
   <div
     class="o-scrollbar horizontal"
-    style="left:48px; bottom:0px; height:15px; right:0px;"
+    style="left:48px; bottom:0px; height:15px; right:0px; "
   >
     <div
-      style="width:2592px; height:1px;"
+      style="width:2592px; height:1px; "
     />
   </div>
   

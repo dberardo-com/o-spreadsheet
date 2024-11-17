@@ -19,10 +19,6 @@ css/* scss */ `
 
     .o-error-tooltip-message {
       overflow: hidden;
-      display: -webkit-box; /* Limit to 3 lines */
-      -webkit-line-clamp: 3;
-      line-clamp: 3;
-      -webkit-box-orient: vertical;
     }
   }
 `;
@@ -40,21 +36,20 @@ interface ErrorToolTipProps {
 export class ErrorToolTip extends Component<ErrorToolTipProps> {
   static maxSize = { maxHeight: ERROR_TOOLTIP_MAX_HEIGHT };
   static template = "o-spreadsheet-ErrorToolTip";
+  static props = {
+    errors: Array,
+    onClosed: { type: Function, optional: true },
+  };
 }
-
-ErrorToolTip.props = {
-  errors: Array,
-  onClosed: { type: Function, optional: true },
-};
 
 export const ErrorToolTipPopoverBuilder: PopoverBuilders = {
   onHover: (position, getters): CellPopoverComponent<typeof ErrorToolTip> => {
     const cell = getters.getEvaluatedCell(position);
     const errors: ErrorToolTipMessage[] = [];
-    if (cell.type === CellValueType.error && cell.error.isVerbose) {
+    if (cell.type === CellValueType.error && !!cell.message) {
       errors.push({
         title: _t("Error"),
-        message: cell.error.message,
+        message: cell.message,
       });
     }
 

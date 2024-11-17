@@ -37,7 +37,11 @@ import {
   setViewportOffset,
   undo,
 } from "../test_helpers/commands_helpers";
-import { getActivePosition, getSelectionAnchorCellXc } from "../test_helpers/getters_helpers";
+import {
+  getActivePosition,
+  getCellContent,
+  getSelectionAnchorCellXc,
+} from "../test_helpers/getters_helpers";
 
 let model: Model;
 const hiddenContent = { content: "hidden content to be skipped" };
@@ -409,6 +413,26 @@ describe("simple selection", () => {
     moveAnchorCell(model, "up");
     expect(model.getters.getSelectedZone()).toEqual(toZone("A1:B2"));
   });
+
+  test("Selecting figure and undo cleanup selectedFigureId in selection plugin", () => {
+    const model = new Model();
+    model.dispatch("CREATE_FIGURE", {
+      sheetId: model.getters.getActiveSheetId(),
+      figure: {
+        id: "someuuid",
+        x: 10,
+        y: 10,
+        tag: "hey",
+        width: 100,
+        height: 100,
+      },
+    });
+    expect(model.getters.getSelectedFigureId()).toBe(null);
+    model.dispatch("SELECT_FIGURE", { id: "someuuid" });
+    expect(model.getters.getSelectedFigureId()).toBe("someuuid");
+    undo(model);
+    expect(model.getters.getSelectedFigureId()).toBe(null);
+  });
 });
 
 describe("multiple selections", () => {
@@ -701,19 +725,23 @@ describe("Change selection to next clusters", () => {
           rows: { 8: { isHidden: true } },
           // prettier-ignore
           cells: {
-                                    B2: { content: "content" },                                                E2: hiddenContent,                     G2: { content: "same line as merge topLeft" },
-                                                                                                               E3: hiddenContent,                     G3: { content: "line of merge but aligned with topLeft" },
-                                    B6: { content: "content on same line as empty merge topLeft" },            E6: hiddenContent,
-                                    B7: { content: "line of empty merge but aligned with topLeft" },           E7: hiddenContent,
-            A9: hiddenContent,      B9: hiddenContent,       C9: hiddenContent,       D9: hiddenContent,       E9: hiddenContent,  F9: hiddenContent, G9: hiddenContent,
-            A11: { content: "A11" }, B11: { content: "B9" },  C11: { content: "C9" },                           E11: hiddenContent, F11: { style: 1 }, G11: { content: "F9" }, H11: { content: "G9" },
-                                    B13: { content: "B11" }, C13: { content: "C11" }, D13: { content: "D11" },
-                                    B14: { content: "B12" }, C14: { content: "C12" },
+                                     B2: { content: "content" },                                                E2: hiddenContent,                     G2: { content: "same line as merge topLeft" },
+                                                                                                                E3: hiddenContent,                     G3: { content: "line of merge but aligned with topLeft" },
+                                     B6: { content: "content on same line as empty merge topLeft" },            E6: hiddenContent,
+                                     B7: { content: "line of empty merge but aligned with topLeft" },           E7: hiddenContent,
+            A9: hiddenContent,       B9: hiddenContent,       C9: hiddenContent,       D9: hiddenContent,       E9: hiddenContent,  F9: hiddenContent, G9: hiddenContent,
+            A11: { content: "A11" }, B11: { content: "B9" },  C11: { content: "C9" },                           E11: hiddenContent,                    G11: { content: "F9" }, H11: { content: "G9" },
+            A13: { content: '=""' }, B13: { content: "B11" }, C13: { content: "C11" }, D13: { content: "D11" },
+            A14: { content: '=""' }, B14: { content: "B12" }, C14: { content: "C12" },
+            A15: { content: '=""' },                          C15: { content: "=TRANSPOSE(A13:A15)" },
+          },
+          styles: {
+            F11: 1,
           },
           merges: ["B2:D4", "C6:D7"],
-          styles: { 1: { textColor: "#fe0000" } },
         },
       ],
+      styles: { 1: { textColor: "#fe0000" } },
     });
   });
   test.each([
@@ -886,7 +914,7 @@ describe("move elements(s)", () => {
     expect(result).toBeCancelledBecause(CommandResult.WillRemoveExistingMerge);
   });
 
-  test("Move a resized column preserve the size", () => {
+  test("Move a resized column preserves its size", () => {
     const model = new Model();
     resizeColumns(model, ["A"], 10);
     resizeColumns(model, ["C"], 20);
@@ -897,7 +925,7 @@ describe("move elements(s)", () => {
     expect(model.getters.getColSize(sheetId, 2)).toEqual(10);
   });
 
-  test("Move a resized row preserve the size", () => {
+  test("Move a resized row preserves its size", () => {
     const model = new Model();
     resizeRows(model, [0], 10);
     resizeRows(model, [2], 20);
@@ -906,6 +934,45 @@ describe("move elements(s)", () => {
     expect(model.getters.getRowSize(sheetId, 0)).toEqual(DEFAULT_CELL_HEIGHT);
     expect(model.getters.getRowSize(sheetId, 1)).toEqual(20);
     expect(model.getters.getRowSize(sheetId, 2)).toEqual(10);
+  });
+
+  test("Can move a column to the end of the sheet", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "5");
+    moveColumns(model, "Z", ["A"], "after");
+    expect(getCellContent(model, "Z1")).toEqual("5");
+  });
+
+  test("Can move a row to the end of the sheet", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "5");
+    moveRows(model, 99, [0], "after");
+    expect(getCellContent(model, "A100")).toEqual("5");
+  });
+
+  test("cannot move column out of bound", () => {
+    const model = new Model();
+    let result = moveColumns(model, "AAA", ["A"]);
+    expect(result).toBeCancelledBecause(CommandResult.InvalidHeaderIndex);
+    result = moveColumns(model, "A", ["AAA"]);
+    expect(result).toBeCancelledBecause(CommandResult.InvalidHeaderIndex);
+    result = model.dispatch("MOVE_COLUMNS_ROWS", {
+      sheetId: model.getters.getActiveSheetId(),
+      base: -1,
+      elements: [0],
+      position: "after",
+      dimension: "COL",
+    });
+  });
+
+  test("cannot move row out of bound", () => {
+    const model = new Model();
+    let result = moveRows(model, 100, [0]);
+    expect(result).toBeCancelledBecause(CommandResult.InvalidHeaderIndex);
+    result = moveRows(model, 19, [100]);
+    expect(result).toBeCancelledBecause(CommandResult.InvalidHeaderIndex);
+    result = moveRows(model, -1, [0]);
+    expect(result).toBeCancelledBecause(CommandResult.InvalidHeaderIndex);
   });
 });
 
@@ -920,16 +987,18 @@ describe("Selection loop (ctrl + a)", () => {
             rowNumber: 10,
             // prettier-ignore
             cells: {
-                        B1: { style: 1},
                         B2: { content: "a" }, C2: { content: "a" },
                                               C3: { content: "merged" }, D3: { content: "merged" }, E3: { content: "a" },
                                               C4: { content: "a"},
-              A6: { content : "a" }
+              A6: { content : "a" },
+                                              C8: { content: '=""'},     D8: { content: '=""'},
+              A9: { content : "=TRANSPOSE(C8:D8)" },
             },
             merges: ["C3:D3"],
-            styles: { 1: { textColor: "#fe0000" } },
+            styles: { B1: 1 },
           },
         ],
+        styles: { 1: { textColor: "#fe0000" } },
       });
     });
 
@@ -940,6 +1009,8 @@ describe("Selection loop (ctrl + a)", () => {
       ["E3", ["B2:E4", "A1:J10", "E3"]],
       ["A1", ["A1:J10", "A1"]],
       ["A6", ["A1:J10", "A6"]],
+      ["E8", ["C8:E8", "A1:J10", "E8"]],
+      ["A9", ["A9:A10", "A1:J10", "A9"]],
     ])("Selection loop with anchor %s", (anchor: string, expectedZones: string[]) => {
       selectCell(model, anchor);
       for (const zone of expectedZones) {

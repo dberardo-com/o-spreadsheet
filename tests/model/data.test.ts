@@ -11,7 +11,6 @@ describe("load data", () => {
       borders: {},
       styles: {},
       formats: {},
-      entities: {},
       settings: { locale: DEFAULT_LOCALE },
       revisionId: DEFAULT_REVISION_ID,
       sheets: [
@@ -26,7 +25,7 @@ describe("load data", () => {
           merges: [],
           conditionalFormats: [],
           figures: [],
-          filterTables: [],
+          tables: [],
           isVisible: true,
         },
       ],
@@ -46,7 +45,6 @@ describe("load data", () => {
       borders: {},
       styles: {},
       formats: {},
-      entities: {},
       revisionId: DEFAULT_REVISION_ID,
       sheets: [
         {
@@ -60,7 +58,7 @@ describe("load data", () => {
           merges: ["A1:B2"],
           conditionalFormats: [],
           figures: [],
-          filterTables: [],
+          tables: [],
           isVisible: true,
         },
       ],
@@ -78,7 +76,6 @@ describe("load data", () => {
       borders: {},
       styles: {},
       formats: {},
-      entities: {},
       revisionId: DEFAULT_REVISION_ID,
       sheets: [
         {
@@ -92,7 +89,7 @@ describe("load data", () => {
           merges: ["A1:B2"],
           conditionalFormats: [],
           figures: [],
-          filterTables: [],
+          tables: [],
           isVisible: true,
         },
       ],
@@ -113,6 +110,9 @@ describe("load data", () => {
         id: "1",
         name: "Sheet1",
         cells: {},
+        styles: {},
+        borders: {},
+        formats: {},
         colNumber: 26,
         rowNumber: 100,
         cols: {},
@@ -120,13 +120,16 @@ describe("load data", () => {
         merges: ["A1:B2"],
         conditionalFormats: [],
         figures: [],
-        filterTables: [],
+        tables: [],
         isVisible: true,
       },
       {
         id: "asdf",
         name: "Sheet2",
         cells: {},
+        styles: {},
+        borders: {},
+        formats: {},
         colNumber: 26,
         rowNumber: 100,
         cols: {},
@@ -134,7 +137,7 @@ describe("load data", () => {
         merges: ["C3:D4"],
         conditionalFormats: [],
         figures: [],
-        filterTables: [],
+        tables: [],
         isVisible: true,
       },
     ]);
@@ -151,7 +154,6 @@ describe("load data", () => {
       borders: {},
       styles: {},
       formats: {},
-      entities: {},
       revisionId: DEFAULT_REVISION_ID,
       sheets: [
         {
@@ -165,11 +167,53 @@ describe("load data", () => {
           merges: ["A1:B2"],
           conditionalFormats: [],
           figures: [],
-          filterTables: [],
+          tables: [],
           isVisible: true,
         },
       ],
       uniqueFigureIds: true,
+    });
+  });
+
+  test("figure data are correctly updated", () => {
+    expect(
+      load({
+        version: 15,
+        sheets: [
+          {
+            name: "Sheet1",
+            id: "Sheet1",
+            cells: {},
+            figures: [
+              {
+                id: "1",
+                data: {
+                  type: "line",
+                  title: "Line",
+                  labelRange: "Sheet1!A27:A35",
+                  dataSets: ["Sheet1!B26:B35", "Sheet1!C26:C35"],
+                  dataSetsHaveTitle: true,
+                },
+              },
+            ],
+          },
+        ],
+      })
+    ).toMatchObject({
+      version: CURRENT_VERSION,
+      sheets: [
+        {
+          figures: [
+            {
+              data: {
+                title: { text: "Line" },
+                dataSets: [{ dataRange: "Sheet1!B26:B35" }, { dataRange: "Sheet1!C26:C35" }],
+                dataSetsHaveTitle: true,
+              },
+            },
+          ],
+        },
+      ],
     });
   });
 });

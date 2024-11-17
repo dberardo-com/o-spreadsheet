@@ -1,80 +1,102 @@
-import { JetSet } from "../../../helpers";
-import { PositionId } from "./evaluator";
+import { positionToZone } from "../../../helpers";
+import { recomputeZones } from "../../../helpers/recompute_zones";
+import { CellPosition, UID, Zone } from "../../../types";
+import { PositionMap } from "./position_map";
+import { PositionSet } from "./position_set";
+import { RTreeBoundingBox, RTreeItem, SpreadsheetRTree } from "./r_tree";
 
 /**
- * This class is an implementation of a dependency Graph.
+ * Implementation of a dependency Graph.
  * The graph is used to evaluate the cells in the correct
  * order, and should be updated each time a cell's content is modified
  *
+ * It uses an R-Tree data structure to efficiently find dependent cells.
  */
 export class FormulaDependencyGraph {
-  /**
-   * Internal structure:
-   * - key: a cell position (encoded as an integer)
-   * - value: a set of cell positions that depends on the key
-   *
-   * Given
-   * - A1:"= B1 + SQRT(B2)"
-   * - C1:"= B1";
-   * - C2:"= C1"
-   *
-   * we will have something like:
-   * - B1 ---> (A1, C1)   meaning A1 and C1 depends on B1
-   * - B2 ---> (A1)       meaning A1 depends on B2
-   * - C1 ---> (C2)       meaning C2 depends on C1
-   */
-  private readonly inverseDependencies: Map<PositionId, Set<PositionId>> = new Map();
-  private readonly dependencies: Map<PositionId, PositionId[]> = new Map();
+  private readonly dependencies: PositionMap<RTreeItem<CellPosition>[]> = new PositionMap();
+  private readonly rTree: SpreadsheetRTree<CellPosition>;
 
-  removeAllDependencies(formulaPositionId: PositionId) {
-    const dependencies = this.dependencies.get(formulaPositionId);
-    if (!dependencies) {
+  constructor(
+    private readonly createEmptyPositionSet: () => PositionSet,
+    data: RTreeItem<CellPosition>[] = []
+  ) {
+    this.rTree = new SpreadsheetRTree(data);
+  }
+
+  removeAllDependencies(formulaPosition: CellPosition) {
+    const ranges = this.dependencies.get(formulaPosition);
+    if (!ranges) {
       return;
     }
-    for (const dependency of dependencies) {
-      this.inverseDependencies.get(dependency)?.delete(formulaPositionId);
+    for (const range of ranges) {
+      this.rTree.remove(range);
     }
-    this.dependencies.delete(formulaPositionId);
+    this.dependencies.delete(formulaPosition);
   }
 
-  addDependencies(formulaPositionId: PositionId, dependencies: PositionId[]): void {
-    for (const dependency of dependencies) {
-      const inverseDependencies = this.inverseDependencies.get(dependency);
-      if (inverseDependencies) {
-        inverseDependencies.add(formulaPositionId);
-      } else {
-        this.inverseDependencies.set(dependency, new Set([formulaPositionId]));
-      }
+  addDependencies(formulaPosition: CellPosition, dependencies: RTreeBoundingBox[]): void {
+    const rTreeItems = dependencies.map(({ sheetId, zone }) => ({
+      data: formulaPosition,
+      boundingBox: {
+        zone,
+        sheetId,
+      },
+    }));
+    for (const item of rTreeItems) {
+      this.rTree.insert(item);
     }
-    const existingDependencies = this.dependencies.get(formulaPositionId);
+    const existingDependencies = this.dependencies.get(formulaPosition);
     if (existingDependencies) {
-      existingDependencies.push(...dependencies);
+      existingDependencies.push(...rTreeItems);
     } else {
-      this.dependencies.set(formulaPositionId, dependencies);
+      this.dependencies.set(formulaPosition, rTreeItems);
     }
   }
 
   /**
-   * Return the cell and all cells that depend on it,
+   * Return all the cells that depend on the provided ranges,
    * in the correct order they should be evaluated.
    * This is called a topological ordering (excluding cycles)
    */
-  getCellsDependingOn(positionIds: Iterable<PositionId>): Set<PositionId> {
-    const visited: JetSet<PositionId> = new JetSet<PositionId>();
-    const queue: PositionId[] = Array.from(positionIds).reverse();
-
+  getCellsDependingOn(ranges: RTreeBoundingBox[]): PositionSet {
+    const visited = this.createEmptyPositionSet();
+    const queue: RTreeBoundingBox[] = Array.from(ranges).reverse();
     while (queue.length > 0) {
-      const node = queue.pop()!;
-      visited.add(node);
+      const range = queue.pop()!;
+      const zone = range.zone;
+      const sheetId = range.sheetId;
+      for (let col = zone.left; col <= zone.right; col++) {
+        for (let row = zone.top; row <= zone.bottom; row++) {
+          visited.add({ sheetId, col, row });
+        }
+      }
 
-      const adjacentNodes = this.inverseDependencies.get(node) || new Set<PositionId>();
-      for (const adjacentNode of adjacentNodes) {
-        if (!visited.has(adjacentNode)) {
-          queue.push(adjacentNode);
+      const impactedPositions = this.rTree.search(range).map((dep) => dep.data);
+      const nextInQueue: Record<UID, Zone[]> = {};
+      for (const position of impactedPositions) {
+        if (!visited.has(position)) {
+          if (!nextInQueue[position.sheetId]) {
+            nextInQueue[position.sheetId] = [];
+          }
+          nextInQueue[position.sheetId].push(positionToZone(position));
+        }
+      }
+      for (const sheetId in nextInQueue) {
+        const zones = recomputeZones(nextInQueue[sheetId], []);
+        queue.push(...zones.map((zone) => ({ sheetId, zone })));
+      }
+    }
+
+    // remove initial ranges
+    for (const range of ranges) {
+      const zone = range.zone;
+      const sheetId = range.sheetId;
+      for (let col = zone.left; col <= zone.right; col++) {
+        for (let row = zone.top; row <= zone.bottom; row++) {
+          visited.delete({ sheetId, col, row });
         }
       }
     }
-    visited.delete(...positionIds);
     return visited;
   }
 }

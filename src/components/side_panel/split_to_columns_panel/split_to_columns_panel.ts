@@ -1,11 +1,14 @@
-import { Component, onMounted, onWillUpdateProps, useState } from "@odoo/owl";
+import { Component, onMounted, useEffect, useState } from "@odoo/owl";
 import { NEWLINE } from "../../../constants";
 import { interactiveSplitToColumns } from "../../../helpers/ui/split_to_columns_interactive";
-import { interactiveStopEdition } from "../../../helpers/ui/stop_edition_interactive";
+import { useStore } from "../../../store_engine";
 import { _t } from "../../../translation";
 import { CommandResult, SpreadsheetChildEnv } from "../../../types/index";
 import { SplitToColumnsTerms } from "../../translations_terms";
 import { ValidationMessages } from "../../validation_messages/validation_messages";
+import { Checkbox } from "../components/checkbox/checkbox";
+import { Section } from "../components/section/section";
+import { ComposerFocusStore } from "./../../composer/composer_focus_store";
 
 type SeparatorValue = "auto" | "custom" | " " | "," | ";" | typeof NEWLINE;
 
@@ -35,21 +38,26 @@ interface State {
 
 export class SplitIntoColumnsPanel extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-SplitIntoColumnsPanel";
-  static components = { ValidationMessages };
+  static components = { ValidationMessages, Section, Checkbox };
+  static props = { onCloseSidePanel: Function };
 
   state = useState<State>({ separatorValue: "auto", addNewColumns: false, customSeparator: "" });
 
   setup() {
-    onWillUpdateProps(() => {
-      // The feature makes no sense if we are editing a cell, because then the selection isn't active
-      // Stop the edition when the panel is mounted, and close the panel if the user start editing a cell
-      if (this.env.model.getters.getEditionMode() !== "inactive") {
-        this.props.onCloseSidePanel();
-      }
-    });
+    const composerFocusStore = useStore(ComposerFocusStore);
+    // The feature makes no sense if we are editing a cell, because then the selection isn't active
+    // Stop the edition when the panel is mounted, and close the panel if the user start editing a cell
+    useEffect(
+      (editionMode) => {
+        if (editionMode !== "inactive") {
+          this.props.onCloseSidePanel();
+        }
+      },
+      () => [composerFocusStore.focusMode]
+    );
 
     onMounted(() => {
-      interactiveStopEdition(this.env);
+      composerFocusStore.activeComposer.stopEdition();
     });
   }
 
@@ -62,9 +70,8 @@ export class SplitIntoColumnsPanel extends Component<Props, SpreadsheetChildEnv>
     this.state.customSeparator = (ev.target as HTMLInputElement).value;
   }
 
-  updateAddNewColumnsCheckbox(ev: Event) {
-    if (!ev.target) return;
-    this.state.addNewColumns = (ev.target as HTMLInputElement).checked;
+  updateAddNewColumnsCheckbox(addNewColumns: boolean) {
+    this.state.addNewColumns = addNewColumns;
   }
 
   confirm() {
@@ -132,7 +139,3 @@ export class SplitIntoColumnsPanel extends Component<Props, SpreadsheetChildEnv>
     return !this.separatorValue || this.errorMessages.length > 0;
   }
 }
-
-SplitIntoColumnsPanel.props = {
-  onCloseSidePanel: Function,
-};

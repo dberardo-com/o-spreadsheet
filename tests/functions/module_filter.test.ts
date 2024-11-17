@@ -47,8 +47,8 @@ describe("FILTER function", () => {
     setCellContent(model, "D1", "=FILTER(A1:B3, B1:B3)");
     expect(getRangeValuesAsMatrix(model, "D1:E3")).toEqual([
       ["A3", 1],
-      ["", ""],
-      ["", ""],
+      [null, null],
+      [null, null],
     ]);
     expect(checkFunctionDoesntSpreadBeyondRange(model, "D1:E3")).toBeTruthy();
   });
@@ -58,9 +58,9 @@ describe("FILTER function", () => {
     const model = createModelFromGrid(grid);
     setCellContent(model, "D1", "=FILTER(A1:B3, A6:B6)");
     expect(getRangeValuesAsMatrix(model, "D1:E3")).toEqual([
-      ["A1", ""],
-      ["A2", ""],
-      ["A3", ""],
+      ["A1", null],
+      ["A2", null],
+      ["A3", null],
     ]);
     expect(checkFunctionDoesntSpreadBeyondRange(model, "D1:E3")).toBeTruthy();
   });
@@ -76,8 +76,8 @@ describe("FILTER function", () => {
     setCellContent(model, "D1", "=FILTER(A1:B3, B1:B3, C1:C3)");
     expect(getRangeValuesAsMatrix(model, "D1:E3")).toEqual([
       ["A2", 1],
-      ["", ""],
-      ["", ""],
+      [null, null],
+      [null, null],
     ]);
     expect(checkFunctionDoesntSpreadBeyondRange(model, "D1:E3")).toBeTruthy();
   });
@@ -88,8 +88,8 @@ describe("FILTER function", () => {
     setCellContent(model, "D1", "=FILTER(A1:B3, B1:B3)");
     expect(getRangeValuesAsMatrix(model, "D1:E3")).toEqual([
       [0, 1],
-      ["", ""],
-      ["", ""],
+      [null, null],
+      [null, null],
     ]);
     expect(checkFunctionDoesntSpreadBeyondRange(model, "D1:E3")).toBeTruthy();
   });
@@ -107,6 +107,41 @@ describe("FILTER function", () => {
     setCellContent(model, "D1", '=FILTER("hello", TRUE)');
     expect(getRangeValuesAsMatrix(model, "D1")).toEqual([["hello"]]);
     expect(checkFunctionDoesntSpreadBeyondRange(model, "D1")).toBeTruthy();
+  });
+
+  test("FILTER by string ignores the value", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "Alice", B1: "yes",
+      A2: "Bob",   B2: "TRUE",
+    };
+    const model = createModelFromGrid(grid);
+    setCellContent(model, "A6", "=FILTER(A1:A2, B1:B2)");
+    expect(getRangeValuesAsMatrix(model, "A6:A7")).toEqual([["Bob"], [null]]);
+  });
+
+  test("FILTER accepts errors in first argument", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "=KABOUM", B1: "TRUE",
+      A2: "Peter", B2: "FALSE",
+      A3: "John", B3: "TRUE",
+    };
+    const model = createModelFromGrid(grid);
+    setCellContent(model, "A6", "=FILTER(A1:A3, B1:B3)");
+    expect(getRangeValuesAsMatrix(model, "A6:A7")).toEqual([["#BAD_EXPR"], ["John"]]);
+  });
+
+  test("FILTER accepts errors in condition arguments", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "Alice",  B1: "TRUE",     C1: "TRUE",
+      A2: "Peter",  B2: "=KABOUM",  C2: "TRUE",
+      A3: "John",   B3: "TRUE",     C3: "=KABOUM",
+    };
+    const model = createModelFromGrid(grid);
+    setCellContent(model, "A6", "=FILTER(A1:A3, B1:B3, C1:C3)");
+    expect(getRangeValuesAsMatrix(model, "A6:A8")).toEqual([["Alice"], [null], [null]]);
   });
 });
 
@@ -134,7 +169,7 @@ describe("UNIQUE function", () => {
 
     const model = createModelFromGrid(grid);
     setCellContent(model, "C1", "=UNIQUE(B1:B2)");
-    expect(getRangeValuesAsMatrix(model, "C1:C2")).toEqual([["hey"], [""]]);
+    expect(getRangeValuesAsMatrix(model, "C1:C2")).toEqual([["hey"], [null]]);
     expect(checkFunctionDoesntSpreadBeyondRange(model, "C1:C2")).toBeTruthy();
   });
 
@@ -151,7 +186,7 @@ describe("UNIQUE function", () => {
     expect(getRangeValuesAsMatrix(model, "D1:E3")).toEqual([
       ["hey", "olà"],
       ["hey", "bjr"],
-      ["", ""],
+      [null, null],
     ]);
     expect(checkFunctionDoesntSpreadBeyondRange(model, "D1:E3")).toBeTruthy();
   });
@@ -181,7 +216,7 @@ describe("UNIQUE function", () => {
     expect(getRangeValuesAsMatrix(model, "D1:E3")).toEqual([
       ["hey", 0],
       ["hey", "bjr"],
-      ["", ""],
+      [null, null],
     ]);
     expect(checkFunctionDoesntSpreadBeyondRange(model, "D1:E3")).toBeTruthy();
   });
@@ -191,8 +226,8 @@ describe("UNIQUE function", () => {
     const model = createModelFromGrid(grid);
     setCellContent(model, "D1", "=UNIQUE(A1:B2, true)");
     expect(getRangeValuesAsMatrix(model, "D1:E2")).toEqual([
-      ["hey", ""],
-      ["olà", ""],
+      ["hey", null],
+      ["olà", null],
     ]);
     expect(checkFunctionDoesntSpreadBeyondRange(model, "D1:E2")).toBeTruthy();
   });
@@ -203,8 +238,8 @@ describe("UNIQUE function", () => {
     setCellContent(model, "D1", "=UNIQUE(A1:B3, false, true)");
     expect(getRangeValuesAsMatrix(model, "D1:E3")).toEqual([
       ["hey", "bjr"],
-      ["", ""],
-      ["", ""],
+      [null, null],
+      [null, null],
     ]);
     expect(checkFunctionDoesntSpreadBeyondRange(model, "D1:E3")).toBeTruthy();
   });
@@ -215,6 +250,23 @@ describe("UNIQUE function", () => {
     setCellContent(model, "D1", "=UNIQUE(A1:B3, 0 ,1)");
     expect(getCellContent(model, "D1")).toBe("#ERROR");
     expect(getCellError(model, "D1")).toBe("No unique values found");
+  });
+
+  test("UNIQUE accepts errors in first argument", () => {
+    const grid = {
+      A1: "=KABOUM",
+      A2: "Peter",
+      A3: "=1/0",
+      A4: "=KABOUM_2",
+    };
+    const model = createModelFromGrid(grid);
+    setCellContent(model, "B1", "=UNIQUE(A1:A4)");
+    expect(getRangeValuesAsMatrix(model, "B1:B4")).toEqual([
+      ["#BAD_EXPR"],
+      ["Peter"],
+      ["#DIV/0!"],
+      [null],
+    ]);
   });
 });
 
@@ -754,7 +806,7 @@ describe("SORTN function", () => {
     };
     const model = createModelFromGrid(grid);
     setCellContent(model, "A11", "=SORTN(A1:A6, 5, 0)");
-    expect(getRangeValuesAsMatrix(model, "A11:A16")).toEqual([[1], [1], [2], [2], [2], [""]]);
+    expect(getRangeValuesAsMatrix(model, "A11:A16")).toEqual([[1], [1], [2], [2], [2], [null]]);
   });
 
   test("Full sorting with multiple columns", () => {
@@ -775,7 +827,7 @@ describe("SORTN function", () => {
       [2, 1, 1],
       [2, 1, 1],
       [2, 1, 2],
-      ["", "", ""],
+      [null, null, null],
     ]);
   });
 
@@ -797,7 +849,7 @@ describe("SORTN function", () => {
     setCellContent(model, "A11", "=SORTN(A1:C10)");
     expect(getRangeValuesAsMatrix(model, "A11:C12")).toEqual([
       [1, 1, 1],
-      ["", "", ""],
+      [null, null, null],
     ]);
   });
 
@@ -822,7 +874,7 @@ describe("SORTN function", () => {
       [1, 3, 3],
       [2, 1, 1],
       [2, 1, 1],
-      ["", "", ""],
+      [null, null, null],
     ]);
     setCellContent(model, "A11", "=SORTN(A1:C10, 5, 2)");
     expect(getRangeValuesAsMatrix(model, "A11:C16")).toEqual([
@@ -831,7 +883,7 @@ describe("SORTN function", () => {
       [2, 1, 1],
       [2, 1, 2],
       [2, 3, 1],
-      ["", "", ""],
+      [null, null, null],
     ]);
     setCellContent(model, "A11", "=SORTN(A1:C10, 5, 3)");
     expect(getRangeValuesAsMatrix(model, "A11:C18")).toEqual([
@@ -842,7 +894,7 @@ describe("SORTN function", () => {
       [2, 1, 2],
       [2, 3, 1],
       [2, 3, 1],
-      ["", "", ""],
+      [null, null, null],
     ]);
   });
 
@@ -929,7 +981,7 @@ describe("SORTN function", () => {
       [2, 1, 2],
       [4, 1, 2],
       [1, 1, 1],
-      ["", "", ""],
+      [null, null, null],
     ]);
   });
 
@@ -951,7 +1003,7 @@ describe("SORTN function", () => {
       [3, 2, 1],
       [3, 4, 4],
       [2, 1, 2],
-      ["", "", ""],
+      [null, null, null],
     ]);
   });
 
@@ -973,7 +1025,7 @@ describe("SORTN function", () => {
       [2, 1, 1],
       [4, 1, 2],
       [2, 1, 1],
-      ["", "", ""],
+      [null, null, null],
     ]);
   });
 
@@ -995,7 +1047,7 @@ describe("SORTN function", () => {
       [3, 2, 1],
       [3, 4, 4],
       [2, 1, 2],
-      ["", "", ""],
+      [null, null, null],
     ]);
   });
 
@@ -1017,7 +1069,7 @@ describe("SORTN function", () => {
       [3, 2, 1],
       [3, 4, 4],
       [2, 1, 2],
-      ["", "", ""],
+      [null, null, null],
     ]);
   });
 });

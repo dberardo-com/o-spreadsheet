@@ -1,12 +1,12 @@
 import {
+  RangeImpl,
   clip,
   deepEquals,
-  getCanonicalSheetName,
+  getFullReference,
   isDefined,
   isEqual,
   overlap,
   positions,
-  RangeImpl,
   splitReference,
   toXC,
   toZone,
@@ -47,7 +47,6 @@ export class MergePlugin extends CorePlugin<MergeState> implements MergeState {
     "isInSameMerge",
     "isMergeHidden",
     "getMainCellPosition",
-    "getBottomLeftCell",
     "expandZone",
     "doesIntersectMerge",
     "doesColumnsHaveCommonMerges",
@@ -149,10 +148,12 @@ export class MergePlugin extends CorePlugin<MergeState> implements MergeState {
     if (!sheetMap) return [];
     const mergeIds = new Set<number>();
 
-    for (const { col, row } of positions(zone)) {
-      const mergeId = sheetMap[col]?.[row];
-      if (mergeId) {
-        mergeIds.add(mergeId);
+    for (let col = zone.left; col <= zone.right; col++) {
+      for (let row = zone.top; row <= zone.bottom; row++) {
+        const mergeId = sheetMap[col]?.[row];
+        if (mergeId) {
+          mergeIds.add(mergeId);
+        }
       }
     }
 
@@ -177,9 +178,7 @@ export class MergePlugin extends CorePlugin<MergeState> implements MergeState {
     const rangeString = this.getters.getRangeString(expandedRange, forSheetId);
     if (this.isSingleCellOrMerge(rangeImpl.sheetId, rangeImpl.zone)) {
       const { sheetName, xc } = splitReference(rangeString);
-      return `${sheetName !== undefined ? getCanonicalSheetName(sheetName) + "!" : ""}${
-        xc.split(":")[0]
-      }`;
+      return getFullReference(sheetName, xc.split(":")[0]);
     }
     return rangeString;
   }
@@ -189,9 +188,12 @@ export class MergePlugin extends CorePlugin<MergeState> implements MergeState {
    * if they have at least a common cell
    */
   doesIntersectMerge(sheetId: UID, zone: Zone): boolean {
-    return positions(zone).some(
-      ({ col, row }) => this.getMerge({ sheetId, col, row }) !== undefined
-    );
+    for (const merge of this.getMerges(sheetId)) {
+      if (overlap(zone, merge)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
@@ -257,19 +259,14 @@ export class MergePlugin extends CorePlugin<MergeState> implements MergeState {
   }
 
   getMainCellPosition(position: CellPosition): CellPosition {
-    if (!this.isInMerge(position)) {
-      return position;
-    }
-    const mergeTopLeftPos = this.getMerge(position)!.topLeft;
-    return { sheetId: position.sheetId, col: mergeTopLeftPos.col, row: mergeTopLeftPos.row };
-  }
-
-  getBottomLeftCell(position: CellPosition): CellPosition {
-    if (!this.isInMerge(position)) {
-      return position;
-    }
-    const { bottom, left } = this.getMerge(position)!;
-    return { sheetId: position.sheetId, col: left, row: bottom };
+    const mergeZone = this.getMerge(position);
+    return mergeZone
+      ? {
+          sheetId: position.sheetId,
+          col: mergeZone.left,
+          row: mergeZone.top,
+        }
+      : position;
   }
 
   isMergeHidden(sheetId: UID, merge: Merge): boolean {
@@ -550,7 +547,6 @@ function exportMerges(merges: Record<number, Range | undefined>): string[] {
 function rangeToMerge(mergeId: number, range: Range): Merge {
   return {
     ...range.zone,
-    topLeft: { col: range.zone.left, row: range.zone.top },
     id: mergeId,
   };
 }

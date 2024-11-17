@@ -1,27 +1,22 @@
 import { Color } from "chart.js";
-import { DEFAULT_FONT } from "../../../constants";
-import { DOMDimension, Pixel, PixelPosition, Style } from "../../../types";
+import {
+  DEFAULT_CHART_PADDING,
+  SCORECARD_GAUGE_CHART_FONT_SIZE,
+  SCORECARD_GAUGE_CHART_PADDING,
+} from "../../../constants";
+import { DOMDimension, Pixel, PixelPosition } from "../../../types";
 import { BaselineArrowDirection, ScorecardChartRuntime } from "../../../types/chart";
 import { relativeLuminance } from "../../color";
-import { getFontSizeMatchingWidth } from "../../text_helper";
+import { getDefaultContextFont } from "../../text_helper";
 
-/* Sizes of boxes containing the texts, in percentage of the Chart size */
-const TITLE_FONT_SIZE = 18;
+/* Padding at the border of the chart */
+const CHART_PADDING = SCORECARD_GAUGE_CHART_PADDING;
+const BOTTOM_PADDING_RATIO = 0.05;
 
-const BASELINE_BOX_HEIGHT_RATIO = 0.35;
-const KEY_BOX_HEIGHT_RATIO = 0.65;
-
-/** Baseline description should have a smaller font than the baseline */
-const BASELINE_DESCR_FONT_RATIO = 0.9;
-
-/* Padding at the border of the chart, in percentage of the chart width */
-const CHART_PADDING_RATIO = 0.02;
-
-/**
- * Line height (in em)
- * Having a line heigh =1em (=font size) don't work, the font will overflow.
- */
-const LINE_HEIGHT = 1.2;
+/* Maximum font sizes of each element */
+const CHART_TITLE_FONT_SIZE = SCORECARD_GAUGE_CHART_FONT_SIZE;
+const KEY_VALUE_FONT_SIZE = 32;
+const BASELINE_MAX_FONT_SIZE = 16;
 
 type ScorecardChartElement = {
   text: string;
@@ -50,8 +45,17 @@ export type ScorecardChartConfig = {
     position: PixelPosition;
   };
   baseline?: ScorecardChartElement;
-  baselineDescr?: ScorecardChartElement;
+  baselineDescr?: ScorecardChartElement[];
   key?: ScorecardChartElement;
+  progressBar?: {
+    position: PixelPosition;
+    dimension: DOMDimension;
+    style: {
+      color: Color;
+      backgroundColor: Color;
+    };
+    value: number;
+  };
 };
 
 export function formatBaselineDescr(
@@ -60,16 +64,6 @@ export function formatBaselineDescr(
 ): string {
   const _baselineDescr = baselineDescr || "";
   return baseline && _baselineDescr ? " " + _baselineDescr : _baselineDescr;
-}
-
-function getDefaultContextFont(
-  fontSize: number,
-  bold: boolean | undefined = false,
-  italic: boolean | undefined = false
-): string {
-  const italicStr = italic ? "italic" : "";
-  const weight = bold ? "bold" : "";
-  return `${italicStr} ${weight} ${fontSize}px ${DEFAULT_FONT}`;
 }
 
 export function getScorecardConfiguration(
@@ -85,10 +79,7 @@ class ScorecardChartConfigBuilder {
   private width: number;
   private height: number;
 
-  constructor(
-    { width, height }: { width: Pixel; height: Pixel },
-    readonly runtime: ScorecardChartRuntime
-  ) {
+  constructor({ width, height }: DOMDimension, readonly runtime: ScorecardChartRuntime) {
     const canvas = document.createElement("canvas");
     this.width = canvas.width = width;
     this.height = canvas.height = height;
@@ -105,28 +96,47 @@ class ScorecardChartConfigBuilder {
     };
     const style = this.getTextStyles();
 
-    const { height: titleHeight } = this.getTextDimensions(this.title, style.title.font);
+    let titleHeight = 0;
     if (this.title) {
+      let x: number, titleWidth: number;
+      ({ height: titleHeight, width: titleWidth } = this.getFullTextDimensions(
+        this.title,
+        style.title.font
+      ));
+      switch (this.runtime.title.align) {
+        case "center":
+          x = (this.width - titleWidth) / 2;
+          break;
+        case "right":
+          x = this.width - titleWidth - CHART_PADDING;
+          break;
+        case "left":
+        default:
+          x = CHART_PADDING;
+      }
       structure.title = {
         text: this.title,
         style: style.title,
         position: {
-          x: this.chartPadding,
-          y: this.chartPadding + titleHeight,
+          x,
+          y: CHART_PADDING + titleHeight / 2,
         },
       };
     }
 
     const baselineArrowSize = style.baselineArrow?.size ?? 0;
 
-    const { height: baselineHeight, width: baselineWidth } = this.getTextDimensions(
+    let { height: baselineHeight, width: baselineWidth } = this.getTextDimensions(
       this.baseline,
       style.baselineValue.font
     );
-    const { width: baselineDescrWidth } = this.getTextDimensions(
+    if (!this.baseline) {
+      baselineHeight = this.getTextDimensions(this.baselineDescr, style.baselineDescr.font).height;
+    }
+    const baselineDescrWidth = this.getTextDimensions(
       this.baselineDescr,
       style.baselineDescr.font
-    );
+    ).width;
 
     structure.baseline = {
       text: this.baseline,
@@ -134,12 +144,17 @@ class ScorecardChartConfigBuilder {
       position: {
         x: (this.width - baselineWidth - baselineDescrWidth + baselineArrowSize) / 2,
         y: this.keyValue
-          ? this.height - 2 * this.chartPadding
-          : this.height - (this.height - titleHeight - baselineHeight) / 2 - this.chartPadding,
+          ? this.height * (1 - BOTTOM_PADDING_RATIO * (this.runtime.progressBar ? 1 : 2))
+          : this.height - (this.height - titleHeight - baselineHeight) / 2 - CHART_PADDING,
       },
     };
 
-    if (style.baselineArrow) {
+    const minimalBaselinePosition = baselineArrowSize + DEFAULT_CHART_PADDING;
+    if (structure.baseline.position.x < minimalBaselinePosition) {
+      structure.baseline.position.x = minimalBaselinePosition;
+    }
+
+    if (style.baselineArrow && !this.runtime.progressBar) {
       structure.baselineArrow = {
         direction: this.baselineArrow,
         style: style.baselineArrow,
@@ -151,17 +166,40 @@ class ScorecardChartConfigBuilder {
     }
 
     if (this.baselineDescr) {
-      structure.baselineDescr = {
-        text: this.baselineDescr,
-        style: style.baselineDescr,
+      const position = {
+        x: structure.baseline.position.x + baselineWidth,
+        y: structure.baseline.position.y,
+      };
+      structure.baselineDescr = [
+        {
+          text: this.baselineDescr,
+          style: style.baselineDescr,
+          position,
+        },
+      ];
+    }
+
+    let progressBarHeight = 0;
+    if (this.runtime.progressBar) {
+      progressBarHeight = this.height * 0.05;
+      structure.progressBar = {
         position: {
-          x: structure.baseline.position.x + baselineWidth,
-          y: structure.baseline.position.y,
+          x: 2 * CHART_PADDING,
+          y: this.height * (1 - 2 * BOTTOM_PADDING_RATIO) - baselineHeight - progressBarHeight,
+        },
+        dimension: {
+          height: progressBarHeight,
+          width: this.width - 4 * CHART_PADDING,
+        },
+        value: this.runtime.progressBar.value,
+        style: {
+          color: this.runtime.progressBar.color,
+          backgroundColor: this.secondaryFontColor,
         },
       };
     }
 
-    const { height: keyHeight, width: keyWidth } = this.getTextDimensions(
+    const { width: keyWidth, height: keyHeight } = this.getFullTextDimensions(
       this.keyValue,
       style.keyValue.font
     );
@@ -170,16 +208,19 @@ class ScorecardChartConfigBuilder {
         text: this.keyValue,
         style: style.keyValue,
         position: {
-          x: (this.width - keyWidth) / 2,
-          y: (this.height - baselineHeight + titleHeight + keyHeight) / 2 - this.chartPadding,
+          x: Math.max(CHART_PADDING, (this.width - keyWidth) / 2),
+          y:
+            this.height * (0.5 - BOTTOM_PADDING_RATIO * 2) +
+            CHART_PADDING / 2 +
+            (titleHeight + keyHeight / 2) / 2,
         },
       };
     }
     return structure;
   }
 
-  private get title() {
-    return this.runtime.title;
+  private get title(): string {
+    return this.runtime.title.text ?? "";
   }
 
   get keyValue() {
@@ -206,10 +247,6 @@ class ScorecardChartConfigBuilder {
     return relativeLuminance(this.backgroundColor) > 0.3 ? "#525252" : "#C8C8C8";
   }
 
-  private get chartPadding() {
-    return this.width * CHART_PADDING_RATIO;
-  }
-
   private getTextDimensions(text: string, font: string) {
     this.context.font = font;
     const measure = this.context.measureText(text);
@@ -219,39 +256,35 @@ class ScorecardChartConfigBuilder {
     };
   }
 
-  private getTextStyles() {
-    // If the widest text overflows horizontally, scale it down, and apply the same scaling factors to all the other fonts.
-    const maxLineWidth = this.width * (1 - 2 * CHART_PADDING_RATIO);
-    const widestElement = this.getWidestElement();
-    const baseFontSize = widestElement.getElementMaxFontSize(this.getDrawableHeight(), this);
-    const fontSizeMatchingWidth = getFontSizeMatchingWidth(
-      maxLineWidth,
-      baseFontSize,
-      (fontSize: number) => widestElement.getElementWidth(fontSize, this.context, this)
-    );
-    let scalingFactor = fontSizeMatchingWidth / baseFontSize;
+  private getFullTextDimensions(text: string, font: string) {
+    this.context.font = font;
+    const measure = this.context.measureText(text);
+    return {
+      width: measure.width,
+      height: measure.fontBoundingBoxAscent + measure.fontBoundingBoxDescent,
+    };
+  }
 
-    // Fonts sizes in px
-    const keyFontSize =
-      new KeyValueElement(this.runtime.keyValueStyle).getElementMaxFontSize(
-        this.getDrawableHeight(),
-        this
-      ) * scalingFactor;
-    const baselineFontSize =
-      new BaselineElement(this.runtime.baselineStyle).getElementMaxFontSize(
-        this.getDrawableHeight(),
-        this
-      ) * scalingFactor;
+  private getTextStyles() {
+    let baselineValueFontSize = BASELINE_MAX_FONT_SIZE;
+    const baselineDescrFontSize = Math.floor(0.9 * baselineValueFontSize);
+    if (this.runtime.progressBar) {
+      baselineValueFontSize /= 1.5;
+    }
 
     return {
       title: {
-        font: getDefaultContextFont(TITLE_FONT_SIZE),
-        color: this.secondaryFontColor,
+        font: getDefaultContextFont(
+          CHART_TITLE_FONT_SIZE,
+          this.runtime.title.bold,
+          this.runtime.title.italic
+        ),
+        color: this.runtime.title.color ?? this.secondaryFontColor,
       },
       keyValue: {
         color: this.runtime.keyValueStyle?.textColor || this.runtime.fontColor,
         font: getDefaultContextFont(
-          keyFontSize,
+          KEY_VALUE_FONT_SIZE,
           this.runtime.keyValueStyle?.bold,
           this.runtime.keyValueStyle?.italic
         ),
@@ -260,7 +293,7 @@ class ScorecardChartConfigBuilder {
       },
       baselineValue: {
         font: getDefaultContextFont(
-          baselineFontSize,
+          baselineValueFontSize,
           this.runtime.baselineStyle?.bold,
           this.runtime.baselineStyle?.italic
         ),
@@ -272,116 +305,16 @@ class ScorecardChartConfigBuilder {
           this.secondaryFontColor,
       },
       baselineDescr: {
-        font: getDefaultContextFont(baselineFontSize * BASELINE_DESCR_FONT_RATIO),
+        font: getDefaultContextFont(baselineDescrFontSize),
         color: this.secondaryFontColor,
       },
       baselineArrow:
-        this.baselineArrow === "neutral"
+        this.baselineArrow === "neutral" || this.runtime.progressBar
           ? undefined
           : {
-              size: this.keyValue ? 0.8 * baselineFontSize : 0,
+              size: this.keyValue ? 0.8 * baselineValueFontSize : 0,
               color: this.runtime.baselineColor || this.secondaryFontColor,
             },
     };
-  }
-
-  /** Get the height of the chart minus all the vertical paddings */
-  private getDrawableHeight(): number {
-    const verticalPadding = 2 * this.chartPadding;
-    let availableHeight = this.height - verticalPadding;
-    availableHeight -= this.title ? TITLE_FONT_SIZE * LINE_HEIGHT : 0;
-    return availableHeight;
-  }
-
-  /** Return the element with he widest text in the chart */
-  private getWidestElement(): ScorecardScalableElement {
-    const baseline = new BaselineElement(this.runtime.baselineStyle);
-    const keyValue = new KeyValueElement(this.runtime.keyValueStyle);
-
-    return baseline.getElementWidth(BASELINE_BOX_HEIGHT_RATIO, this.context, this) >
-      keyValue.getElementWidth(KEY_BOX_HEIGHT_RATIO, this.context, this)
-      ? baseline
-      : keyValue;
-  }
-}
-
-abstract class ScorecardScalableElement {
-  constructor(private style: Style = {}) {}
-
-  /** Return the width of an scorecard element in pixels */
-  abstract getElementWidth(
-    fontSize: number,
-    ctx: CanvasRenderingContext2D,
-    chart: ScorecardChartConfigBuilder
-  ): Pixel;
-
-  /**
-   * Get the maximal height of an element of the scorecard.
-   *
-   * This is computed such as all the height is taken by the elements, even if there is no title or baseline.
-   */
-  abstract getElementMaxFontSize(
-    availableHeight: Pixel,
-    chart: ScorecardChartConfigBuilder
-  ): number;
-
-  protected measureTextWidth(ctx: CanvasRenderingContext2D, text: string, fontSize: number) {
-    ctx.font = getDefaultContextFont(fontSize, this.style.bold, this.style.italic);
-    return ctx.measureText(text).width;
-  }
-}
-
-class BaselineElement extends ScorecardScalableElement {
-  getElementWidth(
-    fontSize: number,
-    ctx: CanvasRenderingContext2D,
-    chart: ScorecardChartConfigBuilder
-  ): Pixel {
-    if (!chart.runtime) {
-      return 0;
-    }
-    const baselineStr = chart.baseline;
-    // Put mock text to simulate the width of the up/down arrow
-    const largeText = chart.baselineArrow !== "neutral" ? "A " + baselineStr : baselineStr;
-    let textWidth = this.measureTextWidth(ctx, largeText, fontSize);
-    // Baseline descr font size should be smaller than baseline font size
-    textWidth += this.measureTextWidth(
-      ctx,
-      chart.baselineDescr,
-      fontSize * BASELINE_DESCR_FONT_RATIO
-    );
-    return textWidth;
-  }
-
-  getElementMaxFontSize(availableHeight: Pixel, chart: ScorecardChartConfigBuilder): number {
-    if (!chart.runtime) {
-      return 0;
-    }
-    const haveBaseline = chart.baseline !== "" || chart.baselineDescr;
-    const maxHeight = haveBaseline ? BASELINE_BOX_HEIGHT_RATIO * availableHeight : 0;
-    return maxHeight / LINE_HEIGHT;
-  }
-}
-
-class KeyValueElement extends ScorecardScalableElement {
-  getElementWidth(
-    fontSize: number,
-    ctx: CanvasRenderingContext2D,
-    chart: ScorecardChartConfigBuilder
-  ): Pixel {
-    if (!chart.runtime) {
-      return 0;
-    }
-    const str = chart.keyValue || "";
-    return this.measureTextWidth(ctx, str, fontSize);
-  }
-
-  getElementMaxFontSize(availableHeight: Pixel, chart: ScorecardChartConfigBuilder): number {
-    if (!chart.runtime) {
-      return 0;
-    }
-    const haveBaseline = chart.baseline !== "" || chart.baselineDescr;
-    const maxHeight = haveBaseline ? KEY_BOX_HEIGHT_RATIO * availableHeight : availableHeight;
-    return maxHeight / LINE_HEIGHT;
   }
 }

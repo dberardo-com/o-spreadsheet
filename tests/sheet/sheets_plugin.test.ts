@@ -1,11 +1,12 @@
 import { FORBIDDEN_SHEET_CHARS } from "../../src/constants";
-import { getCanonicalSheetName, numberToLetters, toZone } from "../../src/helpers";
+import { getCanonicalSymbolName, numberToLetters, toZone } from "../../src/helpers";
 import { Model } from "../../src/model";
 import { CommandResult } from "../../src/types";
 import {
   activateSheet,
   addColumns,
   addRows,
+  colorSheet,
   createChart,
   createSheet,
   createSheetWithName,
@@ -264,6 +265,12 @@ describe("sheets", () => {
   test("cannot activate an invalid sheet", () => {
     const model = new Model();
     expect(activateSheet(model, "INVALID_ID")).toBeCancelledBecause(CommandResult.InvalidSheetId);
+  });
+
+  test("cannot activate an hidden sheet", () => {
+    const model = new Model();
+    createSheet(model, { sheetId: "42", hidden: true });
+    expect(activateSheet(model, "42")).toBeCancelledBecause(CommandResult.SheetIsHidden);
   });
 
   test("evaluating multiple sheets", () => {
@@ -714,7 +721,11 @@ describe("sheets", () => {
     const model = new Model();
     const sheetId = model.getters.getActiveSheetId();
     const chartId = "uuid";
-    createChart(model, { dataSets: ["Sheet1!B1:B4"], labelRange: "Sheet1!A2:A4" }, chartId);
+    createChart(
+      model,
+      { type: "bar", dataSets: [{ dataRange: "Sheet1!B1:B4" }], labelRange: "Sheet1!A2:A4" },
+      chartId
+    );
     model.dispatch("DUPLICATE_SHEET", { sheetId, sheetIdTo: "42" });
     model.dispatch("UPDATE_FIGURE", {
       sheetId: sheetId,
@@ -936,7 +947,7 @@ describe("sheets", () => {
     renameSheet(model, sheetId, name);
     expect(model.getters.getSheetIdByName(name)).toBe(sheetId);
     expect(model.getters.getSheetIdByName(`'${name}'`)).toBe(sheetId);
-    expect(model.getters.getSheetIdByName(getCanonicalSheetName(name))).toBe(sheetId);
+    expect(model.getters.getSheetIdByName(getCanonicalSymbolName(name))).toBe(sheetId);
   });
 
   test("getSheetIdByName with invalid name", () => {
@@ -1036,8 +1047,8 @@ describe("sheets", () => {
     expect(addColumns(model, "after", "D", 1)).toBeCancelledBecause(
       CommandResult.InvalidHeaderIndex
     );
-    expect(addRows(model, "after", 20, 1)).toBeCancelledBecause(CommandResult.InvalidHeaderIndex);
     expect(addRows(model, "after", 3, 1)).toBeCancelledBecause(CommandResult.InvalidHeaderIndex);
+    expect(addRows(model, "after", 20, 1)).toBeCancelledBecause(CommandResult.InvalidHeaderIndex);
   });
 
   test("Cannot add wrong quantity of cols/row", () => {
@@ -1064,5 +1075,42 @@ describe("sheets", () => {
     const sheetId = model.getters.getActiveSheetId();
     const zone = toZone("A1:J1");
     expect(model.getters.getUnboundedZone(sheetId, zone)).toEqual({ ...zone, right: undefined });
+  });
+
+  describe("Sheet color", () => {
+    test("Can change a sheet color", () => {
+      const model = new Model();
+      const sheetId = model.getters.getActiveSheetId();
+
+      colorSheet(model, sheetId, "#FF0000");
+      expect(model.getters.getSheet(sheetId).color).toBe("#FF0000");
+
+      colorSheet(model, sheetId, undefined);
+      expect(model.getters.getSheet(sheetId).color).toBe(undefined);
+
+      undo(model);
+      expect(model.getters.getSheet(sheetId).color).toBe("#FF0000");
+
+      redo(model);
+      expect(model.getters.getSheet(sheetId).color).toBe(undefined);
+    });
+
+    test("Cannot give an invalid color to a sheet", () => {
+      const model = new Model();
+      const sheetId = model.getters.getActiveSheetId();
+      expect(colorSheet(model, sheetId, "#PPP")).toBeCancelledBecause(CommandResult.InvalidColor);
+    });
+
+    test("Can export and import sheet colors", () => {
+      const model = new Model();
+      const sheetId = model.getters.getActiveSheetId();
+
+      colorSheet(model, sheetId, "#FF0000");
+      const exported = model.exportData();
+      expect(exported.sheets[0].color).toBe("#FF0000");
+
+      const newModel = new Model(exported);
+      expect(newModel.getters.getSheet(sheetId).color).toBe("#FF0000");
+    });
   });
 });

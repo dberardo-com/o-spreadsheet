@@ -20,6 +20,7 @@ css/* scss */ `
     display: flex;
     position: relative;
     align-items: center;
+    height: 30px;
 
     .o-color-picker-button-style {
       display: flex;
@@ -35,11 +36,11 @@ css/* scss */ `
     }
 
     .o-color-picker-button {
-      height: 30px;
       > span {
         border-bottom: 4px solid;
         height: 16px;
         margin-top: 2px;
+        display: block;
       }
 
       &[disabled] {
@@ -52,6 +53,17 @@ css/* scss */ `
 
 export class ColorPickerWidget extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-ColorPickerWidget";
+  static props = {
+    currentColor: { type: String, optional: true },
+    toggleColorPicker: Function,
+    showColorPicker: Boolean,
+    onColorPicked: Function,
+    icon: String,
+    title: { type: String, optional: true },
+    disabled: { type: Boolean, optional: true },
+    dropdownMaxHeight: { type: Number, optional: true },
+    class: { type: String, optional: true },
+  };
   static components = { ColorPicker };
 
   colorPickerButtonRef = useRef("colorPickerButton");
@@ -73,15 +85,3 @@ export class ColorPickerWidget extends Component<Props, SpreadsheetChildEnv> {
     };
   }
 }
-
-ColorPickerWidget.props = {
-  currentColor: { type: String, optional: true },
-  toggleColorPicker: Function,
-  showColorPicker: Boolean,
-  onColorPicked: Function,
-  icon: String,
-  title: { type: String, optional: true },
-  disabled: { type: Boolean, optional: true },
-  dropdownMaxHeight: { type: Number, optional: true },
-  class: { type: String, optional: true },
-};

@@ -11,15 +11,17 @@ import {
   deleteRows,
   redo,
   setCellContent,
+  setFormat,
   setStyle,
   undo,
   updateLocale,
 } from "../test_helpers/commands_helpers";
 import { FR_LOCALE } from "../test_helpers/constants";
-import { getStyle } from "../test_helpers/getters_helpers";
+import { getDataBarFill, getStyle } from "../test_helpers/getters_helpers";
 import {
   createColorScale,
   createEqualCF,
+  createModelFromGrid,
   toCellPosition,
   toRangesData,
 } from "../test_helpers/helpers";
@@ -50,6 +52,17 @@ describe("conditional format", () => {
       ranges: toRangesData(sheetId, "A:A"),
       sheetId,
     });
+    model.dispatch("ADD_CONDITIONAL_FORMAT", {
+      cf: createEqualCF("5", { fillColor: "#0000FF" }, "3"),
+      ranges: toRangesData(sheetId, "A3:A"),
+      sheetId,
+    });
+
+    model.dispatch("ADD_CONDITIONAL_FORMAT", {
+      cf: createEqualCF("6", { fillColor: "#0000FF" }, "4"),
+      ranges: toRangesData(sheetId, "C3:3"),
+      sheetId,
+    });
     expect(model.getters.getConditionalFormats(model.getters.getActiveSheetId())).toEqual([
       {
         rule: {
@@ -74,6 +87,30 @@ describe("conditional format", () => {
         },
         id: "2",
         ranges: ["A:A"],
+      },
+      {
+        rule: {
+          values: ["5"],
+          operator: "Equal",
+          type: "CellIsRule",
+          style: {
+            fillColor: "#0000FF",
+          },
+        },
+        id: "3",
+        ranges: ["A3:A"],
+      },
+      {
+        rule: {
+          values: ["6"],
+          operator: "Equal",
+          type: "CellIsRule",
+          style: {
+            fillColor: "#0000FF",
+          },
+        },
+        id: "4",
+        ranges: ["C3:3"],
       },
     ]);
     expect(getStyle(model, "A1")).toEqual({});
@@ -108,6 +145,17 @@ describe("conditional format", () => {
       fillColor: "orange",
     });
     expect(getStyle(model, "A4")).toEqual({});
+  });
+
+  test("falsy CF attributes do not overwrite cell style in getCellComputedStyle", () => {
+    setCellContent(model, "A1", "1");
+    setStyle(model, "A1", { bold: true, fillColor: "#FF0000" });
+    model.dispatch("ADD_CONDITIONAL_FORMAT", {
+      cf: createEqualCF("1", { bold: false, fillColor: undefined }, "cfId"),
+      ranges: toRangesData(sheetId, "A1"),
+      sheetId,
+    });
+    expect(getStyle(model, "A1")).toEqual({ bold: true, fillColor: "#FF0000" });
   });
 
   test("Add conditional formatting on inactive sheet", () => {
@@ -398,6 +446,20 @@ describe("conditional format", () => {
     });
   });
 
+  test("works after format update that updates a value", () => {
+    setCellContent(model, "A1", '=CELL("format", A2)');
+    model.dispatch("ADD_CONDITIONAL_FORMAT", {
+      cf: createEqualCF("mm/dd/yyyy", { fillColor: "#FF0000" }, "1"),
+      ranges: toRangesData(sheetId, "A1"),
+      sheetId,
+    });
+    expect(getStyle(model, "A1")).toEqual({});
+    setFormat(model, "A2", "mm/dd/yyyy");
+    expect(getStyle(model, "A1")).toEqual({
+      fillColor: "#FF0000",
+    });
+  });
+
   test("works when cells are in error", () => {
     setCellContent(model, "A1", "2");
     model.dispatch("ADD_CONDITIONAL_FORMAT", {
@@ -444,7 +506,7 @@ describe("conditional format", () => {
     });
   });
 
-  test.skip("multiple conditional formats using stopIfTrue flag", () => {
+  test("multiple conditional formats using stopIfTrue flag", () => {
     setCellContent(model, "A1", "2");
 
     model.dispatch("ADD_CONDITIONAL_FORMAT", {
@@ -466,18 +528,6 @@ describe("conditional format", () => {
       ranges: toRangesData(sheetId, "A1"),
       sheetId,
     });
-    expect(getStyle(model, "A1")).toEqual({
-      fillColor: "#FF0000",
-    });
-  });
-
-  test("Set conditionalFormat on empty cell", () => {
-    let result = model.dispatch("ADD_CONDITIONAL_FORMAT", {
-      cf: createEqualCF("", { fillColor: "#FF0000" }, "1"),
-      ranges: toRangesData(sheetId, "A1"),
-      sheetId,
-    });
-    expect(result).toBeSuccessfullyDispatched();
     expect(getStyle(model, "A1")).toEqual({
       fillColor: "#FF0000",
     });
@@ -614,7 +664,7 @@ describe("conditional format", () => {
     });
   });
 
-  test("cannot send invalid arguments to conditional format rules command", () => {
+  test("cannot send invalid arguments to *move* conditional format rules command", () => {
     model.dispatch("ADD_CONDITIONAL_FORMAT", {
       cf: createEqualCF("1", { fillColor: "#FF0000" }, "idRule1"),
       ranges: toRangesData(sheetId, "A1"),
@@ -1580,6 +1630,10 @@ describe("conditional formats types", () => {
     });
 
     test.each([
+      ["Equal", []],
+      ["Equal", [""]],
+      ["NotEqual", []],
+      ["NotEqual", [""]],
       ["GreaterThan", []],
       ["GreaterThan", [""]],
       ["GreaterThan", ["", "1"]],
@@ -1615,6 +1669,26 @@ describe("conditional formats types", () => {
       });
       expect(result).toBeCancelledBecause(CommandResult.FirstArgMissing);
     });
+
+    test.each(["=$c:$2", "=suùù("])(
+      "Invalid formula ('%s') cannot be set as CF value",
+      (formula: string) => {
+        const result = model.dispatch("ADD_CONDITIONAL_FORMAT", {
+          cf: {
+            rule: {
+              type: "CellIsRule",
+              operator: "GreaterThan",
+              values: [formula],
+              style: { fillColor: "#ff0f0f" },
+            },
+            id: "11",
+          },
+          ranges: toRangesData(sheetId, "A1"),
+          sheetId,
+        });
+        expect(result).toBeCancelledBecause(CommandResult.ValueCellIsInvalidFormula);
+      }
+    );
   });
   test.each([
     ["Between", ["1"]],
@@ -1622,7 +1696,7 @@ describe("conditional formats types", () => {
     ["NotBetween", ["1"]],
     ["NotBetween", ["1", ""]],
   ])("%s operator with missing second argument %s", (operator: string, values: string[]) => {
-    let result = model.dispatch("ADD_CONDITIONAL_FORMAT", {
+    const result = model.dispatch("ADD_CONDITIONAL_FORMAT", {
       cf: {
         rule: {
           type: "CellIsRule",
@@ -1641,7 +1715,7 @@ describe("conditional formats types", () => {
     ["Between", ["", ""]],
     ["NotBetween", ["", ""]],
   ])("%s operator with both arguments missing %s", (operator: string, values: string[]) => {
-    let result = model.dispatch("ADD_CONDITIONAL_FORMAT", {
+    const result = model.dispatch("ADD_CONDITIONAL_FORMAT", {
       cf: {
         rule: {
           type: "CellIsRule",
@@ -1727,7 +1801,7 @@ describe("conditional formats types", () => {
       }
     );
 
-    test("refuse invalid and async formulas %s", () => {
+    test("refuse invalid formulas %s", () => {
       const result = model.dispatch("ADD_CONDITIONAL_FORMAT", {
         sheetId,
         ranges: toRangesData(sheetId, "A1"),
@@ -1735,8 +1809,8 @@ describe("conditional formats types", () => {
           id: "1",
           rule: {
             type: "IconSetRule",
-            lowerInflectionPoint: { type: "formula", value: "=INVALID", operator: "gt" },
-            upperInflectionPoint: { type: "formula", value: "=INVALID", operator: "gt" },
+            lowerInflectionPoint: { type: "formula", value: "=INVALID(", operator: "gt" },
+            upperInflectionPoint: { type: "formula", value: "=INVALID(", operator: "gt" },
             icons: {
               upper: "arrowGood",
               middle: "arrowNeutral",
@@ -2210,7 +2284,7 @@ describe("conditional formats types", () => {
       expect(getStyle(model, "A2")).toEqual({});
     });
 
-    test("CF is not updated with insert/delete cells", () => {
+    test("CF is updated with insert/delete cells", () => {
       model.dispatch("ADD_CONDITIONAL_FORMAT", {
         cf: createColorScale(
           "1",
@@ -2221,7 +2295,7 @@ describe("conditional formats types", () => {
         sheetId,
       });
       deleteCells(model, "A2:A3", "up");
-      expect(model.getters.getConditionalFormats(sheetId)[0].ranges[0]).toBe("A1:A10");
+      expect(model.getters.getConditionalFormats(sheetId)[0].ranges[0]).toBe("A1:A8");
     });
 
     test("Color scale with error cell in range", () => {
@@ -2254,5 +2328,210 @@ describe("conditional formats types", () => {
     setCellContent(model, "A1", "01/12/2012");
     // Cf is 12 of January (commands should use canonical formatting), but cell is 1 of December (input in french locale)
     expect(getStyle(model, "A1")).toEqual({});
+  });
+
+  test("DataBar command is refused if the rangeValue cell has not the same size", () => {
+    const result = model.dispatch("ADD_CONDITIONAL_FORMAT", {
+      cf: {
+        id: "1",
+        rule: {
+          type: "DataBarRule",
+          color: 0xff0000,
+          rangeValues: "A1:A2",
+        },
+      },
+      ranges: toRangesData(sheetId, "A1"),
+      sheetId,
+    });
+    expect(result).toBeCancelledBecause(CommandResult.DataBarRangeValuesMismatch);
+  });
+
+  test("Can add a data bar cf based on itself", () => {
+    // prettier-ignore
+    const grid = {
+        A1: "2",
+        A2: "4",
+        A3: "8",
+    };
+    const model = createModelFromGrid(grid);
+    model.dispatch("ADD_CONDITIONAL_FORMAT", {
+      cf: {
+        id: "1",
+        rule: {
+          type: "DataBarRule",
+          color: 0xff0000,
+        },
+      },
+      ranges: toRangesData(sheetId, "A1:A3"),
+      sheetId,
+    });
+    expect(getDataBarFill(model, "A1")?.percentage).toBe(25);
+    expect(getDataBarFill(model, "A2")?.percentage).toBe(50);
+    expect(getDataBarFill(model, "A3")?.percentage).toBe(100);
+  });
+
+  test("Can add a data bar cf based on another range", () => {
+    // prettier-ignore
+    const grid = {
+        A1: "2", B1: "Hello",
+        A2: "4", B2: "World",
+        A3: "8", B3: "!",
+    };
+    const model = createModelFromGrid(grid);
+    model.dispatch("ADD_CONDITIONAL_FORMAT", {
+      cf: {
+        id: "1",
+        rule: {
+          type: "DataBarRule",
+          color: 0xff0000,
+          rangeValues: "A1:A3",
+        },
+      },
+      ranges: toRangesData(sheetId, "B1:B3"),
+      sheetId,
+    });
+    expect(getDataBarFill(model, "B1")?.percentage).toBe(25);
+    expect(getDataBarFill(model, "B2")?.percentage).toBe(50);
+    expect(getDataBarFill(model, "B3")?.percentage).toBe(100);
+  });
+
+  test("Data bar CF with negative values", () => {
+    // prettier-ignore
+    const grid = {
+        A1: "-2",
+        A2: "-4",
+        A3: "-8",
+    };
+    const model = createModelFromGrid(grid);
+    model.dispatch("ADD_CONDITIONAL_FORMAT", {
+      cf: {
+        id: "1",
+        rule: {
+          type: "DataBarRule",
+          color: 0xff0000,
+        },
+      },
+      ranges: toRangesData(sheetId, "A1:A3"),
+      sheetId,
+    });
+    expect(getDataBarFill(model, "A1")).toBeUndefined();
+    expect(getDataBarFill(model, "A2")).toBeUndefined();
+    expect(getDataBarFill(model, "A3")).toBeUndefined();
+  });
+
+  test("Data bar CF with 0 values", () => {
+    // prettier-ignore
+    const grid = {
+        A1: "2",
+        A2: "1",
+        A3: "0",
+    };
+    const model = createModelFromGrid(grid);
+    model.dispatch("ADD_CONDITIONAL_FORMAT", {
+      cf: {
+        id: "1",
+        rule: {
+          type: "DataBarRule",
+          color: 0xff0000,
+        },
+      },
+      ranges: toRangesData(sheetId, "A1:A3"),
+      sheetId,
+    });
+    expect(getDataBarFill(model, "A1")?.percentage).toBe(100);
+    expect(getDataBarFill(model, "A2")?.percentage).toBe(50);
+    expect(getDataBarFill(model, "A3")).toBeUndefined();
+  });
+
+  test("Data bar CF with 0 as maximum", () => {
+    // prettier-ignore
+    const grid = {
+        A1: "0",
+    };
+    const model = createModelFromGrid(grid);
+    model.dispatch("ADD_CONDITIONAL_FORMAT", {
+      cf: {
+        id: "1",
+        rule: {
+          type: "DataBarRule",
+          color: 0xff0000,
+        },
+      },
+      ranges: toRangesData(sheetId, "A1"),
+      sheetId,
+    });
+    expect(getDataBarFill(model, "A1")).toBeUndefined();
+  });
+
+  test("Ignore not number cells", () => {
+    // prettier-ignore
+    const grid = {
+        A1: "10",
+        A2: "Hello",
+        A3: "World",
+    };
+    const model = createModelFromGrid(grid);
+    model.dispatch("ADD_CONDITIONAL_FORMAT", {
+      cf: {
+        id: "1",
+        rule: {
+          type: "DataBarRule",
+          color: 0xff0000,
+        },
+      },
+      ranges: toRangesData(sheetId, "A1:A3"),
+      sheetId,
+    });
+    expect(getDataBarFill(model, "A1")?.percentage).toBe(100);
+    expect(getDataBarFill(model, "A2")).toBeUndefined();
+    expect(getDataBarFill(model, "A3")).toBeUndefined();
+  });
+
+  test("Ignore negative number cells", () => {
+    // prettier-ignore
+    const grid = {
+        A1: "10",
+        A2: "-10",
+    };
+    const model = createModelFromGrid(grid);
+    model.dispatch("ADD_CONDITIONAL_FORMAT", {
+      cf: {
+        id: "1",
+        rule: {
+          type: "DataBarRule",
+          color: 0xff0000,
+        },
+      },
+      ranges: toRangesData(sheetId, "A1:A2"),
+      sheetId,
+    });
+    expect(getDataBarFill(model, "A1")?.percentage).toBe(100);
+    expect(getDataBarFill(model, "A2")).toBeUndefined();
+  });
+
+  test("range value range is adapted", () => {
+    // prettier-ignore
+    const grid = {
+        B1: "2", C1: "Hello",
+        B2: "4", C2: "World",
+        B3: "8", C3: "!",
+    };
+    const model = createModelFromGrid(grid);
+    model.dispatch("ADD_CONDITIONAL_FORMAT", {
+      cf: {
+        id: "1",
+        rule: {
+          type: "DataBarRule",
+          color: 0xff0000,
+          rangeValues: "B1:B3",
+        },
+      },
+      ranges: toRangesData(sheetId, "C1:C3"),
+      sheetId,
+    });
+    deleteColumns(model, ["A"]);
+    expect(getDataBarFill(model, "B1")?.percentage).toBe(25);
+    expect(getDataBarFill(model, "B2")?.percentage).toBe(50);
+    expect(getDataBarFill(model, "B3")?.percentage).toBe(100);
   });
 });

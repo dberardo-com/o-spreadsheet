@@ -1,4 +1,3 @@
-import { UuidGenerator } from "../helpers";
 import { Color, SpreadsheetChildEnv } from "../types";
 
 /*
@@ -37,6 +36,11 @@ export interface ActionSpec {
    * Can be defined to display an icon
    */
   icon?: string | ((env: SpreadsheetChildEnv) => string);
+  iconColor?: Color;
+  /**
+   * Can be defined to display another icon on the right of the item.
+   */
+  secondaryIcon?: string | ((env: SpreadsheetChildEnv) => string);
   /**
    * is the action allowed when running spreadsheet in readonly mode
    */
@@ -57,6 +61,8 @@ export interface ActionSpec {
    */
   separator?: boolean;
   textColor?: Color;
+  onStartHover?: (env: SpreadsheetChildEnv) => void;
+  onStopHover?: (env: SpreadsheetChildEnv) => void;
 }
 
 export interface Action {
@@ -68,11 +74,15 @@ export interface Action {
   isEnabled: (env: SpreadsheetChildEnv) => boolean;
   isActive?: (env: SpreadsheetChildEnv) => boolean;
   icon: (env: SpreadsheetChildEnv) => string;
+  iconColor?: Color;
+  secondaryIcon: (env: SpreadsheetChildEnv) => string;
   isReadonlyAllowed: boolean;
   execute?: (env: SpreadsheetChildEnv) => unknown;
   children: (env: SpreadsheetChildEnv) => Action[];
   separator: boolean;
   textColor?: Color;
+  onStartHover?: (env: SpreadsheetChildEnv) => void;
+  onStopHover?: (env: SpreadsheetChildEnv) => void;
 }
 
 export type ActionBuilder = (env: SpreadsheetChildEnv) => ActionSpec[];
@@ -82,15 +92,17 @@ export function createActions(menuItems: ActionSpec[]): Action[] {
   return menuItems.map(createAction).sort((a, b) => a.sequence - b.sequence);
 }
 
-const uuidGenerator = new UuidGenerator();
+let nextItemId = 1;
 
 export function createAction(item: ActionSpec): Action {
   const name = item.name;
   const children = item.children;
   const description = item.description;
   const icon = item.icon;
+  const secondaryIcon = item.secondaryIcon;
+  const itemId = item.id || nextItemId++;
   return {
-    id: item.id || uuidGenerator.uuidv4(),
+    id: itemId.toString(),
     name: typeof name === "function" ? name : () => name,
     isVisible: item.isVisible ? item.isVisible : () => true,
     isEnabled: item.isEnabled ? item.isEnabled : () => true,
@@ -107,8 +119,12 @@ export function createAction(item: ActionSpec): Action {
     isReadonlyAllowed: item.isReadonlyAllowed || false,
     separator: item.separator || false,
     icon: typeof icon === "function" ? icon : () => icon || "",
+    iconColor: item.iconColor,
+    secondaryIcon: typeof secondaryIcon === "function" ? secondaryIcon : () => secondaryIcon || "",
     description: typeof description === "function" ? description : () => description || "",
     textColor: item.textColor,
     sequence: item.sequence || 0,
+    onStartHover: item.onStartHover,
+    onStopHover: item.onStopHover,
   };
 }

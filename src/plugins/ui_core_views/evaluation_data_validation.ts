@@ -15,7 +15,6 @@ import {
   isMatrix,
 } from "../../types";
 import { CoreViewCommand, invalidateEvaluationCommands } from "../../types/commands";
-import { CellErrorType, EvaluationError } from "../../types/errors";
 import { UIPlugin } from "../ui_plugin";
 import { _t } from "./../../translation";
 
@@ -38,8 +37,6 @@ type SheetValidationResult = { [col: HeaderIndex]: Array<Lazy<ValidationResult>>
 export class EvaluationDataValidationPlugin extends UIPlugin {
   static getters = [
     "getDataValidationInvalidCriterionValueMessage",
-    "getDataValidationCheckBoxCellPositions",
-    "getDataValidationListCellsPositions",
     "getInvalidDataValidationMessage",
     "getValidationResultForCellValue",
     "isCellValidCheckbox",
@@ -52,16 +49,31 @@ export class EvaluationDataValidationPlugin extends UIPlugin {
     if (
       invalidateEvaluationCommands.has(cmd.type) ||
       cmd.type === "EVALUATE_CELLS" ||
-      (cmd.type === "UPDATE_CELL" && "content" in cmd)
+      (cmd.type === "UPDATE_CELL" && ("content" in cmd || "format" in cmd))
     ) {
       this.validationResults = {};
       return;
     }
     switch (cmd.type) {
       case "ADD_DATA_VALIDATION_RULE":
+        const ranges = cmd.ranges.map((range) => this.getters.getRangeFromRangeData(range));
+        if (cmd.rule.criterion.type === "isBoolean") {
+          this.setContentToBooleanCells({ ...cmd.rule, ranges });
+        }
+        delete this.validationResults[cmd.sheetId];
+        break;
       case "REMOVE_DATA_VALIDATION_RULE":
         delete this.validationResults[cmd.sheetId];
         break;
+    }
+  }
+
+  private setContentToBooleanCells(rule: DataValidationRule) {
+    for (const position of getCellPositionsInRanges(rule.ranges)) {
+      const evaluatedCell = this.getters.getEvaluatedCell(position);
+      if (evaluatedCell.type !== CellValueType.boolean) {
+        this.dispatch("UPDATE_CELL", { ...position, content: "FALSE" });
+      }
     }
   }
 
@@ -120,26 +132,6 @@ export class EvaluationDataValidationPlugin extends UIPlugin {
     const error = this.getRuleErrorForCellValue(cellValue, cellPosition, rule);
 
     return error ? { error, rule, isValid: false } : VALID_RESULT;
-  }
-
-  getDataValidationCheckBoxCellPositions(): CellPosition[] {
-    const rules = this.getters
-      .getDataValidationRules(this.getters.getActiveSheetId())
-      .filter((rule) => rule.criterion.type === "isBoolean");
-    return getCellPositionsInRanges(rules.map((rule) => rule.ranges).flat()).filter((position) =>
-      this.isCellValidCheckbox(position)
-    );
-  }
-
-  getDataValidationListCellsPositions(): CellPosition[] {
-    const rules = this.getters
-      .getDataValidationRules(this.getters.getActiveSheetId())
-      .filter(
-        (rule) =>
-          (rule.criterion.type === "isValueInList" || rule.criterion.type === "isValueInRange") &&
-          rule.criterion.displayStyle === "arrow"
-      );
-    return getCellPositionsInRanges(rules.map((rule) => rule.ranges).flat());
   }
 
   private getValidationResultForCell(cellPosition: CellPosition): ValidationResult {
@@ -213,25 +205,16 @@ export class EvaluationDataValidationPlugin extends UIPlugin {
         return value;
       }
 
-      try {
-        const formula = compile(value);
-        const translatedFormula = this.getters.getTranslatedCellFormula(
-          sheetId,
-          offset.col,
-          offset.row,
-          {
-            ...formula,
-            dependencies: formula.dependencies.map((d) =>
-              this.getters.getRangeFromSheetXC(sheetId, d)
-            ),
-          }
-        );
+      const formula = compile(value);
+      const translatedFormula = this.getters.getTranslatedCellFormula(
+        sheetId,
+        offset.col,
+        offset.row,
+        formula.tokens
+      );
 
-        const evaluated = this.getters.evaluateFormula(sheetId, translatedFormula);
-        return evaluated && !isMatrix(evaluated) ? evaluated.toString() : "";
-      } catch (e) {
-        return e instanceof EvaluationError ? e.errorType : CellErrorType.GenericError;
-      }
+      const evaluated = this.getters.evaluateFormula(sheetId, translatedFormula);
+      return evaluated && !isMatrix(evaluated) ? evaluated.toString() : "";
     });
   }
 }

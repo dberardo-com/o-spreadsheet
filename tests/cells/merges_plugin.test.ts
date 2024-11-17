@@ -14,6 +14,7 @@ import {
   selectCell,
   setAnchorCorner,
   setCellContent,
+  setStyle,
   setZoneBorders,
   unMerge,
   undo,
@@ -27,7 +28,12 @@ import {
   getSelectionAnchorCellXc,
   getStyle,
 } from "../test_helpers/getters_helpers";
-import { XCToMergeCellMap, getMergeCellMap, target } from "../test_helpers/helpers";
+import {
+  XCToMergeCellMap,
+  getMergeCellMap,
+  makeTestComposerStore,
+  target,
+} from "../test_helpers/helpers";
 
 function getCellsXC(model: Model): string[] {
   return Object.values(model.getters.getCells(model.getters.getActiveSheetId())).map((cell) => {
@@ -51,7 +57,7 @@ describe("merges", () => {
     expect(getCellContent(model, "B2", sheet1)).toBe("b2");
     expect(getMergeCellMap(model)).toEqual(XCToMergeCellMap(model, ["B2", "B3"]));
     expect(getMerges(model)).toEqual({
-      "1": { bottom: 2, id: 1, left: 1, right: 1, top: 1, topLeft: toCartesian("B2") },
+      "1": { bottom: 2, id: 1, left: 1, right: 1, top: 1 },
     });
   });
 
@@ -63,7 +69,7 @@ describe("merges", () => {
     });
     expect(getMergeCellMap(model)).toEqual(XCToMergeCellMap(model, ["B2", "B3"]));
     expect(getMerges(model)).toEqual({
-      "1": { bottom: 2, id: 1, left: 1, right: 1, top: 1, topLeft: toCartesian("B2") },
+      "1": { bottom: 2, id: 1, left: 1, right: 1, top: 1 },
     });
 
     selectCell(model, "B2");
@@ -84,8 +90,8 @@ describe("merges", () => {
     });
     merge(model, "B2:B3", secondSheetId);
     expect(model.getters.getMerges(secondSheetId)).toEqual([
-      { ...toZone("C2:C3"), id: 2, topLeft: toCartesian("C2") },
-      { ...toZone("B2:B3"), id: 3, topLeft: toCartesian("B2") },
+      { ...toZone("C2:C3"), id: 2 },
+      { ...toZone("B2:B3"), id: 3 },
     ]);
     expect(model.getters.getMerge({ sheetId: secondSheetId, col: 2, row: 1 })?.id).toBe(2);
     expect(model.getters.getMerge({ sheetId: secondSheetId, col: 1, row: 1 })?.id).toBe(3);
@@ -131,13 +137,14 @@ describe("merges", () => {
         { colNumber: 10, rowNumber: 10, cells: { B2: { content: "b2" } }, merges: ["B2:C3"] },
       ],
     });
+    const composerStore = makeTestComposerStore(model);
 
     selectCell(model, "C3");
     expect(getSelectionAnchorCellXc(model)).toBe("C3");
-    model.dispatch("START_EDITION");
-    expect(model.getters.getCurrentContent()).toBe("b2");
-    model.dispatch("SET_CURRENT_CONTENT", { content: "new value" });
-    model.dispatch("STOP_EDITION");
+    composerStore.startEdition();
+    expect(composerStore.currentContent).toBe("b2");
+    composerStore.setCurrentContent("new value");
+    composerStore.stopEdition();
     expect(getCellContent(model, "B2")).toBe("new value");
   });
 
@@ -152,13 +159,8 @@ describe("merges", () => {
     expect(getSelectionAnchorCellXc(model)).toBe("C3");
     expect(getCellsXC(model)).toEqual(["B2"]);
     expect(getCell(model, "B2")!.style).not.toBeDefined();
-    const sheet1 = model.getters.getSheetIds()[0];
 
-    model.dispatch("SET_FORMATTING", {
-      sheetId: sheet1,
-      target: model.getters.getSelectedZones(),
-      style: { fillColor: "#333" },
-    });
+    setStyle(model, "B2:C3", { fillColor: "#333" });
 
     expect(getCellsXC(model)).toEqual(["B2", "B3", "C2", "C3"]);
     expect(getCell(model, "B2")!.style).toBeDefined();
@@ -193,13 +195,14 @@ describe("merges", () => {
   test("merge style is correct for inactive sheets", () => {
     const model = new Model({
       sheets: [
-        { id: "1", colNumber: 1, rowNumber: 1, cells: { A1: { content: "1", style: 1 } } },
+        { id: "1", colNumber: 1, rowNumber: 1, cells: { A1: { content: "1" } }, styles: { A1: 1 } },
         {
           id: "2",
           colNumber: 3,
           rowNumber: 3,
           merges: ["A1:B1"],
-          cells: { A1: { content: "2", style: 2 }, B1: { content: "", style: 2 } },
+          cells: { A1: { content: "2" }, B1: { content: "" } },
+          styles: { "A1:B1": 2 },
         },
       ],
       styles: { 1: { fillColor: "#f2f2f2" }, 2: { fillColor: "#a2a2a2" } },
@@ -246,7 +249,7 @@ describe("merges", () => {
   test("a merge with only style should not be considered destructive", () => {
     const sheetId = "42";
     const model = new Model({
-      sheets: [{ id: sheetId, colNumber: 10, rowNumber: 10, cells: { B2: { style: 1 } } }],
+      sheets: [{ id: sheetId, colNumber: 10, rowNumber: 10, styles: { B2: 1 } }],
       styles: { 1: {} },
     });
     expect(merge(model, "A1:C4")).toBeSuccessfullyDispatched();
@@ -305,11 +308,8 @@ describe("merges", () => {
   test("merging => unmerging  : cell styles are overridden even if the top left cell had no style", () => {
     const model = new Model();
 
-    model.dispatch("SET_FORMATTING", {
-      sheetId: model.getters.getActiveSheetId(),
-      target: target("B1"),
-      style: { fillColor: "red" },
-    });
+    setStyle(model, "B1", { fillColor: "red" });
+
     merge(model, "A1:B1");
     expect(getStyle(model, "A1")).toEqual({});
     expect(getStyle(model, "B1")).toEqual({});
@@ -320,18 +320,12 @@ describe("merges", () => {
 
   test("merging => setting background color => unmerging", () => {
     const model = new Model();
-    const sheet1 = model.getters.getSheetIds()[0];
 
     setAnchorCorner(model, "B1");
-
     expect(model.getters.getSelectedZones()[0]).toEqual({ top: 0, left: 0, right: 1, bottom: 0 });
 
     merge(model, "A1:B1");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: sheet1,
-      target: [{ left: 0, right: 1, top: 0, bottom: 0 }],
-      style: { fillColor: "red" },
-    });
+    setStyle(model, "A1:B1", { fillColor: "red" });
 
     expect(getStyle(model, "A1")).toEqual({ fillColor: "red" });
     expect(getStyle(model, "B1")).toEqual({ fillColor: "red" });
@@ -343,13 +337,8 @@ describe("merges", () => {
 
   test("setting background color => merging => unmerging", () => {
     const model = new Model();
-    const sheet1 = model.getters.getSheetIds()[0];
     setAnchorCorner(model, "B1");
-    model.dispatch("SET_FORMATTING", {
-      sheetId: sheet1,
-      target: [{ left: 0, right: 1, top: 0, bottom: 0 }],
-      style: { fillColor: "red" },
-    });
+    setStyle(model, "A1:B1", { fillColor: "red" });
 
     expect(getStyle(model, "A1")).toEqual({ fillColor: "red" });
     expect(getStyle(model, "B1")).toEqual({ fillColor: "red" });
@@ -365,12 +354,7 @@ describe("merges", () => {
 
   test("setting background color to topleft => merging => unmerging", () => {
     const model = new Model();
-    const sheet1 = model.getters.getSheetIds()[0];
-    model.dispatch("SET_FORMATTING", {
-      sheetId: sheet1,
-      target: [{ left: 0, right: 0, top: 0, bottom: 0 }],
-      style: { fillColor: "red" },
-    });
+    setStyle(model, "A1", { fillColor: "red" });
     setAnchorCorner(model, "B1");
 
     expect(getStyle(model, "A1")).toEqual({ fillColor: "red" });
@@ -468,16 +452,12 @@ describe("merges", () => {
     });
   });
 
-  test("setting border to topleft => setting style => merging => unmerging", () => {
+  test("setting border to  => setting style => merging => unmerging", () => {
     const model = new Model();
-    const sheet1 = model.getters.getSheetIds()[0];
     setZoneBorders(model, { position: "external" }, ["A1"]);
-    model.dispatch("SET_FORMATTING", {
-      sheetId: sheet1,
-      target: [toZone("A1")],
-      style: { fillColor: "red" },
-    });
+    setStyle(model, "A1", { fillColor: "red" });
     merge(model, "A1:B1");
+
     expect(getBorder(model, "A1")).toEqual({
       left: DEFAULT_BORDER_DESC,
       bottom: DEFAULT_BORDER_DESC,
@@ -528,7 +508,7 @@ describe("merges", () => {
 
     expect(getMergeCellMap(model)).toEqual(XCToMergeCellMap(model, ["B2", "B3"]));
     expect(getMerges(model)).toEqual({
-      "1": { bottom: 2, id: 1, left: 1, right: 1, top: 1, topLeft: toCartesian("B2") },
+      "1": { bottom: 2, id: 1, left: 1, right: 1, top: 1 },
     });
 
     // undo
@@ -540,7 +520,7 @@ describe("merges", () => {
     redo(model);
     expect(getMergeCellMap(model)).toEqual(XCToMergeCellMap(model, ["B2", "B3"]));
     expect(getMerges(model)).toEqual({
-      "2": { bottom: 2, id: 2, left: 1, right: 1, top: 1, topLeft: toCartesian("B2") },
+      "2": { bottom: 2, id: 2, left: 1, right: 1, top: 1 },
     });
   });
 
@@ -593,7 +573,8 @@ describe("merges", () => {
           id: "sheet1",
           colNumber: 4,
           rowNumber: 5,
-          cells: { B4: { style: 1, border: 1 } },
+          borders: { B4: 1 },
+          styles: { B4: 1 },
           merges: ["B4:C5"],
         },
       ],
@@ -633,12 +614,8 @@ describe("merges", () => {
       sheetIdTo: secondSheetId,
     });
     addColumns(model, "before", "A", 1, "42");
-    expect(model.getters.getMerges(firstSheetId)).toEqual([
-      { ...toZone("C1:C2"), id: 1, topLeft: toCartesian("C1") },
-    ]);
-    expect(model.getters.getMerges(secondSheetId)).toEqual([
-      { ...toZone("D1:D2"), id: 2, topLeft: toCartesian("D1") },
-    ]);
+    expect(model.getters.getMerges(firstSheetId)).toEqual([{ ...toZone("C1:C2"), id: 1 }]);
+    expect(model.getters.getMerges(secondSheetId)).toEqual([{ ...toZone("D1:D2"), id: 2 }]);
   });
 
   describe("isSingleCellOrMerge getter", () => {

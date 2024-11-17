@@ -3,8 +3,13 @@
     <div
       class="o-grid-add-rows mt-2 ms-2 w-100 d-flex position-relative align-items-center"
       t-att-style="addRowsPosition"
-      t-on-mousedown.stop.prevent="">
-      <button t-on-click="onConfirm" t-att-disabled="state.errorFlag" class="o-button">Add</button>
+      t-on-pointerdown.stop.prevent="">
+      <button
+        t-on-click="onConfirm"
+        t-att-disabled="state.errorFlag"
+        class="o-button flex-grow-0 me-2">
+        Add
+      </button>
       <input
         type="text"
         class="o-grid-add-rows-input o-input mt-0 me-2"
@@ -12,7 +17,7 @@
         value="100"
         t-on-click.stop=""
         t-on-keydown.stop="onKeydown"
-        t-on-mousedown.stop=""
+        t-on-pointerdown.stop=""
         t-on-input.stop="onInput"
       />
       <span>more rows at the bottom</span>

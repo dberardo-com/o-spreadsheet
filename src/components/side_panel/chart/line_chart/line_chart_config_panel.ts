@@ -1,7 +1,9 @@
-import { canChartParseLabels, LineChart } from "../../../../helpers/figures/charts";
-import { LineBarPieConfigPanel } from "../line_bar_pie_panel/config_panel";
+import { LineChart } from "../../../../helpers/figures/charts";
+import { canChartParseLabels } from "../../../../helpers/figures/charts/chart_common_line_scatter";
+import { LineChartDefinition } from "../../../../types/chart";
+import { GenericChartConfigPanel } from "../building_blocks/generic_side_panel/config_panel";
 
-export class LineConfigPanel extends LineBarPieConfigPanel {
+export class LineConfigPanel extends GenericChartConfigPanel {
   static template = "o-spreadsheet-LineConfigPanel";
 
   get canTreatLabelsAsText() {
@@ -12,27 +14,47 @@ export class LineConfigPanel extends LineBarPieConfigPanel {
     return false;
   }
 
-  onUpdateLabelsAsText(ev) {
+  get stackedLabel(): string {
+    const definition = this.props.definition as LineChartDefinition;
+    return definition.fillArea
+      ? this.chartTerms.StackedAreaChart
+      : this.chartTerms.StackedLineChart;
+  }
+
+  getLabelRangeOptions() {
+    const options = super.getLabelRangeOptions();
+    if (this.canTreatLabelsAsText) {
+      options.push({
+        name: "labelsAsText",
+        value: (this.props.definition as LineChartDefinition).labelsAsText,
+        label: this.chartTerms.TreatLabelsAsText,
+        onChange: this.onUpdateLabelsAsText.bind(this),
+      });
+    }
+    return options;
+  }
+
+  onUpdateLabelsAsText(labelsAsText: boolean) {
     this.props.updateChart(this.props.figureId, {
-      labelsAsText: ev.target.checked,
+      labelsAsText,
     });
   }
 
-  onUpdateStacked(ev) {
+  onUpdateStacked(stacked: boolean) {
     this.props.updateChart(this.props.figureId, {
-      stacked: ev.target.checked,
+      stacked,
     });
   }
 
-  onUpdateAggregated(ev) {
+  onUpdateAggregated(aggregated: boolean) {
     this.props.updateChart(this.props.figureId, {
-      aggregated: ev.target.checked,
+      aggregated,
     });
   }
 
-  onUpdateCumulative(ev) {
+  onUpdateCumulative(cumulative: boolean) {
     this.props.updateChart(this.props.figureId, {
-      cumulative: ev.target.checked,
+      cumulative,
     });
   }
 }

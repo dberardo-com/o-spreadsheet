@@ -1,6 +1,12 @@
 import { Model, Spreadsheet } from "../../src";
 import { buildSheetLink } from "../../src/helpers";
-import { clearCell, createSheet, merge, setCellContent } from "../test_helpers/commands_helpers";
+import {
+  clearCell,
+  createSheet,
+  merge,
+  selectCell,
+  setCellContent,
+} from "../test_helpers/commands_helpers";
 import { clickCell, hoverCell, rightClickCell, simulateClick } from "../test_helpers/dom_helper";
 import { getCell, getEvaluatedCell } from "../test_helpers/getters_helpers";
 import { mountSpreadsheet, nextTick } from "../test_helpers/helpers";
@@ -9,10 +15,12 @@ describe("link display component", () => {
   let fixture: HTMLElement;
   let model: Model;
   let parent: Spreadsheet;
+  let notifyUser: jest.Mock;
 
   beforeEach(async () => {
     jest.useFakeTimers();
-    ({ parent, model, fixture } = await mountSpreadsheet());
+    notifyUser = jest.fn();
+    ({ parent, model, fixture } = await mountSpreadsheet(undefined, { notifyUser }));
   });
 
   test("simple snapshot", async () => {
@@ -83,6 +91,20 @@ describe("link display component", () => {
     expect(fixture.querySelector(".o-link-tool")).toBeTruthy();
     await rightClickCell(model, "A2");
     expect(fixture.querySelector(".o-link-tool")).toBeFalsy();
+  });
+
+  test("right-click on a linked cell should show 'Edit Link' instead of 'Insert Link' in the context menu", async () => {
+    setCellContent(model, "A1", "HELLO");
+    await rightClickCell(model, "A1");
+    expect(
+      fixture.querySelector(".o-menu .o-menu-item[data-name='insert_link']")?.textContent
+    ).toBe("Insert link");
+
+    setCellContent(model, "A1", "[label](url.com)");
+    await rightClickCell(model, "A1");
+    expect(
+      fixture.querySelector(".o-menu .o-menu-item[data-name='insert_link']")?.textContent
+    ).toBe("Edit link");
   });
 
   test("component is closed when cell is deleted", async () => {
@@ -165,7 +187,21 @@ describe("link display component", () => {
     });
   });
 
-  test("open link editor", async () => {
+  test("open link editor selects the related cell in the grid", async () => {
+    selectCell(model, "A10");
+    setCellContent(model, "A1", "[label](url.com)");
+    await hoverCell(model, "A1", 400);
+    await simulateClick(".o-edit-link");
+    expect(fixture.querySelector(".o-link-tool")).toBeFalsy();
+    expect(model.getters.getActivePosition()).toMatchObject({ col: 0, row: 0 });
+    const editor = fixture.querySelector(".o-link-editor");
+    expect(editor).toBeTruthy();
+    const inputs = editor?.querySelectorAll("input")!;
+    expect(inputs[0].value).toBe("label");
+    expect(inputs[1].value).toBe("https://url.com");
+  });
+
+  test("open link editor ", async () => {
     setCellContent(model, "A1", "[label](url.com)");
     await hoverCell(model, "A1", 400);
     await simulateClick(".o-edit-link");
@@ -195,6 +231,19 @@ describe("link display component", () => {
     await simulateClick("a");
     expect(model.getters.getActiveSheetId()).toBe(sheetId);
     expect(fixture.querySelector(".o-link-tool")).toBeFalsy();
+  });
+
+  test("click on a link to an hidden sheet do nothing and warns the user", async () => {
+    createSheet(model, { sheetId: "42", hidden: true });
+    setCellContent(model, "A1", `[label](${buildSheetLink("42")})`);
+    await hoverCell(model, "A1", 400);
+    await simulateClick("a");
+    expect(model.getters.getActiveSheetId()).not.toBe("42");
+    expect(notifyUser).toHaveBeenCalledWith({
+      type: "warning",
+      sticky: false,
+      text: "Cannot open the link because the linked sheet is hidden.",
+    });
   });
 
   test("click on the grid closes the popover", async () => {

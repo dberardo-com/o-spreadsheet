@@ -3,9 +3,8 @@ import {
   deepEquals,
   isEqual,
   isInside,
-  organizeZone,
   positionToZone,
-  range,
+  reorderZone,
   union,
 } from "../helpers";
 import { _t } from "../translation";
@@ -21,7 +20,7 @@ import {
   Zone,
 } from "../types";
 import { SelectionEvent, SelectionEventOptions } from "../types/event_stream";
-import { Dimension, HeaderIndex } from "./../types/misc";
+import { CellPosition, Dimension, HeaderIndex, Immutable } from "./../types/misc";
 import { EventStream, StreamCallbacks } from "./event_stream";
 
 type Delta = [number, number];
@@ -40,6 +39,7 @@ type StatefulStream<Event, State> = {
  * Allows to select cells in the grid and update the selection
  */
 interface SelectionProcessor {
+  getAnchor(): Immutable<AnchorZone>;
   selectZone(anchor: AnchorZone, options?: SelectionEventOptions): DispatchResult;
   selectCell(col: number, row: number): DispatchResult;
   moveAnchorCell(direction: Direction, step: SelectionStep): DispatchResult;
@@ -123,6 +123,10 @@ export class SelectionStreamProcessorImpl implements SelectionStreamProcessor {
 
   getBackToDefault() {
     this.stream.getBackToDefault();
+  }
+
+  getAnchor() {
+    return this.anchor;
   }
 
   private modifyAnchor(
@@ -227,7 +231,7 @@ export class SelectionStreamProcessorImpl implements SelectionStreamProcessor {
     }
     let result: Zone | null = anchor.zone;
     const expand = (z: Zone) => {
-      z = organizeZone(z);
+      z = reorderZone(z);
       const { left, right, top, bottom } = this.getters.expandZone(sheetId, z);
       return {
         left: Math.max(0, left),
@@ -258,7 +262,7 @@ export class SelectionStreamProcessorImpl implements SelectionStreamProcessor {
         const newTop = this.getNextAvailableRow(deltaRow, refCol, top + (n - 1));
         result = top + n <= refRow ? expand({ top: newTop, left, bottom, right }) : null;
       }
-      result = result ? organizeZone(result) : result;
+      result = result ? reorderZone(result) : result;
       if (result && !isEqual(result, anchor.zone)) {
         return this.processEvent({
           options: { scrollIntoView: true },
@@ -273,7 +277,7 @@ export class SelectionStreamProcessorImpl implements SelectionStreamProcessor {
       left: anchorCol,
       right: anchorCol,
     };
-    const zoneWithDelta = organizeZone({
+    const zoneWithDelta = reorderZone({
       top: this.getNextAvailableRow(deltaRow, refCol!, top),
       left: this.getNextAvailableCol(deltaCol, left, refRow!),
       bottom: this.getNextAvailableRow(deltaRow, refCol!, bottom),
@@ -359,7 +363,7 @@ export class SelectionStreamProcessorImpl implements SelectionStreamProcessor {
       });
     }
 
-    const tableZone = this.expandZoneToTable(anchor.zone);
+    const tableZone = this.getters.getContiguousZone(sheetId, anchor.zone);
 
     return !deepEquals(tableZone, anchor.zone)
       ? this.modifyAnchor({ ...anchor, zone: tableZone }, "updateAnchor", {
@@ -374,7 +378,8 @@ export class SelectionStreamProcessorImpl implements SelectionStreamProcessor {
    * cells bordering it
    */
   selectTableAroundSelection(): DispatchResult {
-    const tableZone = this.expandZoneToTable(this.anchor.zone);
+    const sheetId = this.getters.getActiveSheetId();
+    const tableZone = this.getters.getContiguousZone(sheetId, this.anchor.zone);
     return this.modifyAnchor({ ...this.anchor, zone: tableZone }, "updateAnchor", {
       scrollIntoView: false,
     });
@@ -589,13 +594,14 @@ export class SelectionStreamProcessorImpl implements SelectionStreamProcessor {
    * next cluster if the given cell is outside a cluster or at the border of a cluster in the given direction.
    */
   private getEndOfCluster(startPosition: Position, dim: "cols" | "rows", dir: -1 | 1): HeaderIndex {
-    const sheet = this.getters.getActiveSheet();
+    const sheetId = this.getters.getActiveSheetId();
     let currentPosition = startPosition;
 
     // If both the current cell and the next cell are not empty, we want to go to the end of the cluster
     const nextCellPosition = this.getNextCellPosition(startPosition, dim, dir);
     let mode: "endOfCluster" | "nextCluster" =
-      !this.isCellEmpty(currentPosition, sheet.id) && !this.isCellEmpty(nextCellPosition, sheet.id)
+      !this.isCellSkippableInCluster({ ...currentPosition, sheetId }) &&
+      !this.isCellSkippableInCluster({ ...nextCellPosition, sheetId })
         ? "endOfCluster"
         : "nextCluster";
 
@@ -608,7 +614,7 @@ export class SelectionStreamProcessorImpl implements SelectionStreamProcessor {
       ) {
         break;
       }
-      const isNextCellEmpty = this.isCellEmpty(nextCellPosition, sheet.id);
+      const isNextCellEmpty = this.isCellSkippableInCluster({ ...nextCellPosition, sheetId });
       if (mode === "endOfCluster" && isNextCellEmpty) {
         break;
       } else if (mode === "nextCluster" && !isNextCellEmpty) {
@@ -619,16 +625,6 @@ export class SelectionStreamProcessorImpl implements SelectionStreamProcessor {
       currentPosition = nextCellPosition;
     }
     return dim === "cols" ? currentPosition.col : currentPosition.row;
-  }
-
-  /**
-   * Check if a cell is empty or undefined in the model. If the cell is part of a merge,
-   * check if the merge containing the cell is empty.
-   */
-  private isCellEmpty({ col, row }: Position, sheetId = this.getters.getActiveSheetId()): boolean {
-    const position = this.getters.getMainCellPosition({ sheetId, col, row });
-    const cell = this.getters.getEvaluatedCell(position);
-    return cell.type === CellValueType.empty;
   }
 
   /** Computes the next cell position in the given direction by crossing through merges and skipping hidden cells.
@@ -658,45 +654,11 @@ export class SelectionStreamProcessorImpl implements SelectionStreamProcessor {
     return { ...this.anchor.cell };
   }
 
-  /**
-   * Expand the given zone to a table.
-   * We define a table by the smallest zone that contain the anchor and that have only empty
-   * cells bordering it
-   */
-  private expandZoneToTable(zoneToExpand: Zone): Zone {
-    /** Try to expand the zone by one col/row in any direction to include a new non-empty cell */
-    const expandZone = (zone: Zone): Zone => {
-      for (const col of range(zone.left, zone.right + 1)) {
-        if (!this.isCellEmpty({ col, row: zone.top - 1 })) {
-          return { ...zone, top: zone.top - 1 };
-        }
-        if (!this.isCellEmpty({ col, row: zone.bottom + 1 })) {
-          return { ...zone, bottom: zone.bottom + 1 };
-        }
-      }
-      for (const row of range(zone.top, zone.bottom + 1)) {
-        if (!this.isCellEmpty({ col: zone.left - 1, row })) {
-          return { ...zone, left: zone.left - 1 };
-        }
-        if (!this.isCellEmpty({ col: zone.right + 1, row })) {
-          return { ...zone, right: zone.right + 1 };
-        }
-      }
-      return zone;
-    };
-
-    let hasExpanded = false;
-    let zone = zoneToExpand;
-    do {
-      hasExpanded = false;
-      const newZone = expandZone(zone);
-      if (!isEqual(zone, newZone)) {
-        hasExpanded = true;
-        zone = newZone;
-        continue;
-      }
-    } while (hasExpanded);
-
-    return zone;
+  private isCellSkippableInCluster(position: CellPosition): boolean {
+    const mainPosition = this.getters.getMainCellPosition(position);
+    const cell = this.getters.getEvaluatedCell(mainPosition);
+    return (
+      cell.type === CellValueType.empty || (cell.type === CellValueType.text && cell.value === "")
+    );
   }
 }

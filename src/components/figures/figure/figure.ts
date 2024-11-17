@@ -1,4 +1,4 @@
-import { Component, useEffect, useRef, useState } from "@odoo/owl";
+import { Component, onWillUnmount, useEffect, useRef, useState } from "@odoo/owl";
 import {
   ComponentsImportance,
   FIGURE_BORDER_COLOR,
@@ -16,6 +16,7 @@ import {
   UID,
 } from "../../../types/index";
 import { css, cssPropertiesToCss } from "../../helpers/css";
+import { keyboardEventToShortcutString } from "../../helpers/dom_helpers";
 import { useAbsoluteBoundingRect } from "../../helpers/position_hook";
 import { Menu, MenuState } from "../../menu/menu";
 
@@ -121,6 +122,13 @@ interface Props {
 
 export class FigureComponent extends Component<Props, SpreadsheetChildEnv> {
   static template = "o-spreadsheet-FigureComponent";
+  static props = {
+    figure: Object,
+    style: { type: String, optional: true },
+    onFigureDeleted: { type: Function, optional: true },
+    onMouseDown: { type: Function, optional: true },
+    onClickAnchor: { type: Function, optional: true },
+  };
   static components = { Menu };
   static defaultProps = {
     onFigureDeleted: () => {},
@@ -206,6 +214,10 @@ export class FigureComponent extends Component<Props, SpreadsheetChildEnv> {
       },
       () => [this.env.model.getters.getSelectedFigureId(), this.props.figure.id, this.figureRef.el]
     );
+
+    onWillUnmount(() => {
+      this.props.onFigureDeleted();
+    });
   }
 
   clickAnchor(dirX: ResizeDirection, dirY: ResizeDirection, ev: MouseEvent) {
@@ -218,16 +230,18 @@ export class FigureComponent extends Component<Props, SpreadsheetChildEnv> {
 
   onKeyDown(ev: KeyboardEvent) {
     const figure = this.props.figure;
+    const keyDownShortcut = keyboardEventToShortcutString(ev);
 
-    switch (ev.key) {
+    switch (keyDownShortcut) {
       case "Delete":
+      case "Backspace":
         this.env.model.dispatch("DELETE_FIGURE", {
           sheetId: this.env.model.getters.getActiveSheetId(),
           id: figure.id,
         });
         this.props.onFigureDeleted();
-        ev.stopPropagation();
         ev.preventDefault();
+        ev.stopPropagation();
         break;
       case "ArrowDown":
       case "ArrowLeft":
@@ -246,8 +260,23 @@ export class FigureComponent extends Component<Props, SpreadsheetChildEnv> {
           x: figure.x + delta[0],
           y: figure.y + delta[1],
         });
-        ev.stopPropagation();
         ev.preventDefault();
+        ev.stopPropagation();
+        break;
+      case "Ctrl+A":
+        // Maybe in the future we will implement a way to select all figures
+        ev.preventDefault();
+        ev.stopPropagation();
+        break;
+      case "Ctrl+Y":
+      case "Ctrl+Z":
+        if (keyDownShortcut === "Ctrl+Y") {
+          this.env.model.dispatch("REQUEST_REDO");
+        } else if (keyDownShortcut === "Ctrl+Z") {
+          this.env.model.dispatch("REQUEST_UNDO");
+        }
+        ev.preventDefault();
+        ev.stopPropagation();
         break;
     }
   }
@@ -278,11 +307,3 @@ export class FigureComponent extends Component<Props, SpreadsheetChildEnv> {
       .menuBuilder(this.props.figure.id, this.props.onFigureDeleted, this.env);
   }
 }
-
-FigureComponent.props = {
-  figure: Object,
-  style: { type: String, optional: true },
-  onFigureDeleted: { type: Function, optional: true },
-  onMouseDown: { type: Function, optional: true },
-  onClickAnchor: { type: Function, optional: true },
-};

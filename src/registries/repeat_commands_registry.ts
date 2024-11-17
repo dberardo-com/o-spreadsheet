@@ -1,4 +1,4 @@
-import { deepCopy, isDefined } from "../helpers";
+import { deepCopy } from "../helpers";
 import {
   genericRepeatsTransforms,
   repeatZoneDependantCommand,
@@ -40,6 +40,7 @@ export const repeatCommandTransformRegistry = new Registry<RepeatTransform>();
 
 repeatCommandTransformRegistry.add("UPDATE_CELL", genericRepeat);
 repeatCommandTransformRegistry.add("CLEAR_CELL", genericRepeat);
+repeatCommandTransformRegistry.add("CLEAR_CELLS", genericRepeat);
 repeatCommandTransformRegistry.add("DELETE_CONTENT", genericRepeat);
 
 repeatCommandTransformRegistry.add("ADD_MERGE", genericRepeat);
@@ -49,8 +50,8 @@ repeatCommandTransformRegistry.add("SET_FORMATTING", genericRepeat);
 repeatCommandTransformRegistry.add("CLEAR_FORMATTING", genericRepeat);
 repeatCommandTransformRegistry.add("SET_BORDER", genericRepeat);
 
-repeatCommandTransformRegistry.add("CREATE_FILTER_TABLE", genericRepeat);
-repeatCommandTransformRegistry.add("REMOVE_FILTER_TABLE", genericRepeat);
+repeatCommandTransformRegistry.add("CREATE_TABLE", genericRepeat);
+repeatCommandTransformRegistry.add("REMOVE_TABLE", genericRepeat);
 
 repeatCommandTransformRegistry.add("HIDE_SHEET", genericRepeat);
 
@@ -71,7 +72,6 @@ repeatCommandTransformRegistry.add("UNFOLD_HEADER_GROUPS_IN_ZONE", repeatZoneDep
 repeatCommandTransformRegistry.add("FOLD_HEADER_GROUPS_IN_ZONE", repeatZoneDependantCommand);
 
 export const repeatLocalCommandTransformRegistry = new Registry<LocalRepeatTransform>();
-repeatLocalCommandTransformRegistry.add("STOP_EDITION", repeatLocalCommandChildren);
 repeatLocalCommandTransformRegistry.add("PASTE", repeatPasteCommand);
 repeatLocalCommandTransformRegistry.add("INSERT_CELL", repeatInsertOrDeleteCellCommand);
 repeatLocalCommandTransformRegistry.add("DELETE_CELL", repeatInsertOrDeleteCellCommand);
@@ -120,14 +120,4 @@ export function repeatLocalCommand(
 
   const repeatTransform = repeatLocalCommandTransformRegistry.get(command.type);
   return repeatTransform(getters, command, childCommands);
-}
-
-export function repeatLocalCommandChildren<T extends LocalCommand>(
-  getters: Getters,
-  cmd: T,
-  childCommands: readonly CoreCommand[]
-): CoreCommand[] | undefined {
-  return childCommands
-    .map((childCommand) => repeatCoreCommand(getters, childCommand))
-    .filter(isDefined);
 }

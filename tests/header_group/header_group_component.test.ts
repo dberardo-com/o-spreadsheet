@@ -1,4 +1,3 @@
-import { Component, xml } from "@odoo/owl";
 import { Model } from "../../src";
 import { HeaderGroupContainer } from "../../src/components/header_group/header_group_container";
 import {
@@ -25,20 +24,10 @@ import {
 import { click, triggerMouseEvent } from "../test_helpers/dom_helper";
 import {
   getStylePropertyInPx,
-  mountComponent,
+  mountComponentWithPortalTarget,
   mountSpreadsheet,
   nextTick,
 } from "../test_helpers/helpers";
-
-class Parent extends Component {
-  static components = { HeaderGroupContainer };
-  // o-spreadsheet div for portal target
-  static template = xml/*xml*/ `
-    <div class="o-spreadsheet">
-      <HeaderGroupContainer t-props="props"/>
-    </div>
-  `;
-}
 
 describe("Integration tests", () => {
   let model: Model;
@@ -119,15 +108,15 @@ describe("Integration tests", () => {
     groupRows(model, 1, 4);
     await nextTick();
 
-    expect(document.activeElement).toBe(fixture.querySelector(".o-grid>input"));
+    expect(document.activeElement).toBe(fixture.querySelector(".o-grid div.o-composer"));
 
     (document.activeElement as HTMLElement).blur(); // blur element manually because JSDom don't change focus on click event
     await click(fixture.querySelectorAll<HTMLElement>(".o-header-group")[0]);
-    expect(document.activeElement).toBe(fixture.querySelector(".o-grid>input"));
+    expect(document.activeElement).toBe(fixture.querySelector(".o-grid div.o-composer"));
 
     (document.activeElement as HTMLElement).blur();
     await click(fixture.querySelectorAll<HTMLElement>(".o-header-group")[1]);
-    expect(document.activeElement).toBe(fixture.querySelector(".o-grid>input"));
+    expect(document.activeElement).toBe(fixture.querySelector(".o-grid div.o-composer"));
   });
 });
 
@@ -143,7 +132,7 @@ describe("Header group component test", () => {
 
   async function mountHeaderGroups(model: Model, dimension: Dimension) {
     const layers = model.getters.getGroupsLayers(sheetId, dimension);
-    ({ fixture } = await mountComponent(Parent, {
+    ({ fixture } = await mountComponentWithPortalTarget(HeaderGroupContainer, {
       props: { layers, dimension },
       model,
     }));

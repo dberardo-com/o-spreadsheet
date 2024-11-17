@@ -1,8 +1,8 @@
 import { CorePlugin, coreTypes, Model } from "../src";
-import { INCORRECT_RANGE_STRING } from "../src/constants";
 import { copyRangeWithNewSheetId } from "../src/helpers";
 import { corePluginRegistry } from "../src/plugins";
 import { ApplyRangeChange, Command, Range, UID } from "../src/types";
+import { CellErrorType } from "../src/types/errors";
 import {
   addColumns,
   addRows,
@@ -535,7 +535,13 @@ describe("range plugin", () => {
     });
 
     test("requesting a range that doesn't exist", () => {
-      expect(m.getters.getRangeString(undefined, "not there")).toBe(INCORRECT_RANGE_STRING);
+      expect(m.getters.getRangeString(undefined, "not there")).toBe(CellErrorType.InvalidReference);
+    });
+
+    test("requesting a range without parts", () => {
+      const r = m.getters.getRangeFromSheetXC("s1", "A1");
+      const rNoParts = r.clone({ parts: [] });
+      expect(m.getters.getRangeString(rNoParts, "forceSheetName")).toBe("s1!A1");
     });
 
     test.each(["Sheet 0", "<Sheet1>", "&Sheet2", "Sheet4;", "Sheet5🐻"])(
@@ -559,6 +565,36 @@ describe("range plugin", () => {
         expect(m.getters.getRangeString(range)).toBe(expectedString);
       }
     );
+  });
+
+  test("getRangeString does not crash with deleted sheet", () => {
+    const range = m.getters.getRangeFromSheetXC("s1", "A1");
+    expect(m.getters.getRangeString(range)).toBe("s1!A1");
+    createSheet(m, { sheetId: "s2" });
+    deleteSheet(m, "s1");
+    expect(m.getters.getRangeString(range)).toBe(CellErrorType.InvalidReference);
+  });
+
+  test("getRangeFromSheetXC on invalid sheet", () => {
+    let getRange = () => m.getters.getRangeFromSheetXC("NotASheet", "A1");
+    expect(getRange).not.toThrow();
+    expect(getRange().invalidXc).toBe("A1");
+
+    getRange = () => m.getters.getRangeFromSheetXC("NotASheet", "A:A");
+    expect(getRange).not.toThrow();
+    expect(getRange().invalidXc).toBe("A:A");
+
+    getRange = () => m.getters.getRangeFromSheetXC("NotASheet", "Sheet1!A1");
+    expect(getRange).not.toThrow();
+    expect(getRange().invalidXc).toBe("Sheet1!A1");
+
+    getRange = () => m.getters.getRangeFromSheetXC("", "Sheet1!A:A");
+    expect(getRange).not.toThrow();
+    expect(getRange().invalidXc).toBe("Sheet1!A:A");
+
+    getRange = () => m.getters.getRangeFromSheetXC("", "A1:A2");
+    expect(getRange).not.toThrow();
+    expect(getRange().invalidXc).toBe("A1:A2");
   });
 });
 
@@ -687,13 +723,15 @@ test.each([
   ["$A1:B2", "$A2:C3"],
   ["$A$1:$B$2", "$A$1:$B$2"],
   ["1:1", "2:2"],
-  ["$1:1", "$1:$1"],
+  ["$1:1", "$1:2"],
+  ["1:$1", "$1:2"],
   ["A1:2", "B2:3"],
   ["$A1:1", "$A2:2"],
   ["1:A$2", "B2:$2"],
   ["1:1", "2:2"],
   ["A:A", "B:B"],
-  ["$A:A", "$A:$A"],
+  ["$A:A", "$A:B"],
+  ["A:$A", "$A:B"],
   ["A1:B", "B2:C"],
   ["$A1:B", "$A2:C"],
   ["A:A$1", "B$1:B"],

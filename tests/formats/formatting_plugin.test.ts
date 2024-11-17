@@ -9,40 +9,44 @@ import {
   PADDING_AUTORESIZE_VERTICAL,
 } from "../../src/constants";
 import { arg, functionRegistry } from "../../src/functions";
+import { toScalar } from "../../src/functions/helper_matrices";
 import { toString } from "../../src/functions/helpers";
-import { fontSizeInPixels, toCartesian, toZone } from "../../src/helpers";
+import { fontSizeInPixels, toCartesian } from "../../src/helpers";
 import { Model } from "../../src/model";
+import { CommandResult, Format, SetDecimalStep, UID } from "../../src/types";
 import {
-  Arg,
-  ArgValue,
-  CellValue,
-  CommandResult,
-  ComputeFunction,
-  Format,
-  Maybe,
-  SetDecimalStep,
-  UID,
-  ValueAndFormat,
-} from "../../src/types";
-import {
-  createFilter,
   createSheet,
+  createTable,
   resizeColumns,
   resizeRows,
   selectCell,
   setAnchorCorner,
   setCellContent,
   setFormat,
-  setSelection,
   setStyle,
 } from "../test_helpers/commands_helpers";
-import { getCell, getCellContent, getEvaluatedCell } from "../test_helpers/getters_helpers";
+import {
+  getCell,
+  getCellContent,
+  getEvaluatedCell,
+  getEvaluatedGrid,
+} from "../test_helpers/getters_helpers";
+import { createModelFromGrid, target } from "../test_helpers/helpers";
+import { addPivot } from "../test_helpers/pivot_helpers";
 
-function setDecimal(model: Model, step: SetDecimalStep) {
+function setDecimal(model: Model, targetXc: string, step: SetDecimalStep) {
   model.dispatch("SET_DECIMAL", {
     sheetId: model.getters.getActiveSheetId(),
-    target: model.getters.getSelectedZones(),
+    target: target(targetXc),
     step: step,
+  });
+}
+
+function setContextualFormat(model: Model, targetXc: string, format: Format) {
+  model.dispatch("SET_FORMATTING_WITH_PIVOT", {
+    sheetId: model.getters.getActiveSheetId(),
+    target: target(targetXc),
+    format,
   });
 }
 
@@ -51,8 +55,7 @@ describe("formatting values (with formatters)", () => {
     const model = new Model();
     setCellContent(model, "A1", "3");
     expect(getCellContent(model, "A1")).toBe("3");
-    selectCell(model, "A1");
-    setFormat(model, "0.00%");
+    setFormat(model, "A1", "0.00%");
     expect(getCell(model, "A1")!.format).toBe("0.00%");
     expect(getCellContent(model, "A1")).toBe("300.00%");
   });
@@ -61,8 +64,7 @@ describe("formatting values (with formatters)", () => {
     const model = new Model();
     setCellContent(model, "A1", "3 14 2014");
     expect(getCellContent(model, "A1")).toBe("3 14 2014");
-    selectCell(model, "A1");
-    setFormat(model, "mm/dd/yyyy");
+    setFormat(model, "A1", "mm/dd/yyyy");
     expect(getCell(model, "A1")!.format).toBe("mm/dd/yyyy");
     expect(getCellContent(model, "A1")).toBe("03/14/2014");
   });
@@ -71,8 +73,7 @@ describe("formatting values (with formatters)", () => {
     const model = new Model();
     setCellContent(model, "A1", "1");
     expect(getCellContent(model, "A1")).toBe("1");
-    selectCell(model, "A1");
-    setFormat(model, "mm/dd/yyyy");
+    setFormat(model, "A1", "mm/dd/yyyy");
     expect(getCell(model, "A1")!.format).toBe("mm/dd/yyyy");
     expect(getCellContent(model, "A1")).toBe("12/31/1899");
   });
@@ -81,8 +82,7 @@ describe("formatting values (with formatters)", () => {
     const model = new Model();
     setCellContent(model, "A1", "1/1/2000");
     expect(getCellContent(model, "A1")).toBe("1/1/2000");
-    selectCell(model, "A1");
-    setFormat(model, "0.00%");
+    setFormat(model, "A1", "0.00%");
     expect(getCell(model, "A1")!.format).toBe("0.00%");
     expect(getCellContent(model, "A1")).toBe("3652600.00%");
   });
@@ -90,7 +90,7 @@ describe("formatting values (with formatters)", () => {
   test("can set a format to an empty cell", () => {
     const model = new Model();
     selectCell(model, "A1");
-    setFormat(model, "0.00%");
+    setFormat(model, "A1", "0.00%");
     expect(getCell(model, "A1")!.format).toBe("0.00%");
     expect(getCellContent(model, "A1")).toBe("");
     setCellContent(model, "A1", "0.431");
@@ -100,8 +100,7 @@ describe("formatting values (with formatters)", () => {
   test("can set the default format to a cell with value = 0", () => {
     const model = new Model();
     setCellContent(model, "A1", "0");
-    selectCell(model, "A1");
-    setFormat(model, "");
+    setFormat(model, "A1", "");
     expect(getCell(model, "A1")!.format).not.toBeDefined();
     expect(getCellContent(model, "A1")).toBe("0");
   });
@@ -109,36 +108,32 @@ describe("formatting values (with formatters)", () => {
   test("can clear a format in a non empty cell", () => {
     const model = new Model();
     setCellContent(model, "A1", "3");
-    selectCell(model, "A1");
-    setFormat(model, "0.00%");
+    setFormat(model, "A1", "0.00%");
     expect(getCell(model, "A1")!.format).toBeDefined();
     expect(getCellContent(model, "A1")).toBe("300.00%");
-    setFormat(model, "");
+    setFormat(model, "A1", "");
     expect(getCellContent(model, "A1")).toBe("3");
     expect(getCell(model, "A1")!.format).not.toBeDefined();
   });
 
   test("can clear a format in an empty cell", () => {
     const model = new Model();
-    selectCell(model, "A1");
-    setFormat(model, "0.00%");
+    setFormat(model, "A1", "0.00%");
     expect(getCell(model, "A1")!.format).toBe("0.00%");
-    setFormat(model, "");
+    setFormat(model, "A1", "");
     expect(getCell(model, "A1")).toBeUndefined();
   });
 
   test("setting an empty format in an empty cell does nothing", () => {
     const model = new Model();
-    selectCell(model, "A1");
-    setFormat(model, "");
+    setFormat(model, "A1", "");
     expect(getCell(model, "A1")).toBeUndefined();
   });
 
   test("does not format errors", () => {
     const model = new Model();
     setCellContent(model, "A1", "3");
-    selectCell(model, "A1");
-    setFormat(model, "0.00%");
+    setFormat(model, "A1", "0.00%");
     expect(getCellContent(model, "A1")).toBe("300.00%");
     setCellContent(model, "A1", "=A1");
     expect(getCellContent(model, "A1")).toBe("#CYCLE");
@@ -147,45 +142,39 @@ describe("formatting values (with formatters)", () => {
   test("Can set number format to text value", () => {
     const model = new Model();
     setCellContent(model, "A1", "Test");
-    selectCell(model, "A1");
-    setFormat(model, "0.00%");
+    setFormat(model, "A1", "0.00%");
     expect(getCellContent(model, "A1")).toBe("Test");
   });
 
   test("Can set date format to text value", () => {
     const model = new Model();
     setCellContent(model, "A1", "Test");
-    selectCell(model, "A1");
-    setFormat(model, "mm/dd/yyyy");
+    setFormat(model, "A1", "mm/dd/yyyy");
     expect(getCellContent(model, "A1")).toBe("Test");
   });
 
   test("Cannot set format in invalid sheet", () => {
     const model = new Model();
-    expect(
-      model.dispatch("SET_FORMATTING", {
-        sheetId: "invalid sheet Id",
-        target: [toZone("A1")],
-      })
-    ).toBeCancelledBecause(CommandResult.InvalidSheetId);
+    expect(setFormat(model, "A1", "", "invalid sheet Id")).toBeCancelledBecause(
+      CommandResult.InvalidSheetId
+    );
   });
 
   test("SET_DECIMAL considers the evaluated format to infer the decimal position", () => {
     functionRegistry.add("SET.DYN.FORMAT", {
       description: "Returns the value set to the provided format",
       args: [arg("value (any)", "value to format"), arg("format (any)", "format to set.")],
-      compute: function (value: Maybe<CellValue>, format: Maybe<CellValue>) {
-        return value || 0;
-      } as ComputeFunction<ArgValue, CellValue>,
-      computeFormat: function (value: Maybe<ValueAndFormat>, format: Maybe<ValueAndFormat>) {
-        return toString(format?.value);
-      } as ComputeFunction<Arg, Format>,
-      returns: ["ANY"],
+      compute: function (value, format) {
+        return {
+          value: toScalar(value)?.value || 0,
+          format: toString(toScalar(format)),
+        };
+      },
     });
     const model = new Model();
     setCellContent(model, "A1", '=SET.DYN.FORMAT(5, "0.00")');
     selectCell(model, "A1");
-    setDecimal(model, 1);
+    setDecimal(model, "A1", 1);
     expect(getCell(model, "A1")?.format).toBe("0.000");
     functionRegistry.remove("SET.DYN.FORMAT");
   });
@@ -195,21 +184,57 @@ describe("formatting values (with formatters)", () => {
     setCellContent(model, "A1", "10.123456789123");
     expect(getEvaluatedCell(model, "A1")?.formattedValue).toEqual("10.12345679");
 
-    setDecimal(model, 1);
+    setDecimal(model, "A1", 1);
     expect(getCell(model, "A1")?.format).toBe("0." + "0".repeat(9));
     expect(getEvaluatedCell(model, "A1")?.formattedValue).toEqual("10.123456789");
 
-    setDecimal(model, -1);
+    setDecimal(model, "A1", -1);
     expect(getCell(model, "A1")?.format).toBe("0." + "0".repeat(8));
     expect(getEvaluatedCell(model, "A1")?.formattedValue).toEqual("10.12345679");
 
-    setDecimal(model, -1);
+    setDecimal(model, "A1", -1);
     expect(getCell(model, "A1")?.format).toBe("0." + "0".repeat(7));
     expect(getEvaluatedCell(model, "A1")?.formattedValue).toEqual("10.1234568");
 
-    setDecimal(model, 1);
+    setDecimal(model, "A1", 1);
     expect(getCell(model, "A1")?.format).toBe("0." + "0".repeat(8));
     expect(getEvaluatedCell(model, "A1")?.formattedValue).toEqual("10.12345679");
+  });
+
+  test("SET_DECIMAL on format with escaped string", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "10");
+
+    setFormat(model, "A1", "0.0\\€");
+    setDecimal(model, "A1", 1);
+    expect(getCell(model, "A1")?.format).toBe("0.00\\€");
+
+    setFormat(model, "A1", "0.0\\€");
+    setDecimal(model, "A1", -1);
+    expect(getCell(model, "A1")?.format).toBe("0\\€");
+
+    setFormat(model, "A1", "0.0$0");
+    setDecimal(model, "A1", -1);
+    expect(getCell(model, "A1")?.format).toBe("0.0$");
+    setDecimal(model, "A1", -1);
+    expect(getCell(model, "A1")?.format).toBe("0$");
+  });
+
+  test("SET_DECIMAL on multi-part format", () => {
+    const model = new Model();
+    setCellContent(model, "A1", "10");
+
+    setFormat(model, "A1", "0.0\\€;$0.#; 0 ;@");
+    setDecimal(model, "A1", 1);
+    expect(getCell(model, "A1")?.format).toBe("0.00\\€;$0.#0; 0.0 ;@");
+
+    setFormat(model, "A1", "0.0\\€;$0.#; 0 ;@");
+    setDecimal(model, "A1", -1);
+    expect(getCell(model, "A1")?.format).toBe("0\\€;$0; 0 ;@");
+
+    setFormat(model, "A1", ";;;@");
+    setDecimal(model, "A1", -1);
+    expect(getCell(model, "A1")?.format).toBe(";;;@");
   });
 
   test("UPDATE_CELL on long number that are truncated due to default format don't loose truncated digits", () => {
@@ -229,13 +254,132 @@ describe("formatting values (with formatters)", () => {
   });
 });
 
+describe("pivot contextual formatting", () => {
+  test("format without pivot", () => {
+    const model = new Model();
+    setContextualFormat(model, "A1", "0.00%");
+    expect(getCell(model, "A1")?.format).toBe("0.00%");
+  });
+
+  test("format on a pivot measure value applies to the entire measure", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "Customer", B1: "Price",  C1: "=PIVOT(1)",
+      A2: "Alice",    B2: "10",
+      A3: "Bob",      B3: "12",
+    };
+    const model = createModelFromGrid(grid);
+    addPivot(model, "A1:B3", {
+      columns: [{ fieldName: "Customer" }],
+      measures: [{ id: "Price", fieldName: "Price", aggregator: "sum" }],
+    });
+    setContextualFormat(model, "D3", "[$$]#,##0.00");
+    expect(getCell(model, "D3")?.format).toBeUndefined();
+    expect(getCell(model, "E3")?.format).toBeUndefined();
+    expect(getCell(model, "F3")?.format).toBeUndefined();
+    expect(getEvaluatedCell(model, "D3")?.format).toBe("[$$]#,##0.00");
+    expect(getEvaluatedCell(model, "E3")?.format).toBe("[$$]#,##0.00");
+    expect(getEvaluatedCell(model, "F3")?.format).toBe("[$$]#,##0.00");
+    // prettier-ignore
+    expect(getEvaluatedGrid(model, "C1:F3")).toEqual([
+      ["(#1) Pivot", "Alice",   "Bob",    "Total"],
+      ["",           "Price",   "Price",  "Price"],
+      ["Total",      "$10.00",  "$12.00", "$22.00"],
+    ]);
+  });
+
+  test("format on a pivot measure value applies to the selected measures", () => {
+    const grid = {
+      A1: "Price",
+      A2: "10",
+      A3: "=PIVOT(1)",
+    };
+    const model = createModelFromGrid(grid);
+    addPivot(model, "A1:A2", {
+      measures: [
+        { id: "Price:sum", fieldName: "Price", aggregator: "sum" },
+        { id: "Price:avg", fieldName: "Price", aggregator: "avg", userDefinedName: "Price avg" },
+      ],
+    });
+
+    setContextualFormat(model, "B5", "[$$]#,##0.00"); // only on the first measure
+    // prettier-ignore
+    expect(getEvaluatedGrid(model, "A3:C5")).toEqual([
+      ["(#1) Pivot", "Total",   ""],
+      ["",           "Price",   "Price avg"],
+      ["Total",      "$10.00",  "10"],
+    ]);
+
+    setContextualFormat(model, "B5:C5", "[$€]#,##0.00"); // on both measures
+    // prettier-ignore
+    expect(getEvaluatedGrid(model, "A3:C5")).toEqual([
+      ["(#1) Pivot", "Total",   ""],
+      ["",           "Price",   "Price avg"],
+      ["Total",      "€10.00",  "€10.00"],
+    ]);
+  });
+
+  test("format on a pivot values overwrites user defined format", () => {
+    const grid = {
+      A1: "Price",
+      A2: "10",
+      A3: "=PIVOT(1)",
+    };
+    const model = createModelFromGrid(grid);
+    addPivot(model, "A1:A2", {
+      measures: [{ id: "Price", fieldName: "Price", aggregator: "sum" }],
+    });
+    setFormat(model, "B5", "0.0%");
+    setContextualFormat(model, "B5", "[$$]#,##0.00");
+    expect(getCell(model, "B5")?.format).toBeUndefined();
+    expect(getEvaluatedCell(model, "B5").formattedValue).toBe("$10.00");
+  });
+
+  test("format both pivot values and normal cells", () => {
+    const grid = {
+      A1: "Price",
+      A2: "10",
+      A3: "=PIVOT(1)",
+    };
+    const model = createModelFromGrid(grid);
+    addPivot(model, "A1:A2", {
+      measures: [{ id: "Price", fieldName: "Price", aggregator: "sum" }],
+    });
+    setContextualFormat(model, "B5:B6", "[$$]#,##0.00");
+    expect(getCell(model, "B5")?.format).toBeUndefined();
+    expect(getCell(model, "B6")?.format).toBe("[$$]#,##0.00");
+    expect(getEvaluatedCell(model, "B5")?.format).toBe("[$$]#,##0.00");
+  });
+
+  test("measure format takes precedence over aggregate format", () => {
+    // prettier-ignore
+    const grid = {
+      A1: "Customer", B1: "Price",  C1: "=PIVOT(1)",
+      A2: "Alice",    B2: "10",
+    };
+    const model = createModelFromGrid(grid);
+    addPivot(model, "A1:B2", {
+      rows: [{ fieldName: "Customer" }],
+      measures: [{ id: "Price", fieldName: "Price", aggregator: "count" }],
+    });
+    setContextualFormat(model, "D3", "[$$]#,##0.00");
+    // prettier-ignore
+    expect(getEvaluatedGrid(model, "C1:D4")).toEqual([
+      ["(#1) Pivot", "Total"],
+      ["",           "Price"],
+      ["Alice",      "$1.00"],
+      ["Total",      "$1.00"],
+    ]);
+  });
+});
+
 describe("formatting values (when change decimal)", () => {
   test("Can't change decimal format of a cell that isn't 'number' type", () => {
     const model = new Model();
     setCellContent(model, "A1", "kikou");
     expect(getCellContent(model, "A1")).toBe("kikou");
     selectCell(model, "A1");
-    setDecimal(model, 1);
+    setDecimal(model, "A1", 1);
     expect(getCell(model, "A1")!.format).toBe(undefined);
     expect(getCellContent(model, "A1")).toBe("kikou");
   });
@@ -249,7 +393,7 @@ describe("formatting values (when change decimal)", () => {
       target: model.getters.getSelectedZones(),
     });
     expect(getCell(model, "A1")!.format).toBe("0%");
-    setDecimal(model, 1);
+    setDecimal(model, "A1", 1);
     expect(getCell(model, "A1")!.format).toBe("0%");
   });
 
@@ -269,26 +413,26 @@ describe("formatting values (when change decimal)", () => {
 
       setCellContent(model, "A1", "42");
       selectCell(model, "A1");
-      setFormat(model, oneDecimal);
-      setDecimal(model, 1);
+      setFormat(model, "A1", oneDecimal);
+      setDecimal(model, "A1", 1);
       expect(getCell(model, "A1")!.format).toBe(twoDecimal);
 
       setCellContent(model, "A2", "42");
       selectCell(model, "A2");
-      setFormat(model, oneDecimal);
-      setDecimal(model, -1);
+      setFormat(model, "A2", oneDecimal);
+      setDecimal(model, "A2", -1);
       expect(getCell(model, "A2")!.format).toBe(noneDecimal);
 
       setCellContent(model, "A3", "42");
       selectCell(model, "A3");
-      setFormat(model, noneDecimal);
-      setDecimal(model, 1);
+      setFormat(model, "A3", noneDecimal);
+      setDecimal(model, "A3", 1);
       expect(getCell(model, "A3")!.format).toBe(oneDecimal);
 
       setCellContent(model, "A4", "42");
       selectCell(model, "A4");
-      setFormat(model, noneDecimal);
-      setDecimal(model, -1);
+      setFormat(model, "A4", noneDecimal);
+      setDecimal(model, "A4", -1);
       expect(getCell(model, "A4")!.format).toBe(noneDecimal);
     }
   );
@@ -299,25 +443,25 @@ describe("formatting values (when change decimal)", () => {
     setCellContent(model, "A1", "123");
     expect(getCell(model, "A1")!.format).toBe(undefined);
     selectCell(model, "A1");
-    setDecimal(model, 1);
+    setDecimal(model, "A1", 1);
     expect(getCell(model, "A1")!.format).toBe("0.0");
 
     setCellContent(model, "A2", "456");
     expect(getCell(model, "A2")!.format).toBe(undefined);
     selectCell(model, "A2");
-    setDecimal(model, -1);
+    setDecimal(model, "A2", -1);
     expect(getCell(model, "A2")!.format).toBe("0");
 
     setCellContent(model, "B1", "123.456");
     expect(getCell(model, "B1")!.format).toBe(undefined);
     selectCell(model, "B1");
-    setDecimal(model, 1);
+    setDecimal(model, "B1", 1);
     expect(getCell(model, "B1")!.format).toBe("0.0000");
 
     setCellContent(model, "B2", "456.789");
     expect(getCell(model, "B2")!.format).toBe(undefined);
     selectCell(model, "B2");
-    setDecimal(model, -1);
+    setDecimal(model, "B2", -1);
     expect(getCell(model, "B2")!.format).toBe("0.00");
   });
 
@@ -327,35 +471,32 @@ describe("formatting values (when change decimal)", () => {
     const nineteenZerosA1 = "0.0000000000000000000";
     const twentyZerosA1 = "0.00000000000000000000";
     setCellContent(model, "A1", "123");
-    selectCell(model, "A1");
-    setFormat(model, nineteenZerosA1);
-    setDecimal(model, 1);
-    setDecimal(model, 1);
-    setDecimal(model, 1);
+    setFormat(model, "A1", nineteenZerosA1);
+    setDecimal(model, "A1", 1);
+    setDecimal(model, "A1", 1);
+    setDecimal(model, "A1", 1);
     expect(getCell(model, "A1")!.format).toBe(twentyZerosA1);
 
     const seventeenZerosB1 = "0.00000000000000000%";
     const twentyZerosB1 = "0.00000000000000000000%";
     setCellContent(model, "B1", "9%");
-    selectCell(model, "B1");
-    setFormat(model, seventeenZerosB1);
-    setDecimal(model, 1);
-    setDecimal(model, 1);
-    setDecimal(model, 1);
-    setDecimal(model, 1);
-    setDecimal(model, 1);
-    setDecimal(model, 1);
+    setFormat(model, "B1", seventeenZerosB1);
+    setDecimal(model, "B1", 1);
+    setDecimal(model, "B1", 1);
+    setDecimal(model, "B1", 1);
+    setDecimal(model, "B1", 1);
+    setDecimal(model, "B1", 1);
+    setDecimal(model, "B1", 1);
     expect(getCell(model, "B1")!.format).toBe(twentyZerosB1);
 
     const eighteenZerosC1 = "#,##0.000000000000000000";
     const twentyZerosC1 = "#,##0.00000000000000000000";
     setCellContent(model, "C1", "3456.789");
-    selectCell(model, "C1");
-    setFormat(model, eighteenZerosC1);
-    setDecimal(model, 1);
-    setDecimal(model, 1);
-    setDecimal(model, 1);
-    setDecimal(model, 1);
+    setFormat(model, "C1", eighteenZerosC1);
+    setDecimal(model, "C1", 1);
+    setDecimal(model, "C1", 1);
+    setDecimal(model, "C1", 1);
+    setDecimal(model, "C1", 1);
     expect(getCell(model, "C1")!.format).toBe(twentyZerosC1);
   });
 
@@ -365,8 +506,7 @@ describe("formatting values (when change decimal)", () => {
     // give values ​​with different formats
 
     setCellContent(model, "A2", "Hey Jude");
-    selectCell(model, "A2");
-    setFormat(model, "0.00%");
+    setFormat(model, "A2", "0.00%");
     expect(getCellContent(model, "A2")).toBe("Hey Jude");
 
     setCellContent(model, "A3", "12/12/2012");
@@ -383,7 +523,7 @@ describe("formatting values (when change decimal)", () => {
 
     // increase decimalFormat on the selection
 
-    setDecimal(model, 1);
+    setDecimal(model, "A1:C3", 1);
 
     expect(getCellContent(model, "A2")).toBe("Hey Jude");
     expect(getCellContent(model, "A3")).toBe("12/12/2012");
@@ -399,8 +539,7 @@ describe("formatting values (when change decimal)", () => {
     setCellContent(model, "A1", "100%");
     setCellContent(model, "B1", "$190.12");
     setCellContent(model, "C1", "$21");
-    setSelection(model, ["A1:C1"]);
-    setDecimal(model, 1);
+    setDecimal(model, "A1:C1", 1);
     expect(getCellContent(model, "A1")).toEqual("100.0%");
     expect(getCellContent(model, "B1")).toEqual("$190.120");
     expect(getCellContent(model, "C1")).toEqual("$21.0");
@@ -414,8 +553,8 @@ describe("formatting values (when change decimal)", () => {
     setCellContent(model, "A3", "100%");
     setCellContent(model, "B3", "$190.12");
     setCellContent(model, "C3", "$21");
-    setSelection(model, ["A1:C1", "A3:C3"]);
-    setDecimal(model, 1);
+    setDecimal(model, "A1:C1", 1);
+    setDecimal(model, "A3:C3", 1);
     expect(getCellContent(model, "A1")).toEqual("100.0%");
     expect(getCellContent(model, "B1")).toEqual("$190.120");
     expect(getCellContent(model, "C1")).toEqual("$21.0");
@@ -513,7 +652,7 @@ describe("Autoresize", () => {
 
   test("Autoresize includes filter icon to compute the size", () => {
     setCellContent(model, "A1", TEXT);
-    createFilter(model, "A1");
+    createTable(model, "A1");
     model.dispatch("AUTORESIZE_COLUMNS", { sheetId, cols: [0] });
     expect(model.getters.getColSize(sheetId, 0)).toBe(
       sizes[0] + hPadding + ICON_EDGE_LENGTH + GRID_ICON_MARGIN
@@ -521,7 +660,7 @@ describe("Autoresize", () => {
   });
 
   test("Autoresize includes cells with only a filter icon", () => {
-    createFilter(model, "A1");
+    createTable(model, "A1");
     model.dispatch("AUTORESIZE_COLUMNS", { sheetId, cols: [0] });
     expect(model.getters.getColSize(sheetId, 0)).toBe(
       hPadding + ICON_EDGE_LENGTH + GRID_ICON_MARGIN
@@ -539,7 +678,7 @@ describe("Autoresize", () => {
     resizeRows(model, [0, 2], DEFAULT_CELL_HEIGHT + 30);
     setCellContent(model, "A1", "test");
     setCellContent(model, "A3", "test");
-    model.dispatch("SET_FORMATTING", { sheetId, target: [toZone("A3")], style: { fontSize: 24 } });
+    setStyle(model, "A3", { fontSize: 24 });
     model.dispatch("AUTORESIZE_ROWS", { sheetId, rows: [0, 2] });
     expect(model.getters.getRowSize(sheetId, 0)).toBe(DEFAULT_CELL_HEIGHT);
     expect(model.getters.getRowSize(sheetId, 2)).toBe(fontSizeInPixels(24) + vPadding);

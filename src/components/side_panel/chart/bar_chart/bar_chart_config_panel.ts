@@ -1,17 +1,25 @@
-import { LineBarPieConfigPanel } from "../line_bar_pie_panel/config_panel";
+import { BarChartDefinition } from "../../../../types/chart";
+import { GenericChartConfigPanel } from "../building_blocks/generic_side_panel/config_panel";
 
-export class BarConfigPanel extends LineBarPieConfigPanel {
+export class BarConfigPanel extends GenericChartConfigPanel {
   static template = "o-spreadsheet-BarConfigPanel";
 
-  onUpdateStacked(ev) {
+  get stackedLabel(): string {
+    const definition = this.props.definition as BarChartDefinition;
+    return definition.horizontal
+      ? this.chartTerms.StackedBarChart
+      : this.chartTerms.StackedColumnChart;
+  }
+
+  onUpdateStacked(stacked: boolean) {
     this.props.updateChart(this.props.figureId, {
-      stacked: ev.target.checked,
+      stacked,
     });
   }
 
-  onUpdateAggregated(ev) {
+  onUpdateAggregated(aggregated: boolean) {
     this.props.updateChart(this.props.figureId, {
-      aggregated: ev.target.checked,
+      aggregated,
     });
   }
 }

@@ -1,5 +1,15 @@
 import { DEFAULT_BORDER_DESC } from "../../constants";
-import { isDefined, range, stringify, toCartesian, toXC, toZone } from "../../helpers/index";
+import {
+  deepEquals,
+  getItemId,
+  groupConsecutive,
+  groupItemIdsByZones,
+  isDefined,
+  range,
+  recomputeZones,
+  toXC,
+  toZone,
+} from "../../helpers/index";
 import {
   AddColumnsRowsCommand,
   Border,
@@ -8,9 +18,12 @@ import {
   BorderPosition,
   CellPosition,
   Color,
-  Command,
+  CommandResult,
+  CoreCommand,
+  ExcelCellData,
   ExcelWorkbookData,
   HeaderIndex,
+  SetBorderCommand,
   UID,
   WorkbookData,
   Zone,
@@ -35,7 +48,16 @@ export class BordersPlugin extends CorePlugin<BordersPluginState> implements Bor
   // Command Handling
   // ---------------------------------------------------------------------------
 
-  handle(cmd: Command) {
+  allowDispatch(cmd: CoreCommand) {
+    switch (cmd.type) {
+      case "SET_BORDER":
+        return this.checkBordersUnchanged(cmd);
+      default:
+        return CommandResult.Success;
+    }
+  }
+
+  handle(cmd: CoreCommand) {
     switch (cmd.type) {
       case "ADD_MERGE":
         for (const zone of cmd.target) {
@@ -81,11 +103,12 @@ export class BordersPlugin extends CorePlugin<BordersPluginState> implements Bor
         this.clearBorders(cmd.sheetId, cmd.target);
         break;
       case "REMOVE_COLUMNS_ROWS":
-        for (let el of cmd.elements) {
+        const elements = [...cmd.elements].sort((a, b) => b - a);
+        for (const group of groupConsecutive(elements)) {
           if (cmd.dimension === "COL") {
-            this.shiftBordersHorizontally(cmd.sheetId, el + 1, -1);
+            this.shiftBordersHorizontally(cmd.sheetId, group[group.length - 1] + 1, -group.length);
           } else {
-            this.shiftBordersVertically(cmd.sheetId, el + 1, -1);
+            this.shiftBordersVertically(cmd.sheetId, group[group.length - 1] + 1, -group.length);
           }
         }
         break;
@@ -252,6 +275,21 @@ export class BordersPlugin extends CorePlugin<BordersPluginState> implements Bor
   }
 
   /**
+   * Get all the rows which contains at least a border
+   */
+  private getRowsWithBorders(sheetId: UID): number[] {
+    const sheetBorders = this.borders[sheetId]?.filter(isDefined);
+    if (!sheetBorders) return [];
+    const rowsWithBorders = new Set<number>();
+    for (const rowBorders of sheetBorders) {
+      for (const rowBorder in rowBorders) {
+        rowsWithBorders.add(parseInt(rowBorder, 10));
+      }
+    }
+    return Array.from(rowsWithBorders);
+  }
+
+  /**
    * Get the range of all the rows in the sheet
    */
   private getRowsRange(sheetId: UID): HeaderIndex[] {
@@ -309,7 +347,7 @@ export class BordersPlugin extends CorePlugin<BordersPluginState> implements Bor
         destructive: false,
       });
     }
-    this.getRowsRange(sheetId)
+    this.getRowsWithBorders(sheetId)
       .filter((row) => row >= start)
       .sort((a, b) => (delta < 0 ? a - b : b - a)) // start by the end when moving up
       .forEach((row) => {
@@ -419,7 +457,7 @@ export class BordersPlugin extends CorePlugin<BordersPluginState> implements Bor
    * Remove the borders of a zone
    */
   private clearBorders(sheetId: UID, zones: Zone[]) {
-    for (let zone of zones) {
+    for (let zone of recomputeZones(zones)) {
       for (let row = zone.top; row <= zone.bottom; row++) {
         this.history.update("borders", sheetId, zone.right + 1, row, "vertical", undefined);
         for (let col = zone.left; col <= zone.right; col++) {
@@ -455,7 +493,7 @@ export class BordersPlugin extends CorePlugin<BordersPluginState> implements Bor
     if (position === "clear") {
       return this.clearBorders(sheetId, zones);
     }
-    for (let zone of zones) {
+    for (let zone of recomputeZones(zones)) {
       if (position === "h" || position === "hv" || position === "all") {
         for (let row = zone.top + 1; row <= zone.bottom; row++) {
           for (let col = zone.left; col <= zone.right; col++) {
@@ -519,6 +557,16 @@ export class BordersPlugin extends CorePlugin<BordersPluginState> implements Bor
     }
   }
 
+  private checkBordersUnchanged(cmd: SetBorderCommand) {
+    const currentBorder = this.getCellBorder(cmd);
+    const areAllNewBordersUndefined =
+      !cmd.border?.bottom && !cmd.border?.left && !cmd.border?.right && !cmd.border?.top;
+    if ((!currentBorder && areAllNewBordersUndefined) || deepEquals(currentBorder, cmd.border)) {
+      return CommandResult.NoChanges;
+    }
+    return CommandResult.Success;
+  }
+
   // ---------------------------------------------------------------------------
   // Import/Export
   // ---------------------------------------------------------------------------
@@ -527,12 +575,14 @@ export class BordersPlugin extends CorePlugin<BordersPluginState> implements Bor
     // Borders
     if (Object.keys(data.borders || {}).length) {
       for (let sheet of data.sheets) {
-        for (const xc in sheet.cells) {
-          const cell = sheet.cells[xc];
-          if (cell?.border) {
-            const border = data.borders[cell.border];
-            const { col, row } = toCartesian(xc);
-            this.setBorder(sheet.id, col, row, border, false);
+        for (const zoneXc in sheet.borders) {
+          const borderId = sheet.borders[zoneXc];
+          const border = data.borders[borderId];
+          const zone = toZone(zoneXc);
+          for (let row = zone.top; row <= zone.bottom; row++) {
+            for (let col = zone.left; col <= zone.right; col++) {
+              this.setBorder(sheet.id, col, row, border, false);
+            }
           }
         }
       }
@@ -548,43 +598,37 @@ export class BordersPlugin extends CorePlugin<BordersPluginState> implements Bor
   }
 
   export(data: WorkbookData) {
-    // Borders
-    let borderId = 0;
     const borders: { [borderId: number]: Border } = {};
-    /**
-     * Get the id of the given border. If the border does not exist, it creates
-     * one.
-     */
-    function getBorderId(border: Border) {
-      for (let [key, value] of Object.entries(borders)) {
-        if (stringify(value) === stringify(border)) {
-          return parseInt(key, 10);
-        }
-      }
-      borders[++borderId] = border;
-      return borderId;
-    }
     for (let sheet of data.sheets) {
+      const positionsByBorder: Record<number, CellPosition[]> = {};
       for (let col: HeaderIndex = 0; col < sheet.colNumber; col++) {
         for (let row: HeaderIndex = 0; row < sheet.rowNumber; row++) {
           const border = this.getCellBorder({ sheetId: sheet.id, col, row });
           if (border) {
-            const xc = toXC(col, row);
-            const cell = sheet.cells[xc];
-            const borderId = getBorderId(border);
-            if (cell) {
-              cell.border = borderId;
-            } else {
-              sheet.cells[xc] = { border: borderId };
-            }
+            const borderId = getItemId(border, borders);
+            const position = { sheetId: sheet.id, col, row };
+            positionsByBorder[borderId] ??= [];
+            positionsByBorder[borderId].push(position);
           }
         }
       }
+      sheet.borders = groupItemIdsByZones(positionsByBorder);
     }
     data.borders = borders;
   }
 
   exportForExcel(data: ExcelWorkbookData) {
-    this.export(data);
+    for (const sheet of data.sheets) {
+      for (let col: HeaderIndex = 0; col < sheet.colNumber; col++) {
+        for (let row: HeaderIndex = 0; row < sheet.rowNumber; row++) {
+          const border = this.getCellBorder({ sheetId: sheet.id, col, row });
+          if (border) {
+            const xc = toXC(col, row);
+            sheet.cells[xc] ??= {} as ExcelCellData;
+            sheet.cells[xc]!.border = getItemId<Border>(border, data.borders);
+          }
+        }
+      }
+    }
   }
 }

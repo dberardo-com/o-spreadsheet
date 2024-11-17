@@ -1,10 +1,9 @@
-import { _t } from "./translation";
-import { BorderDescr, Color, Style } from "./types";
-import { CellErrorType } from "./types/errors";
+import { BorderDescr, Color, Currency, Style } from "./types";
 
 export const CANVAS_SHIFT = 0.5;
 
 // Colors
+export const HIGHLIGHT_COLOR = "#37A850";
 export const BACKGROUND_GRAY_COLOR = "#f5f5f5";
 export const BACKGROUND_HEADER_COLOR = "#F8F9FA";
 export const BACKGROUND_HEADER_SELECTED_COLOR = "#E8EAED";
@@ -15,13 +14,12 @@ export const SELECTION_BORDER_COLOR = "#3266ca";
 export const HEADER_BORDER_COLOR = "#C0C0C0";
 export const CELL_BORDER_COLOR = "#E2E3E3";
 export const BACKGROUND_CHART_COLOR = "#FFFFFF";
-export const BG_HOVER_COLOR = "#EBEBEB";
+export const BORDER_CHART_COLOR = "#FFFFFF";
 export const DISABLED_TEXT_COLOR = "#CACACA";
 export const DEFAULT_COLOR_SCALE_MIDPOINT_COLOR = 0xb6d7a8;
-export const LINK_COLOR = "#01666b";
+export const LINK_COLOR = "#017E84";
 export const FILTERS_COLOR = "#188038";
 export const BACKGROUND_HEADER_FILTER_COLOR = "#E6F4EA";
-export const BACKGROUND_HEADER_SELECTED_FILTER_COLOR = "#CEEAD6";
 export const SEPARATOR_COLOR = "#E0E2E4";
 export const ICONS_COLOR = "#4A4F59";
 export const HEADER_GROUPING_BACKGROUND_COLOR = "#F5F5F5";
@@ -30,6 +28,44 @@ export const GRID_BORDER_COLOR = "#E2E3E3";
 export const FROZEN_PANE_HEADER_BORDER_COLOR = "#BCBCBC";
 export const FROZEN_PANE_BORDER_COLOR = "#DADFE8";
 export const COMPOSER_ASSISTANT_COLOR = "#9B359B";
+
+export const CHART_WATERFALL_POSITIVE_COLOR = "#4EA7F2";
+export const CHART_WATERFALL_NEGATIVE_COLOR = "#EA6175";
+export const CHART_WATERFALL_SUBTOTAL_COLOR = "#AAAAAA";
+
+export const GRAY_900 = "#111827";
+export const GRAY_300 = "#D8DADD";
+export const GRAY_200 = "#E7E9ED";
+export const GRAY_100 = "#F9FAFB";
+export const TEXT_BODY = "#374151";
+export const TEXT_BODY_MUTED = TEXT_BODY + "C2";
+export const TEXT_HEADING = "#111827";
+export const PRIMARY_BUTTON_BG = "#714B67";
+export const PRIMARY_BUTTON_HOVER_BG = "#624159";
+export const PRIMARY_BUTTON_ACTIVE_BG = "#f1edf0";
+export const BUTTON_BG = GRAY_200;
+export const BUTTON_HOVER_BG = GRAY_300;
+export const BUTTON_HOVER_TEXT_COLOR = "#111827";
+export const BUTTON_ACTIVE_BG = "#e6f2f3";
+export const BUTTON_ACTIVE_TEXT_COLOR = "#111827";
+export const ACTION_COLOR = "#017E84";
+export const ACTION_COLOR_HOVER = "#01585c";
+export const ALERT_WARNING_BG = "#FBEBCC";
+export const ALERT_WARNING_BORDER = "#F8E2B3";
+export const ALERT_WARNING_TEXT_COLOR = "#946D23";
+export const ALERT_DANGER_BG = "#D44C591A";
+export const ALERT_DANGER_BORDER = "#C34A41";
+export const ALERT_DANGER_TEXT_COLOR = "#C34A41";
+export const ALERT_INFO_BG = "#CDEDF1";
+export const ALERT_INFO_BORDER = "#98DBE2";
+export const ALERT_INFO_TEXT_COLOR = "#09414A";
+export const BADGE_SELECTED_COLOR = "#E6F2F3";
+
+export const DEFAULT_CHART_PADDING = 20;
+export const DEFAULT_CHART_FONT_SIZE = 22;
+
+export const SCORECARD_GAUGE_CHART_PADDING = 10;
+export const SCORECARD_GAUGE_CHART_FONT_SIZE = 14;
 
 // Color picker defaults as upper case HEX to match `toHex`helper
 export const COLOR_PICKER_DEFAULTS: Color[] = [
@@ -162,7 +198,7 @@ export const DEFAULT_STYLE = {
   underline: false,
   fontSize: 10,
   fillColor: "",
-  textColor: "#000000",
+  textColor: "",
 } satisfies Required<Style>;
 
 export const DEFAULT_VERTICAL_ALIGN = DEFAULT_STYLE.verticalAlign;
@@ -177,9 +213,6 @@ export const DEFAULT_FONT = "'Roboto', arial";
 // Borders
 export const DEFAULT_BORDER_DESC: BorderDescr = { style: "thin", color: "#000000" };
 export const DEFAULT_FILTER_BORDER_DESC: BorderDescr = { style: "thin", color: FILTERS_COLOR };
-
-// Ranges
-export const INCORRECT_RANGE_STRING = CellErrorType.InvalidReference;
 
 // Max Number of history steps kept in memory
 export const MAX_HISTORY_STEPS = 99;
@@ -198,13 +231,13 @@ export const MIN_FIG_SIZE = 80;
 export const MAX_CHAR_LABEL = 20;
 export const FIGURE_ID_SPLITTER = "??";
 
-export const DEFAULT_GAUGE_LOWER_COLOR = "#cc0000";
-export const DEFAULT_GAUGE_MIDDLE_COLOR = "#f1c232";
-export const DEFAULT_GAUGE_UPPER_COLOR = "#6aa84f";
+export const DEFAULT_GAUGE_LOWER_COLOR = "#EA6175";
+export const DEFAULT_GAUGE_MIDDLE_COLOR = "#FFD86D";
+export const DEFAULT_GAUGE_UPPER_COLOR = "#43C5B1";
 
 export const DEFAULT_SCORECARD_BASELINE_MODE = "difference";
-export const DEFAULT_SCORECARD_BASELINE_COLOR_UP = "#00A04A";
-export const DEFAULT_SCORECARD_BASELINE_COLOR_DOWN = "#DC6965";
+export const DEFAULT_SCORECARD_BASELINE_COLOR_UP = "#43C5B1";
+export const DEFAULT_SCORECARD_BASELINE_COLOR_DOWN = "#EA6175";
 
 export const LINE_FILL_TRANSPARENCY = 0.4;
 
@@ -219,7 +252,6 @@ export const FORBIDDEN_IN_EXCEL_REGEX = /'|\*|\?|\/|\\|\[|\]/;
 // Cells
 export const FORMULA_REF_IDENTIFIER = "|";
 export const LOADING = "Loading...";
-export const DEFAULT_ERROR_MESSAGE = _t("Invalid expression");
 
 // Components
 export enum ComponentsImportance {
@@ -251,3 +283,24 @@ export const MAXIMAL_FREEZABLE_RATIO = 0.85;
 
 export const NEWLINE = "\n";
 export const FONT_SIZES: number[] = [6, 7, 8, 9, 10, 11, 12, 14, 18, 24, 36];
+
+// Pivot
+export const PIVOT_TABLE_CONFIG = {
+  hasFilters: false,
+  totalRow: false,
+  firstColumn: true,
+  lastColumn: false,
+  numberOfHeaders: 1,
+  bandedRows: true,
+  bandedColumns: false,
+  styleId: "TableStyleMedium5",
+  automaticAutofill: false,
+};
+
+export const DEFAULT_CURRENCY: Currency = {
+  symbol: "$",
+  position: "before",
+  decimalPlaces: 2,
+  code: "",
+  name: "Dollar",
+};

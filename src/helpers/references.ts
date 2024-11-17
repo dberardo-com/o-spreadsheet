@@ -1,4 +1,4 @@
-import { getUnquotedSheetName } from "./misc";
+import { getCanonicalSymbolName, getUnquotedSheetName } from "./misc";
 
 /** Reference of a cell (eg. A1, $B$5) */
 export const cellReference = new RegExp(/\$?([A-Z]{1,3})\$?([0-9]{1,7})/, "i");
@@ -6,8 +6,11 @@ export const cellReference = new RegExp(/\$?([A-Z]{1,3})\$?([0-9]{1,7})/, "i");
 // Same as above, but matches the exact string (nothing before or after)
 const singleCellReference = new RegExp(/^\$?([A-Z]{1,3})\$?([0-9]{1,7})$/, "i");
 
-/** Reference of a column header (eg. A, AB) */
-const colHeader = new RegExp(/^([A-Z]{1,3})+$/, "i");
+/** Reference of a column header (eg. A, AB, $A) */
+const colHeader = new RegExp(/^\$?([A-Z]{1,3})+$/, "i");
+
+/** Reference of a row header (eg. 1, $1) */
+const rowHeader = new RegExp(/^\$?([0-9]{1,7})+$/, "i");
 
 /** Reference of a column (eg. A, $CA, Sheet1!B) */
 const colReference = new RegExp(/^\s*('.+'!|[^']+!)?\$?([A-Z]{1,3})$/, "i");
@@ -49,6 +52,10 @@ export function isColHeader(str: string): boolean {
   return colHeader.test(str);
 }
 
+export function isRowHeader(str: string): boolean {
+  return rowHeader.test(str);
+}
+
 /**
  * Return true if the given xc is the reference of a single cell,
  * without any specified sheet (e.g. A1)
@@ -58,8 +65,16 @@ export function isSingleCellReference(xc: string): boolean {
 }
 
 export function splitReference(ref: string): { sheetName?: string; xc: string } {
+  if (!ref.includes("!")) {
+    return { xc: ref };
+  }
   const parts = ref.split("!");
   const xc = parts.pop()!;
   const sheetName = getUnquotedSheetName(parts.join("!")) || undefined;
   return { sheetName, xc };
+}
+
+/** Return a reference SheetName!xc from the given arguments */
+export function getFullReference(sheetName: string | undefined, xc: string): string {
+  return sheetName !== undefined ? `${getCanonicalSymbolName(sheetName)}!${xc}` : xc;
 }

@@ -1,39 +1,43 @@
-import { functionRegistry } from "../../src/functions";
+import { arg, functionRegistry } from "../../src/functions";
+import { NOW, TODAY } from "../../src/functions/module_date";
+import { RAND, RANDARRAY, RANDBETWEEN } from "../../src/functions/module_math";
 import { buildSheetLink, toXC } from "../../src/helpers";
-import { createEmptyExcelWorkbookData } from "../../src/migrations/data";
+import { DEFAULT_TABLE_CONFIG } from "../../src/helpers/table_presets";
 import { Model } from "../../src/model";
-import { BasePlugin } from "../../src/plugins/base_plugin";
-import { ExcelWorkbookData } from "../../src/types";
+import { CustomizedDataSet, Dimension, ExcelChartType } from "../../src/types";
+import { XLSXExportXMLFile, XMLString } from "../../src/types/xlsx";
 import { adaptFormulaToExcel } from "../../src/xlsx/functions/cells";
 import { escapeXml, parseXML } from "../../src/xlsx/helpers/xml_helpers";
+
 import {
   createChart,
-  createFilter,
   createGaugeChart,
   createImage,
   createScorecardChart,
   createSheet,
+  createTable,
+  foldHeaderGroup,
+  groupHeaders,
   merge,
   setCellContent,
+  setCellFormat,
+  setFormat,
   updateFilter,
 } from "../test_helpers/commands_helpers";
 import { TEST_CHART_DATA } from "../test_helpers/constants";
-import { exportPrettifiedXlsx, mockChart, toRangesData } from "../test_helpers/helpers";
-
-function getExportedExcelData(model: Model): ExcelWorkbookData {
-  model.dispatch("EVALUATE_CELLS");
-  let data = createEmptyExcelWorkbookData();
-  for (let handler of model["handlers"]) {
-    if (handler instanceof BasePlugin) {
-      handler.exportForExcel(data);
-    }
-  }
-  return data;
-}
+import { getCellContent } from "../test_helpers/getters_helpers";
+import {
+  exportPrettifiedXlsx,
+  getExportedExcelData,
+  mockChart,
+  restoreDefaultFunctions,
+  toRangesData,
+} from "../test_helpers/helpers";
 
 mockChart();
 
 const simpleData = {
+  version: 20,
   sheets: [
     {
       name: "Sheet1",
@@ -76,6 +80,7 @@ const simpleData = {
         A38: { content: `='<Sheet2>'!B2` },
         A39: { content: `=A39` },
         A40: { content: `=(1+2)/3` },
+        A41: { content: "=#REF + 5" },
         K3: { border: 5 },
         K4: { border: 4 },
         K5: { border: 4 },
@@ -96,10 +101,10 @@ const simpleData = {
     2: "#,##0.00",
   },
   styles: {
-    1: { bold: true, textColor: "#3A3791", fontSize: 12 },
+    1: { bold: true, textColor: "#674EA7", fontSize: 12 },
     2: { italic: true },
     3: { strikethrough: true, align: "left" },
-    4: { fillColor: "#e3efd9" },
+    4: { fillColor: "#FFF2CC" },
     5: { underline: true },
     6: { verticalAlign: "top" },
     7: { verticalAlign: "middle" },
@@ -383,15 +388,14 @@ const allNonExportableFormulasData = {
   sheets: [
     {
       cells: {
-        A1: { content: "=WAIT(100)" },
-        A2: { content: "=COUNTUNIQUE(1,2,3,2,4)" },
-        A3: { content: "=sum(A1,wait(100))" },
+        A2: { content: "=COUNTUNIQUE(1,A24,3,2,4)" },
+        A3: { content: "=sum(A1,ABS(100))" },
         A4: { content: "=ADD(42,24)" },
         A5: { content: "=DIVIDE(84,42)" },
         A6: { content: "=EQ(42,42)" },
         A7: { content: "=GT(42,4)" },
         A8: { content: "=GTE(4,4)" },
-        A9: { content: "=LT(4;42)" },
+        A9: { content: "=LT(4,42)" },
         A10: { content: "=LTE(6,6)" },
         A11: { content: "=MINUS(42,24)" },
         A12: { content: "=MULTIPLY(42,2)" },
@@ -404,6 +408,9 @@ const allNonExportableFormulasData = {
         A19: { content: "=JOIN(1,2,3)" },
         A20: { content: "=MULTIPLY(42,0)" },
         A21: { content: '=FORMAT.LARGE.NUMBER(1000, "k")' },
+        A22: { content: "=SUM(A3:3)" }, // should be adapted to SUM(A3:Z3)
+        A23: { content: "=SUM(A3:A)" }, // should be adapted to SUM(A3:A100)
+        A24: { content: "2" },
       },
     },
   ],
@@ -447,7 +454,7 @@ describe("Test XLSX export", () => {
     });
 
     test("Conditional formatting", async () => {
-      const style = { fillColor: "#90EE90" };
+      const style = { fillColor: "#B6D7A8" };
       const model = new Model({
         sheets: [
           {
@@ -489,12 +496,12 @@ describe("Test XLSX export", () => {
               {
                 id: "14",
                 ranges: ["A1:A5"],
-                rule: { type: "CellIsRule", operator: "IsEmpty", style },
+                rule: { type: "CellIsRule", operator: "IsEmpty", values: [], style },
               },
               {
                 id: "15",
                 ranges: ["A1:A5"],
-                rule: { type: "CellIsRule", operator: "IsNotEmpty", style },
+                rule: { type: "CellIsRule", operator: "IsNotEmpty", values: [], style },
               },
               {
                 id: "16",
@@ -617,7 +624,7 @@ describe("Test XLSX export", () => {
                   values: ["1"],
                   style: {
                     fillColor: "#90EE80",
-                    color: "#90EE90",
+                    color: "#B6D7A8",
                     bold: true,
                     italic: true,
                     strike: true,
@@ -631,6 +638,19 @@ describe("Test XLSX export", () => {
       });
       expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
     });
+
+    test("does not export quarter format", async () => {
+      const model = new Model();
+
+      setCellFormat(model, "A1", "qq yyyy");
+      setCellFormat(model, "A2", "qqqq yyyy");
+
+      const exported = getExportedExcelData(model);
+      expect(exported.sheets[0].cells.A1?.format).toBeUndefined();
+      expect(exported.sheets[0].cells.A2?.format).toBeUndefined();
+      expect(exported.formats).toEqual({});
+    });
+
     test("Conditional formatting with formula cannot be exported (for now)", async () => {
       jest.spyOn(global.console, "warn").mockImplementation();
       const model = new Model({
@@ -661,7 +681,101 @@ describe("Test XLSX export", () => {
     });
   });
 
+  describe("references with headers should be converted to references with fixed coordinates", () => {
+    test("Conditional formatting and formula", async () => {
+      const style = { fillColor: "#B6D7A8" };
+      const model = new Model({
+        sheets: [
+          {
+            colNumber: 2,
+            rowNumber: 5,
+            cells: {
+              A2: { content: "=sum(B3:B)" },
+            },
+            conditionalFormats: [
+              {
+                id: "1",
+                ranges: ["B2:5"],
+                rule: { type: "CellIsRule", operator: "ContainsText", values: ["1"], style },
+              },
+              {
+                id: "2",
+                ranges: ["B2:B"],
+                rule: { type: "CellIsRule", operator: "ContainsText", values: ["1"], style },
+              },
+            ],
+          },
+        ],
+      });
+      expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
+    });
+
+    test("Chart", async () => {
+      const model = new Model({});
+
+      createChart(
+        model,
+        {
+          dataSets: [{ dataRange: "Sheet1!B2:B" }, { dataRange: "Sheet1!C4:4" }],
+          labelRange: "Sheet1!A2:A",
+          type: "line",
+        },
+        "1"
+      );
+      createChart(
+        model,
+        {
+          dataSets: [{ dataRange: "Sheet1!B2:B" }, { dataRange: "Sheet1!C4:4" }],
+          labelRange: "Sheet1!A2:A",
+          type: "bar",
+        },
+        "2"
+      );
+      createChart(
+        model,
+        {
+          dataSets: [{ dataRange: "Sheet1!B2:B" }, { dataRange: "Sheet1!C4:4" }],
+          labelRange: "Sheet1!A2:A",
+          type: "pie",
+        },
+        "3"
+      );
+
+      expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
+    });
+  });
+
   describe("formulas", () => {
+    beforeAll(() => {
+      functionRegistry.add("NOW", {
+        ...NOW,
+        compute: () => 1,
+      });
+      functionRegistry.add("RAND", {
+        ...RAND,
+        compute: () => 1,
+      });
+      functionRegistry.add("TODAY", {
+        ...TODAY,
+        compute: () => 1,
+      });
+      functionRegistry.add("RANDARRAY", {
+        ...RANDARRAY,
+        compute: () => [
+          [1, 1],
+          [1, 1],
+        ],
+      });
+      // @ts-ignore
+      functionRegistry.add("RANDBETWEEN", {
+        ...RANDBETWEEN,
+        compute: () => 1,
+      });
+    });
+
+    afterAll(() => {
+      restoreDefaultFunctions();
+    });
     test("All exportable formulas", async () => {
       const model = new Model(allExportableFormulasData);
       expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
@@ -684,22 +798,20 @@ describe("Test XLSX export", () => {
 
       functionRegistry.add("NON.EXPORTABLE", {
         description: "a non exportable formula",
-        args: [],
-        returns: ["NUMBER"],
-        compute: function (): number {
-          return 42;
-        },
-        computeFormat: function (): string {
-          return "0.00%";
+        args: [arg('range (any, range<any>, ,default="a")', "")],
+        compute: function () {
+          return { value: 42, format: "0.00%" };
         },
         isExported: false,
       });
 
       setCellContent(model, "A1", "=1+NON.EXPORTABLE()");
+      setCellContent(model, "A2", "=1+NON.EXPORTABLE(A1)");
 
       const exported = getExportedExcelData(model);
 
       expect(exported.sheets[0].cells["A1"]?.content).toEqual("43");
+      expect(exported.sheets[0].cells["A2"]?.content).toEqual("43");
       const formatId = exported.sheets[0].cells["A1"]?.format;
       expect(formatId).toEqual(1);
       expect(exported.formats[formatId!]).toEqual("0.00%");
@@ -713,17 +825,16 @@ describe("Test XLSX export", () => {
       functionRegistry.add("NON.EXPORTABLE.ARRAY.FORMULA", {
         description: "a non exportable formula that spread",
         args: [],
-        returns: ["RANGE<NUMBER>"],
-        compute: function (): number[][] {
+        compute: function () {
           return [
-            [1, 2],
-            [3, 4],
-          ];
-        },
-        computeFormat: function (): string[][] {
-          return [
-            ["0.00%", "0"],
-            ["0.00", "0%"],
+            [
+              { value: 1, format: "0.00%" },
+              { value: 2, format: "0" },
+            ],
+            [
+              { value: 3, format: "0.00" },
+              { value: 4, format: "0%" },
+            ],
           ];
         },
         isExported: false,
@@ -754,23 +865,16 @@ describe("Test XLSX export", () => {
       functionRegistry.remove("NON.EXPORTABLE.ARRAY.FORMULA");
     });
 
-    test("Multi-Sheets exportable functions", async () => {
+    test("Non exportable functions that is evaluated as nothing (aka empty string)", async () => {
       const model = new Model({
-        sheets: [allExportableFormulasData.sheets[0], { cells: { A1: { content: "=wait(10)" } } }],
+        sheets: [{ cells: { A1: { content: '=join("", A2:A3)' } }, rowNumber: 3, colNumber: 1 }],
       });
       expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
     });
 
-    test("Multi-Sheet export async functions without cross references across sheets", async () => {
+    test("Multi-Sheets exportable functions", async () => {
       const model = new Model({
-        sheets: [
-          { id: "s1" },
-          {
-            id: "s2",
-            name: "Sheet2",
-            cells: { A1: { content: "5", A2: { content: "=wait(A1)" } } },
-          },
-        ],
+        sheets: [allExportableFormulasData.sheets[0], { cells: { A1: { content: "=abs(10)" } } }],
       });
       expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
     });
@@ -781,12 +885,12 @@ describe("Test XLSX export", () => {
           {
             id: "s1",
             name: "Sheet1",
-            cells: { A1: { content: "=sum(Sheet2!A1)", A2: { content: "2" } } },
+            cells: { A1: { content: "=sum(Sheet2!A1)" }, A2: { content: "2" } },
           },
           {
             id: "s2",
             name: "Sheet2",
-            cells: { A1: { content: "5", A2: { content: "=wait(Sheet1!A2)" } } },
+            cells: { A1: { content: "5" }, A2: { content: "=sum(Sheet1!A2)" } },
           },
         ],
       });
@@ -824,32 +928,134 @@ describe("Test XLSX export", () => {
     };
 
     test.each([
-      ["line", ["Sheet1!B1:B4", "Sheet1!C1:C4"]],
-      ["bar", ["Sheet1!B1:B4", "Sheet1!C1:C4"]],
-      ["pie", ["Sheet1!B1:B4", "Sheet1!C1:C4"]],
-      ["line", ["Sheet1!B1:B4"]],
-      ["bar", ["Sheet1!B1:B4"]],
-      ["pie", ["Sheet1!B1:B4"]],
-    ])("simple %s chart with dataset %s", async (chartType: string, dataSets: string[]) => {
-      const model = new Model(chartData);
-      createChart(
-        model,
-        {
-          dataSets,
-          labelRange: "Sheet1!A2:A4",
-          type: chartType as "line" | "bar" | "pie",
-        },
-        "1"
-      );
-      expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
-    });
+      ["line", [{ dataRange: "Sheet1!B1:B4" }, { dataRange: "Sheet1!C1:C4" }]],
+      ["scatter", [{ dataRange: "Sheet1!B1:B4" }, { dataRange: "Sheet1!C1:C4" }]],
+      ["bar", [{ dataRange: "Sheet1!B1:B4" }, { dataRange: "Sheet1!C1:C4" }]],
+      ["combo", [{ dataRange: "Sheet1!B1:B4" }, { dataRange: "Sheet1!C1:C4" }]],
+      ["pie", [{ dataRange: "Sheet1!B1:B4" }, { dataRange: "Sheet1!C1:C4" }]],
+      ["line", [{ dataRange: "Sheet1!B1:B4" }]],
+      ["scatter", [{ dataRange: "Sheet1!B1:B4" }]],
+      ["bar", [{ dataRange: "Sheet1!B1:B4" }]],
+      ["combo", [{ dataRange: "Sheet1!B1:B4" }]],
+      ["pie", [{ dataRange: "Sheet1!B1:B4" }]],
+    ])(
+      "simple %s chart with dataset %s",
+      async (chartType: string, dataSets: CustomizedDataSet[]) => {
+        const model = new Model(chartData);
+        createChart(
+          model,
+          {
+            dataSets,
+            labelRange: "Sheet1!A2:A4",
+            type: chartType as "line" | "bar" | "pie" | "combo",
+          },
+          "1"
+        );
+        expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
+      }
+    );
+
+    test.each(["line", "scatter", "bar", "combo"])(
+      "simple %s chart with customized dataset",
+      async (chartType: string) => {
+        const model = new Model(chartData);
+        createChart(
+          model,
+          {
+            dataSets: [
+              {
+                dataRange: "Sheet1!B1:B4",
+                backgroundColor: "#FF0000",
+                yAxisId: "y",
+                label: "coucou",
+              },
+            ],
+            labelRange: "Sheet1!A2:A4",
+            type: chartType as "line" | "bar" | "pie" | "combo",
+          },
+          "1"
+        );
+        expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
+      }
+    );
+
+    test.each(["line", "scatter", "bar", "combo"])(
+      "simple %s chart with customized title",
+      async (chartType: string) => {
+        const model = new Model(chartData);
+        createChart(
+          model,
+          {
+            dataSets: [{ dataRange: "Sheet1!B1:B4" }],
+            title: {
+              text: "Coucou",
+              align: "right",
+              bold: true,
+              italic: true,
+              color: "#ff0000",
+            },
+            labelRange: "Sheet1!A2:A4",
+            type: chartType as "line" | "bar" | "pie" | "combo",
+          },
+          "1"
+        );
+        expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
+      }
+    );
+
+    test.each(["line", "scatter", "bar", "combo"] as const)(
+      "simple %s chart with customized axis",
+      async (chartType: string) => {
+        const model = new Model(chartData);
+        createChart(
+          model,
+          {
+            dataSets: [{ dataRange: "Sheet1!B1:B4", yAxisId: "y1" }],
+            axesDesign: {
+              x: {
+                title: {
+                  text: "Coucou",
+                  align: "right",
+                  bold: true,
+                  italic: true,
+                  color: "#ff0000",
+                },
+              },
+              y: {
+                title: {
+                  text: "Coucou 2",
+                  align: "left",
+                  bold: true,
+                  italic: true,
+                  color: "#00ff00",
+                },
+              },
+              y1: {
+                title: {
+                  text: "Coucou 3",
+                  align: "center",
+                  bold: true,
+                  italic: true,
+                  color: "#0000ff",
+                },
+              },
+            },
+            labelRange: "Sheet1!A2:A4",
+            type: chartType as "line" | "bar" | "pie" | "combo",
+          },
+          "1"
+        );
+        expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
+      }
+    );
 
     test("exported results will not be influenced by `dataSetsHaveTitle` if the dataset contains titles and label range doesn't", async () => {
       const model = new Model(chartData);
       createChart(
         model,
         {
-          dataSets: ["Sheet1!B1:B4", "Sheet1!C1:C4"],
+          type: "bar",
+          dataSets: [{ dataRange: "Sheet1!B1:B4" }, { dataRange: "Sheet1!C1:C4" }],
           labelRange: "Sheet1!A1:A4",
           dataSetsHaveTitle: true,
         },
@@ -858,7 +1064,8 @@ describe("Test XLSX export", () => {
       createChart(
         model,
         {
-          dataSets: ["Sheet1!B1:B4", "Sheet1!C1:C4"],
+          type: "bar",
+          dataSets: [{ dataRange: "Sheet1!B1:B4" }, { dataRange: "Sheet1!C1:C4" }],
           labelRange: "Sheet1!A2:A4",
           dataSetsHaveTitle: true,
         },
@@ -873,7 +1080,7 @@ describe("Test XLSX export", () => {
       createChart(
         model,
         {
-          dataSets: ["Sheet1!B1:B4", "Sheet1!C1:C4"],
+          dataSets: [{ dataRange: "Sheet1!B1:B4" }, { dataRange: "Sheet1!C1:C4" }],
           labelRange: "Sheet1!A2:A4",
           type: "line",
         },
@@ -882,7 +1089,7 @@ describe("Test XLSX export", () => {
       createChart(
         model,
         {
-          dataSets: ["Sheet1!B1:B4", "Sheet1!C1:C4"],
+          dataSets: [{ dataRange: "Sheet1!B1:B4" }, { dataRange: "Sheet1!C1:C4" }],
           labelRange: "Sheet1!A2:A4",
           type: "bar",
         },
@@ -891,9 +1098,9 @@ describe("Test XLSX export", () => {
       expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
     });
 
-    test.each(["bar", "line", "pie"] as const)(
+    test.each(["bar", "line", "pie", "scatter"] as const)(
       "%s chart that aggregate labels is exported as image",
-      async (type: "bar" | "line" | "pie") => {
+      async (type: ExcelChartType) => {
         const model = new Model({
           sheets: [
             {
@@ -919,7 +1126,7 @@ describe("Test XLSX export", () => {
         createChart(
           model,
           {
-            dataSets: ["Sheet1!B1:B9"],
+            dataSets: [{ dataRange: "Sheet1!B1:B9" }],
             labelRange: "Sheet1!A2:A9",
             aggregated: true,
             type,
@@ -954,7 +1161,7 @@ describe("Test XLSX export", () => {
       createChart(
         model,
         {
-          dataSets: ["Sheet1!B1:B4", "Sheet1!C1:C4"],
+          dataSets: [{ dataRange: "Sheet1!B1:B4" }, { dataRange: "Sheet1!C1:C4" }],
           labelRange: "Sheet1!A2:A4",
           stacked: true,
           type: "bar",
@@ -970,7 +1177,7 @@ describe("Test XLSX export", () => {
       createChart(
         model,
         {
-          dataSets: ["Sheet1!B1:B4", "Sheet1!C1:C4"],
+          dataSets: [{ dataRange: "Sheet1!B1:B4" }, { dataRange: "Sheet1!C1:C4" }],
           labelRange: "Sheet1!A2:A4",
           type: "line",
         },
@@ -979,7 +1186,7 @@ describe("Test XLSX export", () => {
       createChart(
         model,
         {
-          dataSets: ["Sheet1!B1:B4", "Sheet1!C1:C4"],
+          dataSets: [{ dataRange: "Sheet1!B1:B4" }, { dataRange: "Sheet1!C1:C4" }],
           labelRange: "Sheet1!A2:A4",
           type: "bar",
         },
@@ -994,7 +1201,7 @@ describe("Test XLSX export", () => {
       createChart(
         model,
         {
-          dataSets: ["Sheet1!B2:B4", "Sheet1!C2:C4"],
+          dataSets: [{ dataRange: "Sheet1!B2:B4" }, { dataRange: "Sheet1!C2:C4" }],
           labelRange: "Sheet1!A2:A4",
           type: "bar",
           dataSetsHaveTitle: false,
@@ -1010,7 +1217,7 @@ describe("Test XLSX export", () => {
       createChart(
         model,
         {
-          dataSets: ["Sheet1!B2:B4", "Sheet1!C2:C4"],
+          dataSets: [{ dataRange: "Sheet1!B2:B4" }, { dataRange: "Sheet1!C2:C4" }],
           labelRange: "Sheet1!A2:A4",
           type: "bar",
           background: "#EFEFEF",
@@ -1020,7 +1227,7 @@ describe("Test XLSX export", () => {
       createChart(
         model,
         {
-          dataSets: ["Sheet1!B2:B4", "Sheet1!C2:C4"],
+          dataSets: [{ dataRange: "Sheet1!B2:B4" }, { dataRange: "Sheet1!C2:C4" }],
           labelRange: "Sheet1!A2:A4",
           type: "pie",
           background: "#EEEEEE",
@@ -1030,7 +1237,7 @@ describe("Test XLSX export", () => {
       createChart(
         model,
         {
-          dataSets: ["Sheet1!B2:B4", "Sheet1!C2:C4"],
+          dataSets: [{ dataRange: "Sheet1!B2:B4" }, { dataRange: "Sheet1!C2:C4" }],
           labelRange: "Sheet1!A2:A4",
           type: "line",
           background: "#DDDDDD",
@@ -1040,7 +1247,7 @@ describe("Test XLSX export", () => {
       createChart(
         model,
         {
-          dataSets: ["She!et2!B2:B4", "She!et2!C2:C4"],
+          dataSets: [{ dataRange: "She!et2!B2:B4" }, { dataRange: "She!et2!C2:C4" }],
           labelRange: "She!et2!A2:A4",
           type: "pie",
           background: "#EEEEEE",
@@ -1055,7 +1262,7 @@ describe("Test XLSX export", () => {
       createChart(
         model,
         {
-          dataSets: ["Sheet1!B2:B5", "Sheet1!C2:C5"],
+          dataSets: [{ dataRange: "Sheet1!B2:B5" }, { dataRange: "Sheet1!C2:C5" }],
           labelRange: "Sheet1!A2:A5",
           type: "bar",
           legendPosition: "none",
@@ -1070,7 +1277,7 @@ describe("Test XLSX export", () => {
       createChart(
         model,
         {
-          dataSets: ["Sheet1!A1"], // only the title cell, no data
+          dataSets: [{ dataRange: "Sheet1!A1" }], // only the title cell, no data
           type: "pie",
           dataSetsHaveTitle: true,
         },
@@ -1084,7 +1291,7 @@ describe("Test XLSX export", () => {
       createChart(
         model,
         {
-          dataSets: ["Sheet1!B2:B4", "Sheet1!C2:C4"],
+          dataSets: [{ dataRange: "Sheet1!B2:B4" }, { dataRange: "Sheet1!C2:C4" }],
           labelRange: "Sheet1!A2:A4",
           type: "bar",
           dataSetsHaveTitle: false,
@@ -1175,7 +1382,7 @@ describe("Test XLSX export", () => {
     createChart(
       model,
       {
-        dataSets: ["Sheet1!B2:B4", "Sheet1!C2:C4"],
+        dataSets: [{ dataRange: "Sheet1!B2:B4" }, { dataRange: "Sheet1!C2:C4" }],
         labelRange: "Sheet1!A2:A4",
         type: "bar",
         dataSetsHaveTitle: false,
@@ -1221,6 +1428,11 @@ describe("Test XLSX export", () => {
     expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
   });
 
+  test("Workbook with colored sheet", async () => {
+    const model = new Model({ sheets: [{ id: "sheet0" }, { id: "sheet1", color: "#FF0000" }] });
+    expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
+  });
+
   test("Sheet with frozen panes", async () => {
     const model = new Model({
       sheets: [{ id: "sheet0" }, { id: "sheet1", panes: { xSplit: 1, ySplit: 2 } }],
@@ -1238,7 +1450,7 @@ describe("Test XLSX export", () => {
   describe("Export data filters", () => {
     test("Table headers formula are replaced with their evaluated formatted value", () => {
       const model = new Model();
-      createFilter(model, "A1:A4");
+      createTable(model, "A1:A4");
       setCellContent(model, "A1", "=DATE(1,1,1)");
       setCellContent(model, "A2", "=DATE(1,1,1)");
       const exported = getExportedExcelData(model);
@@ -1253,7 +1465,7 @@ describe("Test XLSX export", () => {
 
     test("Table headers are replaced by unique value", () => {
       const model = new Model();
-      createFilter(model, "A1:B4");
+      createTable(model, "A1:B4");
       setCellContent(model, "A1", "Hello");
       setCellContent(model, "B1", "Hello");
       const exported = getExportedExcelData(model);
@@ -1264,65 +1476,117 @@ describe("Test XLSX export", () => {
       expect(exported.sheets[0].cells["B1"]?.value).toEqual("Hello2");
     });
 
+    test("Table headers are replaced by unique formatted value even if table has no filters", () => {
+      const model = new Model();
+      createTable(model, "A1:A4", { ...DEFAULT_TABLE_CONFIG, hasFilters: false });
+      setCellContent(model, "A1", "=DATE(1,1,1)");
+      const exported = getExportedExcelData(model);
+      expect(exported.sheets[0].cells["A1"]?.content).toEqual("1/1/1901");
+    });
+
+    test("Table style is correctly exported", async () => {
+      const model = new Model();
+      createTable(model, "A1:B4", {
+        totalRow: true,
+        firstColumn: true,
+        lastColumn: true,
+        numberOfHeaders: 1,
+        bandedRows: true,
+        bandedColumns: true,
+        styleId: "TableStyleMedium9",
+      });
+      setCellContent(model, "A4", "5");
+      setCellContent(model, "B4", "=65+9");
+      const exported = await exportPrettifiedXlsx(model);
+      const tableFile = exported.files.find((file) => file.path === "xl/tables/table1.xml");
+      const xml = parseXML(new XMLString((tableFile as XLSXExportXMLFile)?.content));
+
+      const table = xml.querySelector("table");
+      expect(table?.getAttribute("headerRowCount")).toEqual("1");
+      expect(table?.getAttribute("totalsRowCount")).toEqual("1");
+
+      const tableStyle = xml.querySelector("tableStyleInfo");
+      expect(tableStyle?.getAttribute("name")).toEqual("TableStyleMedium9");
+      expect(tableStyle?.getAttribute("showFirstColumn")).toEqual("1");
+      expect(tableStyle?.getAttribute("showLastColumn")).toEqual("1");
+      expect(tableStyle?.getAttribute("showRowStripes")).toEqual("1");
+      expect(tableStyle?.getAttribute("showColumnStripes")).toEqual("1");
+
+      const worksheet = exported.files.find((file) => file.path === "xl/worksheets/sheet0.xml");
+      const sheetXML = parseXML(new XMLString((worksheet as XLSXExportXMLFile)?.content));
+      const A4 = sheetXML.querySelector("worksheet row c[r='A4']");
+      expect(A4?.getAttribute("t")).toEqual("s"); // A4 was exported as a string
+      const tableCol2 = xml.querySelector("tableColumn[id='2']");
+      expect(tableCol2?.getAttribute("totalsRowFunction")).toEqual("custom"); // Column with B4 has a custom total row function
+
+      expect(tableFile).toMatchSnapshot();
+    });
+
     test("Filtered values are exported and rows are hidden", () => {
       const model = new Model();
-      createFilter(model, "A1:B4");
+      createTable(model, "A1:B4");
       setCellContent(model, "A2", "Hello");
       setCellContent(model, "A3", "Konnichiwa");
       setCellContent(model, "A4", '=CONCAT("Bon", "jour")');
       updateFilter(model, "A1", ["Konnichiwa"]);
       const exported = getExportedExcelData(model);
       // Filtered values are the values that are displayed in xlsx, not the values that are hidden
-      expect(exported.sheets[0].filterTables[0].filters[0].displayedValues).toEqual([
-        "Hello",
-        "Bonjour",
-      ]);
+      expect(exported.sheets[0].tables[0].filters[0].displayedValues).toEqual(["Hello", "Bonjour"]);
       expect(exported.sheets[0].rows[2].isHidden).toBeTruthy();
     });
 
     test("Empty filters aren't exported", () => {
       const model = new Model();
-      createFilter(model, "A1:B4");
+      createTable(model, "A1:B4");
       setCellContent(model, "A2", "Hello");
       setCellContent(model, "B2", "Hello");
       const exported = getExportedExcelData(model);
-      expect(exported.sheets[0].filterTables[0].filters).toHaveLength(0);
+      expect(exported.sheets[0].tables[0].filters).toHaveLength(0);
+    });
+
+    test("Tables with only one row are not exported", () => {
+      const model = new Model();
+      setCellContent(model, "A1", "Hello");
+      setCellContent(model, "B1", "Hello");
+      createTable(model, "A1:B1");
+      const exported = getExportedExcelData(model);
+      expect(exported.sheets[0].tables).toHaveLength(0);
     });
 
     test("Filtered values are not duplicated", () => {
       const model = new Model();
-      createFilter(model, "A1:B4");
+      createTable(model, "A1:B4");
       setCellContent(model, "A2", "Konnichiwa");
       setCellContent(model, "A3", "Konnichiwa");
       setCellContent(model, "A4", "5");
       updateFilter(model, "A1", ["5"]);
       const exported = getExportedExcelData(model);
-      expect(exported.sheets[0].filterTables[0].filters[0].displayedValues).toEqual(["Konnichiwa"]);
+      expect(exported.sheets[0].tables[0].filters[0].displayedValues).toEqual(["Konnichiwa"]);
     });
 
     test("Empty cells are not added to displayedValues", () => {
       const model = new Model();
-      createFilter(model, "A1:B4");
+      createTable(model, "A1:B4");
       setCellContent(model, "A2", "5");
       updateFilter(model, "A1", ["5"]);
       const exported = getExportedExcelData(model);
-      expect(exported.sheets[0].filterTables[0].filters[0].displayedValues).toEqual([]);
+      expect(exported.sheets[0].tables[0].filters[0].displayedValues).toEqual([]);
     });
 
     test("Formulas evaluated to empty string are not added to displayedValues", () => {
       const model = new Model();
-      createFilter(model, "A1:B4");
+      createTable(model, "A1:B4");
       setCellContent(model, "A2", "5");
       updateFilter(model, "A1", ["5"]);
       setCellContent(model, "A3", '=""');
       const exported = getExportedExcelData(model);
-      expect(exported.sheets[0].filterTables[0].filters[0].displayedValues).toEqual([]);
-      expect(exported.sheets[0].filterTables[0].filters[0].displayBlanks).toEqual(true);
+      expect(exported.sheets[0].tables[0].filters[0].displayedValues).toEqual([]);
+      expect(exported.sheets[0].tables[0].filters[0].displayBlanks).toEqual(true);
     });
 
     test("Export data filters snapshot", async () => {
       const model = new Model();
-      createFilter(model, "A1:C4");
+      createTable(model, "A1:C4");
 
       setCellContent(model, "A1", "Hello");
       setCellContent(model, "A2", "5");
@@ -1349,6 +1613,106 @@ describe("Test XLSX export", () => {
       setCellContent(model, toXC(0, i), String.fromCharCode(i));
     }
     expect(() => exportPrettifiedXlsx(model)).not.toThrow();
+  });
+
+  test("Cells with plain text format are exported in the shared strings", async () => {
+    const model = new Model();
+    setFormat(model, "A1", "@");
+    setCellContent(model, "A1", "0006");
+
+    expect(getCellContent(model, "A1")).toEqual("0006");
+    const exportedXlsx = await exportPrettifiedXlsx(model);
+    const sharedStrings = exportedXlsx.files.find(
+      (file) => file.path === "xl/sharedStrings.xml"
+    ) as XLSXExportXMLFile;
+    expect(sharedStrings.content).toContain("0006");
+  });
+
+  describe("Header grouping export", () => {
+    test.each<Dimension>(["ROW", "COL"])("Simple grouped headers", async (dim) => {
+      const model = new Model();
+      groupHeaders(model, dim, 0, 2);
+      foldHeaderGroup(model, dim, 0, 2);
+
+      const xlsxExport = getExportedExcelData(model);
+      const headers = dim === "COL" ? xlsxExport.sheets[0].cols : xlsxExport.sheets[0].rows;
+      expect(headers).toMatchObject({
+        0: { isHidden: true, outlineLevel: 1 },
+        1: { isHidden: true, outlineLevel: 1 },
+        2: { isHidden: true, outlineLevel: 1 },
+        3: { isHidden: false, collapsed: true },
+      });
+      expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
+    });
+
+    test.each<Dimension>(["COL", "ROW"])("Nested grouped headers", async (dim) => {
+      const model = new Model();
+      groupHeaders(model, dim, 0, 6);
+      groupHeaders(model, dim, 1, 3);
+      foldHeaderGroup(model, dim, 1, 3);
+
+      const xlsxExport = getExportedExcelData(model);
+      const headers = dim === "COL" ? xlsxExport.sheets[0].cols : xlsxExport.sheets[0].rows;
+      expect(headers).toMatchObject({
+        0: { isHidden: false, outlineLevel: 1 },
+        1: { isHidden: true, outlineLevel: 2 },
+        2: { isHidden: true, outlineLevel: 2 },
+        3: { isHidden: true, outlineLevel: 2 },
+        4: { isHidden: false, outlineLevel: 1, collapsed: true },
+        5: { isHidden: false, outlineLevel: 1 },
+        6: { isHidden: false, outlineLevel: 1 },
+      });
+      expect(await exportPrettifiedXlsx(model)).toMatchSnapshot();
+    });
+  });
+
+  test("Sheet names longer than 31 characters are sliced in the Excel Export", () => {
+    const model = new Model();
+    const longSheetName = "a".repeat(40);
+    const longSheetNameWithSpaces = "Hey " + "a".repeat(40);
+    createSheet(model, { name: longSheetNameWithSpaces });
+    createSheet(model, { name: longSheetName });
+    setCellContent(model, "A1", `='${longSheetNameWithSpaces}'!A1`);
+    createChart(model, {
+      type: "bar",
+      dataSets: [{ dataRange: `${longSheetName}!A1:A4` }],
+      labelRange: `${longSheetName}!A1:A4`,
+    });
+
+    const fixedSheetName = "a".repeat(31);
+    const fixedSheetNameWithSpaces = "Hey " + "a".repeat(27);
+    const exportedData = getExportedExcelData(model);
+    expect(exportedData.sheets[1].name).toBe(fixedSheetName);
+    expect(exportedData.sheets[0].cells["A1"]?.content).toBe(`='${fixedSheetNameWithSpaces}'!A1`);
+    expect(exportedData.sheets[0].charts[0].data.labelRange).toBe(`${fixedSheetName}!A2:A4`);
+    expect(exportedData.sheets[0].charts[0].data.dataSets[0]).toEqual({
+      label: {
+        reference: `${fixedSheetName}!A1`,
+      },
+      range: `${fixedSheetName}!A2:A4`,
+      rightYAxis: false,
+    });
+  });
+
+  test("Avoid duplicated sheet names in excel export if multiple sliced names are the same", () => {
+    const model = new Model();
+    createSheet(model, { name: "a".repeat(40) });
+    createSheet(model, { name: "a".repeat(41) });
+    createSheet(model, { name: "a".repeat(42) });
+    const exportedExcelData = getExportedExcelData(model);
+    expect(exportedExcelData.sheets[1].name).toBe("a".repeat(31));
+    expect(exportedExcelData.sheets[2].name).toBe("a".repeat(30) + "1");
+    expect(exportedExcelData.sheets[3].name).toBe("a".repeat(30) + "2");
+  });
+
+  test("Cells whose content are the same as a too long sheet name are not changed", () => {
+    const model = new Model();
+    const longFormula = "=A1+A2+A3+A4+A5+A6+A7+A8+A9+A10+A11+A12+A13+A14+A15+A16";
+    createSheet(model, { name: longFormula });
+    setCellContent(model, "A1", longFormula);
+    const exportedExcelData = getExportedExcelData(model);
+    expect(exportedExcelData.sheets[1].name).toBe(longFormula.slice(0, 31));
+    expect(exportedExcelData.sheets[0].cells["A1"]?.content).toBe(longFormula);
   });
 });
 

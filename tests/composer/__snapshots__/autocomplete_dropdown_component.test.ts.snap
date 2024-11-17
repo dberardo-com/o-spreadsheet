@@ -2,7 +2,7 @@
 
 exports[`Functions autocomplete autocomplete simple snapshot with =S 1`] = `
 <div
-  class="o-autocomplete-dropdown shadow"
+  class="o-autocomplete-dropdown"
 >
   <div
     class="d-flex flex-column text-start o-autocomplete-value-focus"
@@ -57,11 +57,24 @@ exports[`Functions autocomplete autocomplete simple snapshot with =S 1`] = `
 
 exports[`composer Assistant render above the cell when not enough place below 1`] = `
 <div
-  class="o-composer-assistant"
-  style="min-width:96px; width:300px; top:-3px; transform:translate(0, -100%); right:0px;"
+  class="o-composer-assistant shadow"
+  style="min-width:96px; width:300px; max-height:141px; top:-3px; transform:translate(0, -100%); right:0px; "
 >
+  <span
+    class="fa-stack position-absolute top-0 start-100 translate-middle fs-4"
+    role="button"
+  >
+    <i
+      class="fa fa-circle fa-stack-1x fa-inverse"
+    />
+    <i
+      class="fa fa-times-circle fa-stack-1x text-muted"
+    />
+  </span>
+  
+  
   <div
-    class="o-autocomplete-dropdown shadow"
+    class="o-autocomplete-dropdown"
   >
     <div
       class="d-flex flex-column text-start o-autocomplete-value-focus"
@@ -112,18 +125,30 @@ exports[`composer Assistant render above the cell when not enough place below 1`
     </div>
     
   </div>
-  
   
 </div>
 `;
 
 exports[`composer Assistant render below the cell by default 1`] = `
 <div
-  class="o-composer-assistant"
-  style="min-width:300px; width:300px;"
+  class="o-composer-assistant shadow"
+  style="min-width:96px; width:300px; max-height:327px; "
 >
+  <span
+    class="fa-stack position-absolute top-0 start-100 translate-middle fs-4"
+    role="button"
+  >
+    <i
+      class="fa fa-circle fa-stack-1x fa-inverse"
+    />
+    <i
+      class="fa fa-times-circle fa-stack-1x text-muted"
+    />
+  </span>
+  
+  
   <div
-    class="o-autocomplete-dropdown shadow"
+    class="o-autocomplete-dropdown"
   >
     <div
       class="d-flex flex-column text-start o-autocomplete-value-focus"
@@ -174,7 +199,6 @@ exports[`composer Assistant render below the cell by default 1`] = `
     </div>
     
   </div>
-  
   
 </div>
 `;

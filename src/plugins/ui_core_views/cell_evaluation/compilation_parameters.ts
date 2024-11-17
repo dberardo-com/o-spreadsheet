@@ -1,23 +1,25 @@
 import { functionRegistry } from "../../../functions";
-import { intersection, isZoneValid, zoneToXc } from "../../../helpers";
+import { getFullReference, intersection, isZoneValid, zoneToXc } from "../../../helpers";
 import { ModelConfig } from "../../../model";
 import { _t } from "../../../translation";
 import {
   CellPosition,
-  CellValueType,
   EnsureRange,
   EvalContext,
   EvaluatedCell,
+  FunctionResultObject,
   Getters,
   Matrix,
-  Maybe,
   Range,
   ReferenceDenormalizer,
-  ValueAndFormat,
 } from "../../../types";
-import { InvalidReferenceError } from "../../../types/errors";
+import { EvaluationError, InvalidReferenceError } from "../../../types/errors";
 
-export type CompilationParameters = [ReferenceDenormalizer, EnsureRange, EvalContext];
+export type CompilationParameters = {
+  referenceDenormalizer: ReferenceDenormalizer;
+  ensureRange: EnsureRange;
+  evalContext: EvalContext;
+};
 const functionMap = functionRegistry.mapping;
 
 /**
@@ -30,13 +32,15 @@ export function buildCompilationParameters(
   context: ModelConfig["custom"],
   getters: Getters,
   computeCell: (position: CellPosition) => EvaluatedCell
-) {
+): CompilationParameters {
   const builder = new CompilationParametersBuilder(context, getters, computeCell);
   return builder.getParameters();
 }
 
 class CompilationParametersBuilder {
   evalContext: EvalContext;
+
+  private rangeCache: Record<string, Matrix<FunctionResultObject>> = {};
 
   constructor(
     context: ModelConfig["custom"],
@@ -50,7 +54,11 @@ class CompilationParametersBuilder {
   }
 
   getParameters(): CompilationParameters {
-    return [this.refFn.bind(this), this.range.bind(this), this.evalContext];
+    return {
+      referenceDenormalizer: this.refFn.bind(this),
+      ensureRange: this.range.bind(this),
+      evalContext: this.evalContext,
+    };
   }
 
   /**
@@ -61,71 +69,19 @@ class CompilationParametersBuilder {
    *        function for which this parameter is used, we just return the string of the parameter.
    *        The `compute` of the formula's function must process it completely
    */
-  private refFn(
-    range: Range,
-    isMeta: boolean,
-    functionName: string,
-    paramNumber?: number
-  ): Maybe<ValueAndFormat> {
+  private refFn(range: Range, isMeta: boolean): FunctionResultObject {
+    const rangeError = this.getRangeError(range);
+    if (rangeError) {
+      return rangeError;
+    }
     if (isMeta) {
       // Use zoneToXc of zone instead of getRangeString to avoid sending unbounded ranges
-      return { value: zoneToXc(range.zone) };
+      const sheetName = this.getters.getSheetName(range.sheetId);
+      return { value: getFullReference(sheetName, zoneToXc(range.zone)) };
     }
-
-    if (!isZoneValid(range.zone)) {
-      throw new InvalidReferenceError();
-    }
-
-    // if the formula definition could have accepted a range, we would pass through the _range function and not here
-    if (range.zone.bottom !== range.zone.top || range.zone.left !== range.zone.right) {
-      throw new Error(
-        paramNumber
-          ? _t(
-              "Function %s expects the parameter %s to be a single value or a single cell reference, not a range.",
-              functionName.toString(),
-              paramNumber.toString()
-            )
-          : _t(
-              "Function %s expects its parameters to be single values or single cell references, not ranges.",
-              functionName.toString()
-            )
-      );
-    }
-    if (range.invalidSheetName) {
-      throw new Error(_t("Invalid sheet name: %s", range.invalidSheetName));
-    }
+    // the compiler guarantees only single cell ranges reach this part of the code
     const position = { sheetId: range.sheetId, col: range.zone.left, row: range.zone.top };
-    return this.readCell(position);
-  }
-
-  private readCell(position: CellPosition): ValueAndFormat {
-    if (!this.getters.tryGetSheet(position.sheetId)) {
-      throw new Error(_t("Invalid sheet name"));
-    }
-    const evaluatedCell = this.getEvaluatedCellIfNotEmpty(position);
-    if (evaluatedCell === undefined) {
-      return { value: null, format: this.getters.getCell(position)?.format };
-    }
-    return evaluatedCell;
-  }
-
-  private getEvaluatedCellIfNotEmpty(position: CellPosition): EvaluatedCell | undefined {
-    const evaluatedCell = this.getEvaluatedCell(position);
-    if (evaluatedCell.type === CellValueType.empty) {
-      const cell = this.getters.getCell(position);
-      if (!cell || (!cell.isFormula && cell.content === "")) {
-        return undefined;
-      }
-    }
-    return evaluatedCell;
-  }
-
-  private getEvaluatedCell(position: CellPosition): EvaluatedCell {
-    const evaluatedCell = this.computeCell(position);
-    if (evaluatedCell.type === CellValueType.error) {
-      throw evaluatedCell.error;
-    }
-    return evaluatedCell;
+    return this.computeCell(position);
   }
 
   /**
@@ -136,10 +92,13 @@ class CompilationParametersBuilder {
    * Note that each col is possibly sparse: it only contain the values of cells
    * that are actually present in the grid.
    */
-  private range({ sheetId, zone }: Range): Matrix<ValueAndFormat> {
-    if (!isZoneValid(zone)) {
-      throw new InvalidReferenceError();
+  private range(range: Range): Matrix<FunctionResultObject> {
+    const rangeError = this.getRangeError(range);
+    if (rangeError) {
+      return [[rangeError]];
     }
+    const sheetId = range.sheetId;
+    const zone = range.zone;
 
     // Performance issue: Avoid fetching data on positions that are out of the spreadsheet
     // e.g. A1:ZZZ9999 in a sheet with 10 cols and 10 rows should ignore everything past J10 and return a 10x10 array
@@ -148,20 +107,36 @@ class CompilationParametersBuilder {
     if (!_zone) {
       return [[]];
     }
+    const { top, left, bottom, right } = zone;
+    const cacheKey = `${sheetId}-${top}-${left}-${bottom}-${right}`;
+    if (cacheKey in this.rangeCache) {
+      return this.rangeCache[cacheKey];
+    }
 
     const height = _zone.bottom - _zone.top + 1;
     const width = _zone.right - _zone.left + 1;
-    const matrix: Matrix<ValueAndFormat> = Array.from({ length: width }, () =>
-      Array.from({ length: height })
-    );
+    const matrix: Matrix<FunctionResultObject> = new Array(width);
     // Performance issue: nested loop is faster than a map here
     for (let col = _zone.left; col <= _zone.right; col++) {
+      const colIndex = col - _zone.left;
+      matrix[colIndex] = new Array(height);
       for (let row = _zone.top; row <= _zone.bottom; row++) {
-        const colIndex = col - _zone.left;
         const rowIndex = row - _zone.top;
-        matrix[colIndex][rowIndex] = this.readCell({ sheetId, col, row });
+        matrix[colIndex][rowIndex] = this.computeCell({ sheetId, col, row });
       }
     }
+
+    this.rangeCache[cacheKey] = matrix;
     return matrix;
+  }
+
+  private getRangeError(range: Range): EvaluationError | undefined {
+    if (!isZoneValid(range.zone)) {
+      return new InvalidReferenceError();
+    }
+    if (range.invalidSheetName) {
+      return new EvaluationError(_t("Invalid sheet name: %s", range.invalidSheetName));
+    }
+    return undefined;
   }
 }

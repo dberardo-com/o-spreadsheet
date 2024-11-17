@@ -1,4 +1,5 @@
 import { DEFAULT_CELL_HEIGHT, DEFAULT_CELL_WIDTH } from "../constants";
+import { escapeRegExp, toZone, zoneToDimension } from "../helpers";
 import { ExcelSheetData, ExcelWorkbookData } from "../types";
 import {
   XLSXExport,
@@ -28,6 +29,7 @@ import {
   addHyperlinks,
   addMerges,
   addRows,
+  addSheetProperties,
   addSheetViews,
 } from "./functions/worksheet";
 import {
@@ -54,8 +56,10 @@ import {
  * https://www.ecma-international.org/publications-and-standards/standards/ecma-376/
  */
 export function getXLSX(data: ExcelWorkbookData): XLSXExport {
+  data = fixLengthySheetNames(data);
+  data = purgeSingleRowTables(data);
   const files: XLSXExportFile[] = [];
-  const construct = getDefaultXLSXStructure();
+  const construct = getDefaultXLSXStructure(data);
   files.push(createWorkbook(data, construct));
 
   files.push(...createWorksheets(data, construct));
@@ -116,7 +120,7 @@ function createWorksheets(data: ExcelWorkbookData, construct: XLSXStructure): XL
     ];
 
     const tablesNode = createTablesForSheet(sheet, sheetIndex, currentTableIndex, construct, files);
-    currentTableIndex += sheet.filterTables.length;
+    currentTableIndex += sheet.tables.length;
 
     // Figures and Charts
     let drawingNode = escapeXml``;
@@ -187,6 +191,7 @@ function createWorksheets(data: ExcelWorkbookData, construct: XLSXStructure): XL
 
     const sheetXml = escapeXml/*xml*/ `
       <worksheet ${formatAttributes(namespaces)}>
+        ${addSheetProperties(sheet)}
         ${addSheetViews(sheet)}
         <sheetFormatPr ${formatAttributes(sheetFormatAttributes)} />
         ${addColumns(sheet.cols)}
@@ -224,12 +229,12 @@ function createTablesForSheet(
   files: XLSXExportFile[]
 ): XMLString {
   let currentTableId = startingTableId;
-  if (!sheetData.filterTables.length) return new XMLString("");
+  if (!sheetData.tables.length) return new XMLString("");
 
   const sheetRelFile = `xl/worksheets/_rels/sheet${sheetId}.xml.rels`;
 
   const tableParts: XMLString[] = [];
-  for (const table of sheetData.filterTables) {
+  for (const table of sheetData.tables) {
     const tableRelId = addRelsToFile(construct.relsFiles, sheetRelFile, {
       target: `../tables/table${currentTableId}.xml`,
       type: XLSX_RELATION_TYPE.table,
@@ -247,7 +252,7 @@ function createTablesForSheet(
     currentTableId++;
   }
   return escapeXml/*xml*/ `
-    <tableParts count="${sheetData.filterTables.length}">
+    <tableParts count="${sheetData.tables.length}">
       ${joinXmlNodes(tableParts)}
     </tableParts>
 `;
@@ -360,4 +365,54 @@ function createRelRoot(): XLSXExportFile {
     </Relationships>
   `;
   return createXMLFile(parseXML(xml), "_rels/.rels");
+}
+
+/**
+ * Excel sheet names are maximum 31 characters while o-spreadsheet do not have this limit.
+ * This method converts the sheet names to be within the 31 characters limit.
+ * The cells/charts referencing this sheet will be updated accordingly.
+ */
+export function fixLengthySheetNames(data: ExcelWorkbookData): ExcelWorkbookData {
+  const nameMapping: Record<string, string> = {};
+  const newNames = new Set<string>();
+  for (const sheet of data.sheets) {
+    let newName = sheet.name.slice(0, 31);
+    let i = 1;
+    while (newNames.has(newName)) {
+      newName = newName.slice(0, 31 - String(i).length) + i++;
+    }
+    newNames.add(newName);
+    if (newName !== sheet.name) {
+      nameMapping[sheet.name] = newName;
+      sheet.name = newName;
+    }
+  }
+
+  if (!Object.keys(nameMapping).length) {
+    return data;
+  }
+
+  const sheetWithNewNames = Object.keys(nameMapping).sort((a, b) => b.length - a.length);
+  let stringifiedData = JSON.stringify(data);
+  for (const sheetName of sheetWithNewNames) {
+    const regex = new RegExp(`'?${escapeRegExp(sheetName)}'?!`, "g");
+    stringifiedData = stringifiedData.replaceAll(regex, (match) => {
+      const newName = nameMapping[sheetName];
+      return match.replace(sheetName, newName);
+    });
+  }
+  return JSON.parse(stringifiedData);
+}
+
+/** Excel files do not support tables with a single row the defined range
+ * Since those tables are not really useful (no filtering/limited styling)
+ * This function filters out all tables with a single row.
+ */
+export function purgeSingleRowTables(data: ExcelWorkbookData): ExcelWorkbookData {
+  for (const sheet of data.sheets) {
+    sheet.tables = sheet.tables.filter(
+      (table) => zoneToDimension(toZone(table.range)).numberOfRows > 1
+    );
+  }
+  return data;
 }

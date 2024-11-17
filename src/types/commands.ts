@@ -1,12 +1,6 @@
-import { SearchOptions } from "../plugins/ui_feature/find_and_replace";
-import { ComposerSelection } from "../plugins/ui_stateful/edition";
-import { CellPopoverType } from "./cell_popovers";
-import { ChartDefinition } from "./chart/chart";
-import { ClipboardPasteOptions } from "./clipboard";
-import { FigureSize } from "./figure";
-import { Image } from "./image";
 import {
   ConditionalFormat,
+  DOMCoordinates,
   DataValidationRule,
   Figure,
   Format,
@@ -17,6 +11,7 @@ import {
 import {
   Border,
   BorderData,
+  CellPosition,
   Color,
   Dimension,
   HeaderIndex,
@@ -25,7 +20,15 @@ import {
   SortOptions,
   UID,
 } from "./misc";
+
+import { ChartDefinition } from "./chart/chart";
+import { ClipboardContent, ClipboardPasteOptions } from "./clipboard";
+import { FigureSize } from "./figure";
+import { SearchOptions } from "./find_and_replace";
+import { Image } from "./image";
+import { PivotCoreDefinition, PivotTableData } from "./pivot";
 import { RangeData } from "./range";
+import { CoreTableType, TableConfig, TableStyleTemplateName } from "./table";
 
 // -----------------------------------------------------------------------------
 // Grid commands
@@ -110,26 +113,55 @@ export const invalidateEvaluationCommands = new Set<CommandTypes>([
   "RENAME_SHEET",
   "DELETE_SHEET",
   "CREATE_SHEET",
+  "DUPLICATE_SHEET",
   "ADD_COLUMNS_ROWS",
   "REMOVE_COLUMNS_ROWS",
   "UNDO",
   "REDO",
   "ADD_MERGE",
+  "REMOVE_MERGE",
   "UPDATE_LOCALE",
+  "ADD_PIVOT",
+  "UPDATE_PIVOT",
+  "INSERT_PIVOT",
+  "RENAME_PIVOT",
+  "REMOVE_PIVOT",
+  "DUPLICATE_PIVOT",
 ]);
 
-export const invalidateDependenciesCommands = new Set<CommandTypes>([
-  ...invalidateEvaluationCommands,
-  "MOVE_RANGES",
+export const invalidateChartEvaluationCommands = new Set<CommandTypes>([
+  "EVALUATE_CELLS",
+  "UPDATE_CELL",
+  "UNHIDE_COLUMNS_ROWS",
+  "HIDE_COLUMNS_ROWS",
+  "GROUP_HEADERS",
+  "UNGROUP_HEADERS",
+  "FOLD_ALL_HEADER_GROUPS",
+  "FOLD_HEADER_GROUP",
+  "FOLD_HEADER_GROUPS_IN_ZONE",
+  "UNFOLD_ALL_HEADER_GROUPS",
+  "UNFOLD_HEADER_GROUP",
+  "UNFOLD_HEADER_GROUPS_IN_ZONE",
+  "UPDATE_TABLE",
+  "UPDATE_FILTER",
+  "UNDO",
+  "REDO",
 ]);
+
+export const invalidateDependenciesCommands = new Set<CommandTypes>(["MOVE_RANGES"]);
 
 export const invalidateCFEvaluationCommands = new Set<CommandTypes>([
-  ...invalidateEvaluationCommands,
   "DUPLICATE_SHEET",
   "EVALUATE_CELLS",
   "ADD_CONDITIONAL_FORMAT",
   "REMOVE_CONDITIONAL_FORMAT",
   "CHANGE_CONDITIONAL_FORMAT_PRIORITY",
+]);
+
+export const invalidateBordersCommands = new Set<CommandTypes>([
+  "AUTOFILL_CELL",
+  "SET_BORDER",
+  "SET_ZONE_BORDERS",
 ]);
 
 export const readonlyAllowedCommands = new Set<CommandTypes>([
@@ -141,19 +173,9 @@ export const readonlyAllowedCommands = new Set<CommandTypes>([
   "RESIZE_SHEETVIEW",
   "SET_VIEWPORT_OFFSET",
 
-  "SELECT_SEARCH_NEXT_MATCH",
-  "SELECT_SEARCH_PREVIOUS_MATCH",
-  "UPDATE_SEARCH",
-  "CLEAR_SEARCH",
-
   "EVALUATE_CELLS",
 
-  "SET_CURRENT_CONTENT",
-
   "SET_FORMULA_VISIBILITY",
-
-  "OPEN_CELL_POPOVER",
-  "CLOSE_CELL_POPOVER",
 
   "UPDATE_FILTER",
 ]);
@@ -163,6 +185,7 @@ export const coreTypes = new Set<CoreCommandTypes>([
   "UPDATE_CELL",
   "UPDATE_CELL_POSITION",
   "CLEAR_CELL",
+  "CLEAR_CELLS",
   "DELETE_CONTENT",
 
   /** GRID SHAPE */
@@ -188,6 +211,7 @@ export const coreTypes = new Set<CoreCommandTypes>([
   "DUPLICATE_SHEET",
   "MOVE_SHEET",
   "RENAME_SHEET",
+  "COLOR_SHEET",
   "HIDE_SHEET",
   "SHOW_SHEET",
 
@@ -215,8 +239,11 @@ export const coreTypes = new Set<CoreCommandTypes>([
   "UPDATE_CHART",
 
   /** FILTERS */
-  "CREATE_FILTER_TABLE",
-  "REMOVE_FILTER_TABLE",
+  "CREATE_TABLE",
+  "REMOVE_TABLE",
+  "UPDATE_TABLE",
+  "CREATE_TABLE_STYLE",
+  "REMOVE_TABLE_STYLE",
 
   /** IMAGE */
   "CREATE_IMAGE",
@@ -237,6 +264,14 @@ export const coreTypes = new Set<CoreCommandTypes>([
 
   /** MISC */
   "UPDATE_LOCALE",
+
+  /** PIVOT */
+  "ADD_PIVOT",
+  "UPDATE_PIVOT",
+  "INSERT_PIVOT",
+  "RENAME_PIVOT",
+  "REMOVE_PIVOT",
+  "DUPLICATE_PIVOT",
 ]);
 
 export function isCoreCommand(cmd: Command): cmd is CoreCommand {
@@ -289,6 +324,7 @@ export interface MoveColumnsRowsCommand extends HeadersDependentCommand {
   type: "MOVE_COLUMNS_ROWS";
   base: HeaderIndex;
   elements: HeaderIndex[];
+  position: "before" | "after";
 }
 
 export interface ResizeColumnsRowsCommand extends HeadersDependentCommand {
@@ -387,6 +423,11 @@ export interface RenameSheetCommand extends SheetDependentCommand {
   name?: string;
 }
 
+export interface ColorSheetCommand extends SheetDependentCommand {
+  type: "COLOR_SHEET";
+  color?: Color;
+}
+
 export interface HideSheetCommand extends SheetDependentCommand {
   type: "HIDE_SHEET";
 }
@@ -459,7 +500,7 @@ export interface DeleteFigureCommand extends SheetDependentCommand {
 export interface CreateChartCommand extends SheetDependentCommand {
   type: "CREATE_CHART";
   id: UID;
-  position?: { x: Pixel; y: Pixel };
+  position?: DOMCoordinates;
   size?: FigureSize;
   definition: ChartDefinition;
 }
@@ -477,7 +518,7 @@ export interface UpdateChartCommand extends SheetDependentCommand {
 export interface CreateImageOverCommand extends SheetDependentCommand {
   type: "CREATE_IMAGE";
   figureId: UID;
-  position: { x: Pixel; y: Pixel };
+  position: DOMCoordinates;
   size: FigureSize;
   definition: Image;
 }
@@ -486,12 +527,54 @@ export interface CreateImageOverCommand extends SheetDependentCommand {
 // Filters
 //------------------------------------------------------------------------------
 
-export interface CreateFilterTableCommand extends TargetDependentCommand {
-  type: "CREATE_FILTER_TABLE";
+export interface CreateTableCommand extends RangesDependentCommand {
+  type: "CREATE_TABLE";
+  sheetId: UID;
+  config?: TableConfig;
+  tableType: CoreTableType;
 }
 
-export interface RemoveFilterTableCommand extends TargetDependentCommand {
-  type: "REMOVE_FILTER_TABLE";
+export interface RemoveTableCommand extends TargetDependentCommand {
+  type: "REMOVE_TABLE";
+}
+
+export interface UpdateTableCommand {
+  type: "UPDATE_TABLE";
+  zone: Zone;
+  sheetId: UID;
+  newTableRange?: RangeData;
+  tableType?: CoreTableType;
+  config?: Partial<TableConfig>;
+}
+
+export interface ResizeTableCommand {
+  type: "RESIZE_TABLE";
+  zone: Zone;
+  sheetId: UID;
+  newTableRange: RangeData;
+  tableType?: CoreTableType;
+}
+
+export interface AutofillTableCommand extends PositionDependentCommand {
+  type: "AUTOFILL_TABLE_COLUMN";
+
+  /** The row to start the autofill in. If undefined, it will autofill from the top of the table column */
+  autofillRowStart?: number;
+  /** The row to end the autofill in. If undefined, it will autofill to the bottom of the table column */
+  autofillRowEnd?: number;
+}
+
+export interface CreateTableStyleCommand {
+  type: "CREATE_TABLE_STYLE";
+  tableStyleId: string;
+  tableStyleName: string;
+  templateName: TableStyleTemplateName;
+  primaryColor: Color;
+}
+
+export interface RemoveTableStyleCommand {
+  type: "REMOVE_TABLE_STYLE";
+  tableStyleId: string;
 }
 
 export interface UpdateFilterCommand extends PositionDependentCommand {
@@ -524,9 +607,54 @@ export interface SetDecimalCommand extends TargetDependentCommand {
   step: SetDecimalStep;
 }
 
+export interface SetContextualFormatCommand extends TargetDependentCommand {
+  type: "SET_FORMATTING_WITH_PIVOT";
+  format: Format;
+}
+
 export interface UpdateLocaleCommand {
   type: "UPDATE_LOCALE";
   locale: Locale;
+}
+
+// ------------------------------------------------
+// PIVOT
+// ------------------------------------------------
+export interface AddPivotCommand {
+  type: "ADD_PIVOT";
+  pivotId: UID;
+  pivot: PivotCoreDefinition;
+}
+
+export interface UpdatePivotCommand {
+  type: "UPDATE_PIVOT";
+  pivotId: UID;
+  pivot: PivotCoreDefinition;
+}
+
+export interface InsertPivotCommand extends PositionDependentCommand {
+  type: "INSERT_PIVOT";
+  pivotId: UID;
+  table: PivotTableData;
+}
+
+export interface RenamePivotCommand {
+  type: "RENAME_PIVOT";
+  pivotId: UID;
+  name: string;
+}
+
+export interface RemovePivotCommand {
+  type: "REMOVE_PIVOT";
+  pivotId: UID;
+}
+
+export interface DuplicatePivotCommand {
+  type: "DUPLICATE_PIVOT";
+  pivotId: UID;
+  newPivotId: string;
+  // an early version of the command did not include the duplicatedPivotName
+  duplicatedPivotName?: string;
 }
 
 // ------------------------------------------------
@@ -649,19 +777,10 @@ export interface AutoFillCellCommand {
   format?: Format;
 }
 
-export interface ActivatePaintFormatCommand {
-  type: "ACTIVATE_PAINT_FORMAT";
-  persistent?: boolean;
-}
-
-export interface CancelPaintFormatCommand {
-  type: "CANCEL_PAINT_FORMAT";
-}
-
 export interface PasteFromOSClipboardCommand {
   type: "PASTE_FROM_OS_CLIPBOARD";
   target: Zone[];
-  text: string;
+  clipboardContent: ClipboardContent;
   pasteOption?: ClipboardPasteOptions;
 }
 
@@ -683,15 +802,6 @@ export interface ActivateSheetCommand {
   sheetIdTo: UID;
 }
 
-/**
- * Set a color to be used for the next selection to highlight.
- * The color is only used when selection highlight is enabled.
- */
-export interface SetColorCommand {
-  type: "SET_HIGHLIGHT_COLOR";
-  color: Color;
-}
-
 export interface EvaluateCellsCommand {
   type: "EVALUATE_CELLS";
 }
@@ -699,45 +809,6 @@ export interface EvaluateCellsCommand {
 export interface StartChangeHighlightCommand {
   type: "START_CHANGE_HIGHLIGHT";
   zone: Zone;
-}
-
-export interface StopComposerSelectionCommand {
-  type: "STOP_COMPOSER_RANGE_SELECTION";
-}
-
-export interface StartEditionCommand {
-  type: "START_EDITION";
-  text?: string;
-  selection?: ComposerSelection;
-}
-
-export interface StopEditionCommand {
-  type: "STOP_EDITION";
-}
-
-export interface CancelEditionCommand {
-  type: "CANCEL_EDITION";
-}
-
-export interface SetCurrentContentCommand {
-  type: "SET_CURRENT_CONTENT";
-  content: string;
-  selection?: ComposerSelection;
-}
-
-export interface ChangeComposerSelectionCommand {
-  type: "CHANGE_COMPOSER_CURSOR_SELECTION";
-  start: number;
-  end: number;
-}
-
-export interface ReplaceComposerSelectionCommand {
-  type: "REPLACE_COMPOSER_CURSOR_SELECTION";
-  text: string;
-}
-
-export interface CycleEditionReferencesCommand {
-  type: "CYCLE_EDITION_REFERENCES";
 }
 
 export interface ShowFormulaCommand {
@@ -753,6 +824,10 @@ export interface DeleteContentCommand {
 
 export interface ClearCellCommand extends PositionDependentCommand {
   type: "CLEAR_CELL";
+}
+
+export interface ClearCellsCommand extends TargetDependentCommand {
+  type: "CLEAR_CELLS";
 }
 
 export interface UndoCommand {
@@ -791,131 +866,17 @@ export interface AutofillAutoCommand {
   type: "AUTOFILL_AUTO";
 }
 
-/**
- * Create a new state for a SelectionInput component
- */
-export interface NewInputCommand {
-  type: "ENABLE_NEW_SELECTION_INPUT";
-  /**
-   * Identifier to use to reference this state.
-   */
-  id: string;
-  /**
-   * Initial ranges for the state.
-   * e.g. ["B4", "A1:A3"]
-   */
-  initialRanges?: string[];
-  /**
-   * is the input limited to one range or has no limit ?
-   */
-  hasSingleRange?: boolean;
-}
-
-/**
- * Delete an identified SelectionInput state.
- */
-export interface RemoveInputCommand {
-  type: "DISABLE_SELECTION_INPUT";
-  /** SelectionComponent id */
-  id: string;
-}
-
-export interface UnfocusInputCommand {
-  type: "UNFOCUS_SELECTION_INPUT";
-}
-
-/**
- * Set the focus on a given range of a SelectionComponent state.
- */
-export interface FocusInputCommand {
-  type: "FOCUS_RANGE";
-  /** SelectionComponent id */
-  id: string;
-  /**
-   * Range to focus
-   */
-  rangeId: number;
-}
-
-/**
- * Add an empty range at the end of a SelectionComponent state
- * and focus it.
- */
-export interface AddEmptyRangeCommand {
-  type: "ADD_EMPTY_RANGE";
-  /** SelectionComponent id */
-  id: string;
-}
-
-/**
- * Add an range at the end of a SelectionComponent state
- * and focus it.
- */
-export interface AddRangeCommand {
-  type: "ADD_RANGE";
-  /** SelectionComponent id */
-  id: string;
-  /** The range to be added */
-  value: string;
-}
-
-/**
- * Remove a given range in a SelectionComponent state
- */
-export interface RemoveRangeCommand {
-  type: "REMOVE_RANGE";
-  /** SelectionComponent id */
-  id: string;
-  /** The range to be removed */
-  rangeId: number;
-}
-
-/**
- * Set a new value for a given range of a SelectionComponent state.
- */
-export interface ChangeRangeCommand {
-  type: "CHANGE_RANGE";
-  /** SelectionComponent id */
-  id: string;
-  /** The range to be changed */
-  rangeId: number;
-  /**
-   * Range to set in the input. Invalid ranges are also accepted.
-   * e.g. "B2:B3" or the invalid "A5:"
-   */
-  value: string;
-}
-
 export interface SelectFigureCommand {
   type: "SELECT_FIGURE";
-  id: UID;
-}
-
-export interface UpdateSearchCommand {
-  type: "UPDATE_SEARCH";
-  toSearch: string;
-  searchOptions: SearchOptions;
-}
-
-export interface ClearSearchCommand {
-  type: "CLEAR_SEARCH";
-}
-
-export interface SelectSearchPreviousCommand {
-  type: "SELECT_SEARCH_PREVIOUS_MATCH";
-}
-
-export interface SelectSearchNextCommand {
-  type: "SELECT_SEARCH_NEXT_MATCH";
+  id: UID | null;
 }
 
 export interface ReplaceSearchCommand {
   type: "REPLACE_SEARCH";
+  searchString: string;
   replaceWith: string;
-}
-export interface ReplaceAllSearchCommand {
-  type: "REPLACE_ALL_SEARCH";
-  replaceWith: string;
+  searchOptions: SearchOptions;
+  matches: CellPosition[];
 }
 
 export interface SortCommand {
@@ -958,6 +919,12 @@ export interface MoveViewportUpCommand {
   type: "SHIFT_VIEWPORT_UP";
 }
 
+export interface MoveViewportToCellCommand {
+  type: "SCROLL_TO_CELL";
+  col: HeaderIndex;
+  row: HeaderIndex;
+}
+
 /**
  * Sum data according to the selected zone(s) in the appropriated
  * cells.
@@ -988,22 +955,45 @@ export interface ActivatePreviousSheetCommand {
   type: "ACTIVATE_PREVIOUS_SHEET";
 }
 
-export interface OpenCellPopoverCommand {
-  type: "OPEN_CELL_POPOVER";
-  col: number;
-  row: number;
-  popoverType: CellPopoverType;
-}
-
-export interface CloseCellPopoverCommand {
-  type: "CLOSE_CELL_POPOVER";
-}
-
 export interface SplitTextIntoColumnsCommand {
   type: "SPLIT_TEXT_INTO_COLUMNS";
   separator: string;
   addNewColumns: boolean;
   force?: boolean;
+}
+
+export interface RefreshPivotCommand {
+  type: "REFRESH_PIVOT";
+  id: UID;
+}
+
+export interface InsertNewPivotCommand {
+  type: "INSERT_NEW_PIVOT";
+  pivotId: UID;
+  newSheetId: UID;
+}
+
+export interface DuplicatePivotInNewSheetCommand {
+  type: "DUPLICATE_PIVOT_IN_NEW_SHEET";
+  pivotId: UID;
+  newPivotId: UID;
+  newSheetId: UID;
+}
+
+export interface InsertPivotWithTableCommand extends PositionDependentCommand {
+  type: "INSERT_PIVOT_WITH_TABLE";
+  pivotId: UID;
+  table: PivotTableData;
+  pivotMode: "static" | "dynamic";
+}
+
+export interface SplitPivotFormulaCommand extends PositionDependentCommand {
+  type: "SPLIT_PIVOT_FORMULA";
+  pivotId: UID;
+}
+
+export interface PaintFormat extends TargetDependentCommand {
+  type: "PAINT_FORMAT";
 }
 
 export type CoreCommand =
@@ -1015,6 +1005,7 @@ export type CoreCommand =
   | UpdateCellCommand
   | UpdateCellPositionCommand
   | ClearCellCommand
+  | ClearCellsCommand
   | DeleteContentCommand
 
   /** GRID SHAPE */
@@ -1040,6 +1031,7 @@ export type CoreCommand =
   | DuplicateSheetCommand
   | MoveSheetCommand
   | RenameSheetCommand
+  | ColorSheetCommand
   | HideSheetCommand
   | ShowSheetCommand
 
@@ -1070,8 +1062,11 @@ export type CoreCommand =
   | CreateImageOverCommand
 
   /** FILTERS */
-  | CreateFilterTableCommand
-  | RemoveFilterTableCommand
+  | CreateTableCommand
+  | RemoveTableCommand
+  | UpdateTableCommand
+  | CreateTableStyleCommand
+  | RemoveTableStyleCommand
 
   /** HEADER GROUP */
   | GroupHeadersCommand
@@ -1088,21 +1083,21 @@ export type CoreCommand =
   | RemoveDataValidationCommand
 
   /** MISC */
-  | UpdateLocaleCommand;
+  | UpdateLocaleCommand
+
+  /** PIVOT */
+  | AddPivotCommand
+  | UpdatePivotCommand
+  | InsertPivotCommand
+  | RenamePivotCommand
+  | RemovePivotCommand
+  | DuplicatePivotCommand;
 
 export type LocalCommand =
   | RequestUndoCommand
   | RequestRedoCommand
   | UndoCommand
   | RedoCommand
-  | NewInputCommand
-  | RemoveInputCommand
-  | UnfocusInputCommand
-  | FocusInputCommand
-  | AddEmptyRangeCommand
-  | AddRangeCommand
-  | RemoveRangeCommand
-  | ChangeRangeCommand
   | CopyCommand
   | CutCommand
   | PasteCommand
@@ -1112,37 +1107,23 @@ export type LocalCommand =
   | CleanClipBoardHighlightCommand
   | AutoFillCellCommand
   | PasteFromOSClipboardCommand
-  | ActivatePaintFormatCommand
-  | CancelPaintFormatCommand
   | AutoresizeColumnsCommand
   | AutoresizeRowsCommand
   | MoveColumnsRowsCommand
   | ActivateSheetCommand
   | EvaluateCellsCommand
   | StartChangeHighlightCommand
-  | SetColorCommand
-  | StopComposerSelectionCommand
-  | StartEditionCommand
-  | StopEditionCommand
-  | CancelEditionCommand
-  | SetCurrentContentCommand
-  | ChangeComposerSelectionCommand
-  | ReplaceComposerSelectionCommand
-  | CycleEditionReferencesCommand
   | StartCommand
   | AutofillCommand
   | AutofillSelectCommand
+  | AutofillTableCommand
   | ShowFormulaCommand
   | AutofillAutoCommand
   | SelectFigureCommand
-  | UpdateSearchCommand
-  | ClearSearchCommand
-  | SelectSearchPreviousCommand
-  | SelectSearchNextCommand
   | ReplaceSearchCommand
-  | ReplaceAllSearchCommand
   | SortCommand
   | SetDecimalCommand
+  | SetContextualFormatCommand
   | ResizeViewportCommand
   | SumSelectionCommand
   | DeleteCellCommand
@@ -1150,14 +1131,20 @@ export type LocalCommand =
   | SetViewportOffsetCommand
   | MoveViewportDownCommand
   | MoveViewportUpCommand
-  | OpenCellPopoverCommand
-  | CloseCellPopoverCommand
+  | MoveViewportToCellCommand
   | ActivateNextSheetCommand
   | ActivatePreviousSheetCommand
   | UpdateFilterCommand
   | SplitTextIntoColumnsCommand
   | RemoveDuplicatesCommand
-  | TrimWhitespaceCommand;
+  | TrimWhitespaceCommand
+  | ResizeTableCommand
+  | RefreshPivotCommand
+  | InsertNewPivotCommand
+  | DuplicatePivotInNewSheetCommand
+  | InsertPivotWithTableCommand
+  | SplitPivotFormulaCommand
+  | PaintFormat;
 
 export type Command = CoreCommand | LocalCommand;
 
@@ -1183,7 +1170,7 @@ export class DispatchResult {
    * Static helper which returns a successful DispatchResult
    */
   static get Success() {
-    return new DispatchResult();
+    return SUCCESS;
   }
 
   get isSuccessful(): boolean {
@@ -1198,6 +1185,8 @@ export class DispatchResult {
     return this.reasons.includes(reason);
   }
 }
+
+const SUCCESS = new DispatchResult();
 
 export type CancelledReason = Exclude<CommandResult, CommandResult.Success>;
 
@@ -1250,7 +1239,6 @@ export const enum CommandResult {
   GaugeUpperInflectionPointNaN = "GaugeUpperInflectionPointNaN",
   GaugeLowerBiggerThanUpper = "GaugeLowerBiggerThanUpper",
   InvalidAutofillSelection = "InvalidAutofillSelection",
-  WrongComposerSelection = "WrongComposerSelection",
   MinBiggerThanMax = "MinBiggerThanMax",
   LowerBiggerThanUpper = "LowerBiggerThanUpper",
   MidBiggerThanMax = "MidBiggerThanMax",
@@ -1274,6 +1262,7 @@ export const enum CommandResult {
   Readonly = "Readonly",
   InvalidViewportSize = "InvalidViewportSize",
   InvalidScrollingDirection = "InvalidScrollingDirection",
+  ViewportScrollLimitsReached = "ViewportScrollLimitsReached",
   FigureDoesNotExist = "FigureDoesNotExist",
   InvalidConditionalFormatId = "InvalidConditionalFormatId",
   InvalidCellPopover = "InvalidCellPopover",
@@ -1282,9 +1271,12 @@ export const enum CommandResult {
   FrozenPaneOverlap = "FrozenPaneOverlap",
   ValuesNotChanged = "ValuesNotChanged",
   InvalidFilterZone = "InvalidFilterZone",
-  FilterOverlap = "FilterOverlap",
+  TableNotFound = "TableNotFound",
+  TableOverlap = "TableOverlap",
+  InvalidTableConfig = "InvalidTableConfig",
+  InvalidTableStyle = "InvalidTableStyle",
   FilterNotFound = "FilterNotFound",
-  MergeInFilter = "MergeInFilter",
+  MergeInTable = "MergeInTable",
   NonContinuousTargets = "NonContinuousTargets",
   DuplicatedFigureId = "DuplicatedFigureId",
   InvalidSelectionStep = "InvalidSelectionStep",
@@ -1298,7 +1290,6 @@ export const enum CommandResult {
   NoSplitSeparatorInSelection = "NoSplitSeparatorInSelection",
   NoActiveSheet = "NoActiveSheet",
   InvalidLocale = "InvalidLocale",
-  AlreadyInPaintingFormatMode = "AlreadyInPaintingFormatMode",
   MoreThanOneRangeSelected = "MoreThanOneRangeSelected",
   NoColumnsProvided = "NoColumnsProvided",
   ColumnsNotIncludedInZone = "ColumnsNotIncludedInZone",
@@ -1310,8 +1301,17 @@ export const enum CommandResult {
   UnknownDataValidationCriterionType = "UnknownDataValidationCriterionType",
   InvalidDataValidationCriterionValue = "InvalidDataValidationCriterionValue",
   InvalidNumberOfCriterionValues = "InvalidNumberOfCriterionValues",
-  BlockingValidationRule = "BlockingValidationRule",
   InvalidCopyPasteSelection = "InvalidCopyPasteSelection",
+  NoChanges = "NoChanges",
+  InvalidInputId = "InvalidInputId",
+  SheetIsHidden = "SheetIsHidden",
+  InvalidTableResize = "InvalidTableResize",
+  PivotIdNotFound = "PivotIdNotFound",
+  EmptyName = "EmptyName",
+  ValueCellIsInvalidFormula = "ValueCellIsInvalidFormula",
+  InvalidDefinition = "InvalidDefinition",
+  InvalidColor = "InvalidColor",
+  DataBarRangeValuesMismatch = "DataBarRangeValuesMismatch",
 }
 
 export interface CommandHandler<T> {
@@ -1329,10 +1329,6 @@ export interface CommandDispatcher {
     type: T,
     r: Omit<C, "type">
   ): DispatchResult;
-  canDispatch<T extends CommandTypes, C extends Extract<Command, { type: T }>>(
-    type: T,
-    r: Omit<C, "type">
-  ): DispatchResult;
 }
 
 export interface CoreCommandDispatcher {
@@ -1340,10 +1336,6 @@ export interface CoreCommandDispatcher {
     type: {} extends Omit<C, "type"> ? T : never
   ): DispatchResult;
   dispatch<T extends CoreCommandTypes, C extends Extract<CoreCommand, { type: T }>>(
-    type: T,
-    r: Omit<C, "type">
-  ): DispatchResult;
-  canDispatch<T extends CoreCommandTypes, C extends Extract<CoreCommand, { type: T }>>(
     type: T,
     r: Omit<C, "type">
   ): DispatchResult;

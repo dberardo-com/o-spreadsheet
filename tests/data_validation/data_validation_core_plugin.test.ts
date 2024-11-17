@@ -5,12 +5,15 @@ import {
   addDataValidation,
   addRows,
   deleteColumns,
+  deleteContent,
   deleteRows,
   duplicateSheet,
   redo,
   removeDataValidation,
+  setCellContent,
   undo,
 } from "../test_helpers/commands_helpers";
+import { getCellContent } from "../test_helpers/getters_helpers";
 import { getDataValidationRules } from "../test_helpers/helpers";
 
 describe("Data validation", () => {
@@ -67,6 +70,15 @@ describe("Data validation", () => {
       const result = removeDataValidation(model, "notAnExistingId");
       expect(result).toBeCancelledBecause(CommandResult.UnknownDataValidationRule);
     });
+
+    test("Cannot create a data validation rule with an empty range", () => {
+      const result = model.dispatch("ADD_DATA_VALIDATION_RULE", {
+        sheetId,
+        ranges: [],
+        rule: { id: "id", criterion: { type: "isBoolean", values: [] } },
+      });
+      expect(result).toBeCancelledBecause(CommandResult.EmptyRange);
+    });
   });
 
   test("Can add a data validation rule", () => {
@@ -78,6 +90,16 @@ describe("Data validation", () => {
         ranges: ["A1"],
       },
     ]);
+  });
+
+  test("Duplicate values will be filtered out when adding a rule for value in the list", () => {
+    addDataValidation(model, "A1", "id", {
+      type: "isValueInList",
+      values: ["1", "1", "2", "3", "2"],
+      displayStyle: "arrow",
+    });
+
+    expect(getDataValidationRules(model, sheetId)[0].criterion.values).toEqual(["1", "2", "3"]);
   });
 
   test("Adding a rule with an existing id will replace the old one", () => {
@@ -155,6 +177,80 @@ describe("Data validation", () => {
 
     removeDataValidation(model, "id");
     expect(getDataValidationRules(model, sheetId)).toEqual([]);
+  });
+
+  test.each([
+    { type: "textContains", values: ["str"] },
+    { type: "textNotContains", values: ["str"] },
+    { type: "textIs", values: ["str"] },
+    { type: "textIsEmail", values: [] },
+    { type: "textIsLink", values: [] },
+    { type: "dateIs", values: ["1/1/2020"], dateValue: "exactDate" },
+    { type: "dateIsBefore", values: ["1/1/2020"], dateValue: "exactDate" },
+    { type: "dateIsOnOrBefore", values: ["1/1/2020"], dateValue: "exactDate" },
+    { type: "dateIsAfter", values: ["1/1/2020"], dateValue: "exactDate" },
+    { type: "dateIsOnOrAfter", values: ["1/1/2020"], dateValue: "exactDate" },
+    { type: "dateIsBetween", values: ["1/1/2020", "2/2/2022"] },
+    { type: "dateIsValid", values: [] },
+    { type: "isEqual", values: ["5"] },
+    { type: "isNotEqual", values: ["5"] },
+    { type: "isGreaterThan", values: ["5"] },
+    { type: "isLessThan", values: ["5"] },
+    { type: "isLessOrEqualTo", values: ["5"] },
+    { type: "isGreaterOrEqualTo", values: ["5"] },
+    { type: "isBetween", values: ["5", "6"] },
+    { type: "isNotBetween", values: ["5", "6"] },
+    { type: "customFormula", values: ["=A1"] },
+  ] as const)(
+    "Deleting content of a cell doesn't remove  %s data validation rule",
+    async (criterion) => {
+      //@ts-ignore
+      addDataValidation(model, "A1", "id", criterion);
+      expect(model.getters.getDataValidationRules(sheetId)).toHaveLength(1);
+      deleteContent(model, ["A1"]);
+      expect(model.getters.getDataValidationRules(sheetId)).toHaveLength(1);
+    }
+  );
+
+  describe("Clearing dropdown list content", () => {
+    beforeEach(async () => {
+      addDataValidation(model, "A1", "id", {
+        type: "isValueInList",
+        values: ["ok", "hello", "okay"],
+        displayStyle: "arrow",
+      });
+    });
+
+    test("Dropdown lists are kept when clearing the content of a non-empty cell", () => {
+      expect(getDataValidationRules(model, sheetId)).toMatchObject([
+        { criterion: { type: "isValueInList" }, ranges: ["A1"] },
+      ]);
+      setCellContent(model, "A1", "hello");
+      deleteContent(model, ["A1"]);
+      expect(getDataValidationRules(model, sheetId)).toMatchObject([
+        { criterion: { type: "isValueInList" }, ranges: ["A1"] },
+      ]);
+      expect(getCellContent(model, "A1")).toBe("");
+    });
+
+    test("Dropdown lists are removed when clearing the content of an empty cell", () => {
+      expect(getDataValidationRules(model, sheetId)).toMatchObject([
+        { criterion: { type: "isValueInList" }, ranges: ["A1"] },
+      ]);
+      setCellContent(model, "A1", "");
+      deleteContent(model, ["A1"]);
+      expect(getDataValidationRules(model, sheetId)).toEqual([]);
+    });
+
+    test("Dropdown lists are kept when setting the content of a cell to an empty string", () => {
+      expect(getDataValidationRules(model, sheetId)).toMatchObject([
+        { criterion: { type: "isValueInList" }, ranges: ["A1"] },
+      ]);
+      setCellContent(model, "A1", "");
+      expect(getDataValidationRules(model, sheetId)).toMatchObject([
+        { criterion: { type: "isValueInList" }, ranges: ["A1"] },
+      ]);
+    });
   });
 
   test("Can undo/redo adding a rule", () => {

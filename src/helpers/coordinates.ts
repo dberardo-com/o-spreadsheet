@@ -24,32 +24,15 @@ export function numberToLetters(n: number): string {
   }
 }
 
-const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ" as const;
-const LETTERS_NUMBER_MAPPING = {};
-for (const letter of LETTERS) {
-  const colIndex = letter.charCodeAt(0) - 64;
-  LETTERS_NUMBER_MAPPING[letter] = colIndex;
-  LETTERS_NUMBER_MAPPING[letter.toLowerCase()] = colIndex;
-}
-
-/**
- * Convert a string (describing a column) to its number value.
- *
- * Examples:
- *     'A' => 0
- *     'Z' => 25
- *     'AA' => 26
- */
 export function lettersToNumber(letters: string): number {
-  let result = -1;
+  let result = 0;
   const l = letters.length;
-  let pow = 1;
-  for (let i = l - 1; i >= 0; i--) {
-    const charCode = LETTERS_NUMBER_MAPPING[letters[i]];
-    result += charCode * pow;
-    pow *= 26;
+  for (let i = 0; i < l; i++) {
+    const charCode = letters.charCodeAt(i);
+    const colIndex = charCode >= 65 && charCode <= 90 ? charCode - 64 : charCode - 96;
+    result = result * 26 + colIndex;
   }
-  return result;
+  return result - 1;
 }
 
 function isCharALetter(char: string) {
@@ -71,46 +54,30 @@ function isCharADigit(char: string) {
  */
 export function toCartesian(xc: string): Position {
   xc = xc.trim();
-  let numberPartStart: number | undefined = undefined;
 
-  // Note: looping by hand is uglier but ~2x faster than using a regex to match number/letter parts
-  for (let i = 0; i < xc.length; i++) {
-    const char = xc[i];
+  let letterPart = "";
+  let numberPart = "";
+  let i = 0;
 
-    // as long as we haven't found the number part, keep advancing
-    if (!numberPartStart) {
-      if ((char === "$" && i === 0) || isCharALetter(char)) {
-        continue;
-      }
-      numberPartStart = i;
-    }
-
-    // Number part
-    if (!isCharADigit(char)) {
-      if (char === "$" && i === numberPartStart) {
-        continue;
-      }
-      throw new Error(`Invalid cell description: ${xc}`);
-    }
+  // Process letter part
+  if (xc[i] === "$") i++;
+  while (i < xc.length && isCharALetter(xc[i])) {
+    letterPart += xc[i++];
   }
 
-  if (!numberPartStart || numberPartStart === xc.length) {
+  if (letterPart.length === 0 || letterPart.length > 3) {
+    // limit to max 3 letters for performance reasons
     throw new Error(`Invalid cell description: ${xc}`);
   }
 
-  const letterPart = xc[0] === "$" ? xc.slice(1, numberPartStart) : xc.slice(0, numberPartStart);
-  const numberPart =
-    xc[numberPartStart] === "$" ? xc.slice(numberPartStart + 1) : xc.slice(numberPartStart);
+  // Process number part
+  if (xc[i] === "$") i++;
+  while (i < xc.length && isCharADigit(xc[i])) {
+    numberPart += xc[i++];
+  }
 
-  // limit to max 3 letters and 7 numbers to avoid
-  // gigantic numbers that would be a performance killer
-  // down the road
-  if (
-    letterPart.length < 1 ||
-    letterPart.length > 3 ||
-    numberPart.length < 1 ||
-    numberPart.length > 7
-  ) {
+  if (i !== xc.length || numberPart.length === 0 || numberPart.length > 7) {
+    // limit to max 7 numbers for performance reasons
     throw new Error(`Invalid cell description: ${xc}`);
   }
 

@@ -1,6 +1,6 @@
 import { CommandResult, Model } from "../../src";
 import { DEFAULT_CELL_HEIGHT, DEFAULT_CELL_WIDTH } from "../../src/constants";
-import { UID } from "../../src/types";
+import { ClipboardMIMEType, UID } from "../../src/types";
 import { BarChartDefinition } from "../../src/types/chart";
 import {
   activateSheet,
@@ -27,7 +27,7 @@ describe.each(["chart", "image"])("Clipboard for %s figures", (type: string) => 
     sheetId = model.getters.getActiveSheetId();
     figureId = model.uuidGenerator.uuidv4();
     if (type === "chart") {
-      createChart(model, {}, figureId);
+      createChart(model, { type: "bar" }, figureId);
     } else if (type === "image") {
       createImage(model, { figureId });
     }
@@ -151,6 +151,42 @@ describe.each(["chart", "image"])("Clipboard for %s figures", (type: string) => 
     expect(copiedFigure.y).toBe(maxY - copiedFigure.height);
   });
 
+  test("Can paste a chart with ranges that were deleted between the copy and the paste", () => {
+    const model = new Model();
+    const chartId = "thisIsAnId";
+    createSheet(model, { sheetId: "sheet2Id", name: "Sheet2" });
+    createChart(
+      model,
+      {
+        type: "bar",
+        dataSets: [{ dataRange: "Sheet1!A1:A5" }, { dataRange: "Sheet2!B1:B5" }],
+        labelRange: "B1",
+      },
+      chartId
+    );
+    model.dispatch("SELECT_FIGURE", { id: chartId });
+    copy(model);
+    model.dispatch("DELETE_SHEET", { sheetId: "Sheet1" });
+    paste(model, "A1");
+    expect(model.getters.getFigures("sheet2Id")).toHaveLength(1);
+    const newChartId = model.getters.getFigures("sheet2Id")[0].id;
+    expect(model.getters.getChartDefinition(newChartId)).toMatchObject({
+      dataSets: [{ dataRange: "B1:B5" }],
+      labelRange: undefined,
+    });
+  });
+
+  test("Chart clipboard content is not serialized at copy", () => {
+    model.dispatch("SELECT_FIGURE", { id: figureId });
+    copy(model);
+    const clipboardSpreadsheetContent = JSON.parse(
+      model.getters.getClipboardContent()[ClipboardMIMEType.OSpreadsheet]!
+    );
+    expect(clipboardSpreadsheetContent.figureId).toBe(undefined);
+    expect(clipboardSpreadsheetContent.copiedFigure).toBe(undefined);
+    expect(clipboardSpreadsheetContent.copiedChart).toBe(undefined);
+  });
+
   describe("Paste command result", () => {
     test("Cannot paste with empty target", () => {
       model.dispatch("SELECT_FIGURE", { id: figureId });
@@ -172,8 +208,8 @@ describe("chart specific Clipboard test", () => {
   test("Can copy paste chart on another sheet", () => {
     const model = new Model();
     const chartId = "thisIsAnId";
-    createChart(model, {}, chartId);
-    updateChart(model, chartId, { dataSets: ["A1:A5"], labelRange: "B1" });
+    createChart(model, { type: "bar" }, chartId);
+    updateChart(model, chartId, { dataSets: [{ dataRange: "A1:A5" }], labelRange: "B1" });
     const chartDef = model.getters.getChartDefinition(chartId) as BarChartDefinition;
     model.dispatch("SELECT_FIGURE", { id: chartId });
     copy(model);
@@ -183,7 +219,7 @@ describe("chart specific Clipboard test", () => {
     const newChartId = model.getters.getFigures("42")[0].id;
     expect(model.getters.getChartDefinition(newChartId)).toEqual({
       ...chartDef,
-      dataSets: ["Sheet1!A1:A5"],
+      dataSets: [{ dataRange: "Sheet1!A1:A5" }],
       labelRange: "Sheet1!B1",
     });
   });
