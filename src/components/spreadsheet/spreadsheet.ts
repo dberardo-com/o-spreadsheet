@@ -273,6 +273,52 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
     return `grid-template-rows: ${TOPBAR_HEIGHT}px auto ${BOTTOMBAR_HEIGHT + 1}px`;
   }
 
+  askConfirmation(content, confirm, cancel) {
+    if (window.confirm(content)) {
+      confirm();
+    } else {
+      cancel?.();
+    }
+  }
+
+  // activateFirstSheet() {
+  //   const sheetId = this.model.getters.getActiveSheetId();
+  //   const firstSheetId = this.model.getters.getSheetIds()[0];
+  //   if (firstSheetId !== sheetId) {
+  //     this.model.dispatch("ACTIVATE_SHEET", { sheetIdFrom: sheetId, sheetIdTo: firstSheetId });
+  //   }
+  // }
+
+  // leaveCollaborativeSession() {
+  //   this.model.leaveSession();
+  // }
+
+  notifyUser(notification) {
+    const div = document.createElement("div");
+    const text = document.createTextNode(notification.text);
+    div.appendChild(text);
+    // @ts-ignore
+    div.style = NOTIFICATION_STYLE;
+    const element = document.querySelector(".o-spreadsheet");
+    div.onclick = () => {
+      element?.removeChild(div);
+    };
+    element?.appendChild(div);
+
+    if (!notification.sticky) {
+      setTimeout(() => {
+        if (document.body.contains(div)) {
+          element?.removeChild(div);
+        }
+      }, 5000);
+    }
+  }
+
+  raiseError(content, callback) {
+    window.alert(content);
+    callback?.();
+  }
+
   setup() {
     this.sidePanel = useState({ isOpen: false, panelProps: {} });
     this.composer = useState({
@@ -294,10 +340,13 @@ export class Spreadsheet extends Component<SpreadsheetProps, SpreadsheetChildEnv
       toggleSidePanel: this.toggleSidePanel.bind(this),
       clipboard: this.env.clipboard || instantiateClipboard(),
       startCellEdition: (content?: string) => this.onGridComposerCellFocused(content),
+      notifyUser: this.notifyUser,
+      raiseError: this.raiseError,
+      askConfirmation: this.askConfirmation,
     });
 
-    useExternalListener(window as any, "resize", () => this.render(true));
-    useExternalListener(window, "beforeunload", this.unbindModelEvents.bind(this));
+    // useExternalListener(window as any, "resize", () => this.render(true));
+    // useExternalListener(window, "beforeunload", this.unbindModelEvents.bind(this));
 
     this.bindModelEvents();
 

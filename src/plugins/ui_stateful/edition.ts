@@ -1,4 +1,6 @@
-import { composerTokenize, EnrichedToken } from "../../formulas/index";
+
+import { EnrichedToken } from "../../formulas";
+import { composerTokenize } from "../../formulas/composer_tokenizer";
 import { POSTFIX_UNARY_OPERATORS } from "../../formulas/tokenizer";
 import { parseLiteral } from "../../helpers/cells";
 import {

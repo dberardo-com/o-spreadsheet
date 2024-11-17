@@ -283,6 +283,10 @@ export class CellPlugin extends CorePlugin<CoreState> implements CoreState {
    */
   getCellById(cellId: UID): Cell | undefined {
     // this must be as fast as possible
+    // const position = this.getters.getCellPosition(cellId);
+    // const sheet = this.cells[position.sheetId];
+    // return sheet[cellId];
+
     for (const sheetId in this.cells) {
       const sheet = this.cells[sheetId];
       const cell = sheet[cellId];
@@ -654,7 +658,7 @@ class FormulaCellWithDependencies implements FormulaCell {
 class RangeReferenceToken implements Token {
   type = "REFERENCE" as const;
 
-  constructor(private getValue: () => string) {}
+  constructor(private getValue: () => string) { }
 
   get value() {
     return this.getValue();

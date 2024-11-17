@@ -19,9 +19,11 @@ import { useGridDrawing } from "../helpers/draw_grid_hook";
 import { useAbsoluteBoundingRect } from "../helpers/position_hook";
 import { useWheelHandler } from "../helpers/wheel_hook";
 import { Popover } from "../popover/popover";
-import { HorizontalScrollBar, VerticalScrollBar } from "../scrollbar/";
+import { VerticalScrollBar } from "../scrollbar/scrollbar_vertical";
+import { HorizontalScrollBar } from "../scrollbar/scrollbar_horizontal";
 
-interface Props {}
+
+interface Props { }
 
 interface ClickableCell {
   coordinates: Rect;
