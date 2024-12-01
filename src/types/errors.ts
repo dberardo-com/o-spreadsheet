@@ -10,6 +10,7 @@ export const CellErrorType = {
   SpilledBlocked: "#SPILL!",
   GenericError: "#ERROR",
   NullError: "#NULL!",
+  Loading: "#LOADING",
 } as const;
 
 export const errorTypes: Set<string> = new Set(Object.values(CellErrorType));
