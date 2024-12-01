@@ -34,6 +34,7 @@ export class DataValidationPlugin
     "cellHasListDataValidationIcon",
     "getDataValidationRule",
     "getDataValidationRules",
+    // "getDataValidationListCellsPositions",
     "getValidationRuleForCell",
   ] as const;
 
@@ -154,6 +155,17 @@ export class DataValidationPlugin
   getDataValidationRules(sheetId: UID): DataValidationRule[] {
     return this.rules[sheetId];
   }
+
+  // getDataValidationListCellsPositions(sheetId: UID): CellPosition[] {
+  //   const rules = this.getters
+  //     .getDataValidationRules(sheetId)
+  //     .filter(
+  //       (rule) =>
+  //         (rule.criterion.type === "isValueInList" || rule.criterion.type === "isValueInRange") &&
+  //         rule.criterion.displayStyle === "arrow"
+  //     );
+  //   return getCellPositionsInRanges(rules.map((rule) => rule.ranges).flat());
+  // }
 
   getDataValidationRule(sheetId: UID, id: UID): DataValidationRule | undefined {
     return this.rules[sheetId].find((rule) => rule.id === id);

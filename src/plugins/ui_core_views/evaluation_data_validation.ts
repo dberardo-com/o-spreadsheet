@@ -38,6 +38,7 @@ export class EvaluationDataValidationPlugin extends UIPlugin {
   static getters = [
     "getDataValidationInvalidCriterionValueMessage",
     "getInvalidDataValidationMessage",
+    "getDataValidationListCellsPositions",
     "getValidationResultForCellValue",
     "isCellValidCheckbox",
     "isDataValidationInvalid",
@@ -84,6 +85,17 @@ export class EvaluationDataValidationPlugin extends UIPlugin {
   getInvalidDataValidationMessage(cellPosition: CellPosition): string | undefined {
     const validationResult = this.getValidationResultForCell(cellPosition);
     return validationResult.isValid ? undefined : validationResult.error;
+  }
+
+  getDataValidationListCellsPositions(sheetId?: UID): CellPosition[] {
+    const rules = this.getters
+      .getDataValidationRules(sheetId ?? this.getters.getActiveSheetId())
+      .filter(
+        (rule) =>
+          (rule.criterion.type === "isValueInList" || rule.criterion.type === "isValueInRange") &&
+          rule.criterion.displayStyle === "arrow"
+      );
+    return getCellPositionsInRanges(rules.map((rule) => rule.ranges).flat());
   }
 
   /**

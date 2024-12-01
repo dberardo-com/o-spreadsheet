@@ -260,9 +260,10 @@ export function handleError(e: unknown, functionName: string): FunctionResultObj
     }
     return e;
   }
-  console.error(e);
+  // console.error(e);
   return new EvaluationError(
-    implementationErrorMessage + (hasStringMessage(e) ? " " + e.message : "")
+    hasStringMessage(e) ? " " + e.message : ""
+    // implementationErrorMessage + (hasStringMessage(e) ? " " + e.message : "")
   );
 }
 
@@ -284,7 +285,8 @@ function replaceFunctionNamePlaceholder(
 }
 
 export const implementationErrorMessage = _t(
-  "An unexpected error occurred. Submit a support ticket at odoo.com/help."
+  // "An unexpected error occurred. Submit a support ticket at odoo.com/help."
+  "An unexpected error occurred."
 );
 
 function hasStringMessage(obj: unknown): obj is { message: string } {
